@@ -8,6 +8,7 @@ import io.github.nishi.firefly.registry.JobHandlerRegistry;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -31,6 +32,11 @@ public final class JobDispatcher {
     }
 
     public void dispatch(JobDefinition definition, Instant scheduledFireTime) {
+        dispatch(new ExecutionCommand(executionId(definition, scheduledFireTime), definition, scheduledFireTime, clock.instant()));
+    }
+
+    public void dispatch(ExecutionCommand command) {
+        JobDefinition definition = command.definition();
         AtomicInteger running = runningCounters.computeIfAbsent(definition.id(), ignored -> new AtomicInteger());
         if (definition.concurrencyPolicy() == ConcurrencyPolicy.FORBID && running.get() > 0) {
             log.info(() -> "skip job because previous execution is still running: " + definition.id());
@@ -44,21 +50,31 @@ public final class JobDispatcher {
         workerPool.submit(() -> {
             Instant actualFireTime = clock.instant();
             ExecutionContext context = new ExecutionContext(
+                    command.executionId(),
                     definition.id(),
                     definition.handlerName(),
-                    scheduledFireTime,
+                    command.scheduledFireTime(),
+                    command.dispatchTime(),
                     actualFireTime,
                     definition.parameters()
             );
             try {
                 handler.handle(context);
-                log.info(() -> "job succeeded: " + definition.id() + ", scheduled=" + scheduledFireTime);
+                Duration dispatchLag = Duration.between(command.scheduledFireTime(), command.dispatchTime());
+                log.info(() -> "job succeeded: " + definition.id()
+                        + ", scheduled=" + command.scheduledFireTime()
+                        + ", dispatchLag=" + dispatchLag);
             } catch (Exception e) {
-                log.log(Level.SEVERE, "job failed: " + definition.id() + ", scheduled=" + scheduledFireTime, e);
+                log.log(Level.SEVERE, "job failed: " + definition.id()
+                        + ", scheduled=" + command.scheduledFireTime(), e);
             } finally {
                 running.decrementAndGet();
             }
         });
+    }
+
+    private String executionId(JobDefinition definition, Instant scheduledFireTime) {
+        return definition.id() + "@" + scheduledFireTime;
     }
 }
 

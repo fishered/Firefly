@@ -27,6 +27,26 @@ job_execution_log       # 执行历史
 
 所有运行态时间继续使用 UTC `Instant`。业务时间，例如每天 01:00，必须和任务的 IANA `ZoneId` 一起解释。
 
+持久化存储是事实来源，但不是调度热路径。调度节点启动或接收到配置事件后，把 active jobs 加载进本地时间索引；每次 tick 从本地索引取 due jobs，而不是每 500ms 扫数据库。
+
+推荐热路径：
+
+```text
+load active jobs from store
+        ↓
+build local TimingIndex
+        ↓
+tick reads local due batch
+        ↓
+advance local runtime cursor
+        ↓
+dispatch execution command
+        ↓
+checkpoint runtime state asynchronously
+```
+
+数据库变慢时，已加载到内存的任务应继续运行；配置变更和 checkpoint 可以延迟或重试。只有超过安全窗口后才进入降级或保护模式。
+
 ## 2. 任务组与执行器
 
 Firefly 采用三层关系：
@@ -72,6 +92,25 @@ job_runtime_state
 ```
 
 所以当前实现先允许保存 `ScheduleSpec.linearBackoff(...)`，但不会把它解析成可执行 `Schedule`。等 `job_runtime_state` 增加状态字段后，再接入执行。
+
+## 3.1 same-fire-time batch dispatch
+
+多个任务配置在同一个触发时刻时，Firefly 使用 **same-fire-time batch dispatch** 语义：
+
+```text
+same nextFireTime -> same DueJobBatch -> same scheduledFireTime
+```
+
+`JobRepository.findDueBatch(now, softLimit, hardLimit)` 会先找到最早 due 的 `nextFireTime`，然后尽量返回所有相同 `nextFireTime` 的任务。`softLimit` 不会切开同一时刻的任务，`hardLimit` 只作为内存和延迟保护。
+
+调度中心保证的是调度语义一致：
+
+- 同一批任务拥有相同 `scheduledFireTime`。
+- 调度线程只推进状态并生成 `ExecutionCommand`。
+- 任务执行交给 dispatcher / executor，不阻塞 tick 线程。
+- `dispatchTime - scheduledFireTime` 可用于观测调度延迟。
+
+系统不能承诺所有任务在物理同一毫秒开始执行。JVM、OS、线程池、网络和下游 executor 都会造成抖动。Firefly 要做的是让计划时间一致、分发尽量同批、延迟可观测。
 
 ## 4. 服务在线检查
 
@@ -143,5 +182,7 @@ UNREGISTER_EXECUTOR
 - `InMemoryExecutorRegistry`
 - `ScheduleSpec`
 - `ScheduleSpecParser`
+- `DueJobBatch`
+- `ExecutionCommand`
 
 这些是后续 JDBC、Netty、HTTP executor 的共同地基。下一步更适合做 `stores/jdbc`，先把配置和 runtime state 持久化，再接远程 executor 协议。

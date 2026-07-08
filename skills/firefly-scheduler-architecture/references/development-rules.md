@@ -53,8 +53,10 @@ Future persistent storage should be introduced behind repository interfaces. Pre
 - optimistic locking for `nextFireTime`;
 - explicit version fields;
 - UTC instants for cursors and execution history;
-- separate task definition from runtime schedule state.
+- separate task definition from runtime schedule state;
 - separate executor definitions, executor instances, job groups, job definitions, runtime state, and execution logs.
+- Do not put persistent storage on the scheduler tick hot path. Scheduler nodes should use a local timing index and checkpoint runtime state asynchronously or through bounded write paths.
+- Do not split jobs with the same `nextFireTime` by normal soft batch limits; use same-fire-time batch dispatch with a separate hard safety limit.
 
 ## Distributed Scheduling Direction
 

@@ -2,14 +2,17 @@ package io.github.nishi.firefly.engine;
 
 import io.github.nishi.firefly.domain.JobDefinition;
 import io.github.nishi.firefly.domain.MisfirePolicy;
+import io.github.nishi.firefly.store.DueJobBatch;
 import io.github.nishi.firefly.store.JobRepository;
 import io.github.nishi.firefly.store.ScheduledJobRecord;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -26,7 +29,12 @@ public final class SchedulerEngine {
     private static final int DUE_BATCH_SIZE = 100;
 
     /**
-     * Maximum number of due-job batches drained in one scheduler tick.
+     * Hard guardrail for jobs sharing one exact fire time.
+     */
+    private static final int SAME_FIRE_TIME_HARD_LIMIT = 10_000;
+
+    /**
+     * Maximum number of due fire-time groups drained in one scheduler tick.
      *
      * <p>This caps scheduler work per tick while allowing bursts larger than one
      * batch to progress without waiting for the next 500ms timer cycle.
@@ -76,19 +84,32 @@ public final class SchedulerEngine {
 
     public void tick() {
         Instant now = clock.instant();
+        Set<String> processedJobIds = new HashSet<>();
 
         /**
-         * Drain multiple due batches using the same logical tick time. Each record
-         * is advanced with repository compare-and-set before dispatch, so stale
-         * records from concurrent updates are ignored safely.
+         * Drain same-fire-time batch dispatch groups using the same logical tick
+         * time. Each record is advanced with repository compare-and-set before
+         * dispatch, so stale records from concurrent updates are ignored safely.
          */
         for (int batch = 0; batch < MAX_DUE_BATCHES_PER_TICK; batch++) {
-            List<ScheduledJobRecord> dueRecords = repository.findDue(now, DUE_BATCH_SIZE);
+            DueJobBatch dueBatch = repository.findDueBatch(
+                    now,
+                    DUE_BATCH_SIZE,
+                    SAME_FIRE_TIME_HARD_LIMIT,
+                    processedJobIds
+            );
+            List<ScheduledJobRecord> dueRecords = dueBatch.records();
             if (dueRecords.isEmpty()) {
                 return;
             }
+            if (dueBatch.truncated()) {
+                log.warning(() -> "same fire-time batch reached hard limit, fireTime="
+                        + dueBatch.fireTime()
+                        + ", limit=" + SAME_FIRE_TIME_HARD_LIMIT);
+            }
 
             for (ScheduledJobRecord record : dueRecords) {
+                processedJobIds.add(record.definition().id());
                 List<Instant> fireTimes = calculateFireTimes(record, now);
                 Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
                 boolean updated = repository.updateNextFireTime(
@@ -99,11 +120,13 @@ public final class SchedulerEngine {
                 if (!updated) {
                     continue;
                 }
-                fireTimes.forEach(fireTime -> dispatcher.dispatch(record.definition(), fireTime));
-            }
-
-            if (dueRecords.size() < DUE_BATCH_SIZE) {
-                return;
+                Instant dispatchTime = clock.instant();
+                fireTimes.forEach(fireTime -> dispatcher.dispatch(new ExecutionCommand(
+                        executionId(record.definition(), fireTime),
+                        record.definition(),
+                        fireTime,
+                        dispatchTime
+                )));
             }
         }
     }
@@ -148,6 +171,10 @@ public final class SchedulerEngine {
             return definition.schedule().nextAfter(now, definition.zoneId());
         }
         return next;
+    }
+
+    private String executionId(JobDefinition definition, Instant fireTime) {
+        return definition.id() + "@" + fireTime;
     }
 }
 

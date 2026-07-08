@@ -29,6 +29,39 @@ class InMemoryJobRepositoryTest {
     }
 
     @Test
+    void dueBatchDoesNotSplitSameFireTimeBySoftLimit() {
+        InMemoryJobRepository repository = new InMemoryJobRepository();
+        Instant fireTime = Instant.parse("2026-07-06T00:00:10Z");
+
+        for (int i = 0; i < 150; i++) {
+            repository.save(job("job-" + i), fireTime);
+        }
+        repository.save(job("later"), Instant.parse("2026-07-06T00:00:20Z"));
+
+        DueJobBatch batch = repository.findDueBatch(Instant.parse("2026-07-06T00:00:30Z"), 100, 1_000);
+
+        assertEquals(fireTime, batch.fireTime());
+        assertEquals(150, batch.records().size());
+        assertFalse(batch.truncated());
+        assertTrue(batch.records().stream().allMatch(record -> record.nextFireTime().equals(fireTime)));
+    }
+
+    @Test
+    void dueBatchReportsHardLimitTruncation() {
+        InMemoryJobRepository repository = new InMemoryJobRepository();
+        Instant fireTime = Instant.parse("2026-07-06T00:00:10Z");
+
+        for (int i = 0; i < 5; i++) {
+            repository.save(job("job-" + i), fireTime);
+        }
+
+        DueJobBatch batch = repository.findDueBatch(Instant.parse("2026-07-06T00:00:30Z"), 2, 3);
+
+        assertEquals(3, batch.records().size());
+        assertTrue(batch.truncated());
+    }
+
+    @Test
     void ignoresDisabledJobs() {
         InMemoryJobRepository repository = new InMemoryJobRepository();
         JobDefinition disabled = JobDefinition.builder()

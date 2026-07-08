@@ -112,6 +112,8 @@ class SchedulerEngineTest {
         fixture.engine.tick();
 
         assertEquals(150, fixture.scheduledFireTimes().size());
+        assertTrue(fixture.scheduledFireTimes().stream().allMatch(now::equals));
+        assertEquals(150, fixture.dispatchTimes().size());
     }
 
     private static JobDefinition.Builder jobBuilder(String id) {
@@ -141,6 +143,12 @@ class SchedulerEngineTest {
         private List<Instant> scheduledFireTimes() {
             return executions.stream()
                     .map(ExecutionContext::scheduledFireTime)
+                    .toList();
+        }
+
+        private List<Instant> dispatchTimes() {
+            return executions.stream()
+                    .map(ExecutionContext::dispatchTime)
                     .toList();
         }
     }
