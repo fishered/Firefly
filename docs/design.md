@@ -14,7 +14,9 @@ server
 
 `libs/scheduler-core` 是纯 Java 核心，不依赖 Spring、Guice、HTTP、数据库。
 
-`server` 负责启动入口和 Guice 装配，后续 HTTP API、配置加载也放在这一层或单独拆到 `modules/api-http`。
+`server` 负责启动入口和 Guice 装配，后续 HTTP API、配置加载也放在这一层或单独拆到 `apis/http`。
+
+调度中心的任务组、执行器、服务实例注册、心跳和持久化边界见 [scheduler-center.md](scheduler-center.md)。
 
 ## 调度循环
 

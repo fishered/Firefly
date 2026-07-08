@@ -30,7 +30,7 @@
 目标：任务定义、调度游标、执行记录不丢。
 
 - Repository SPI
-- `modules/storage-jdbc` JDBC 实现
+- `stores/jdbc` JDBC 实现
 - 任务版本号
 - 乐观锁更新 next_fire_time
 - 执行实例表

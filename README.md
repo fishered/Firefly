@@ -21,6 +21,9 @@ Firefly 关注三个核心目标：
 - Gradle Wrapper 固定构建环境
 - `libs/scheduler-core` 纯 Java 调度核心
 - `server` 模块使用 Guice 做对象装配
+- 传统 Java 项目的嵌入式集成门面
+- Spring Boot Starter 自动装配入口
+- Server CLI 占位模块
 - 内存版任务仓库
 - 任务级 IANA 时区支持
 - 6 位 cron：秒 分 时 日 月 周
@@ -37,7 +40,13 @@ firefly
 ├── libs
 │   └── scheduler-core     # 纯调度核心，不依赖 Guice/Spring
 ├── server                 # 启动入口和 Guice 装配
+├── integrations
+│   ├── embedded           # 传统 Java / 非 Spring 集成
+│   ├── spring-boot-starter
+│   └── server-cli
 ├── docs
+│   ├── integration.md     # 集成方案
+│   ├── scheduler-center.md
 │   └── timezone.md        # 时区和 DST 语义
 ├── skills                 # 项目专属协作规则
 ├── gradle/wrapper
@@ -47,12 +56,12 @@ firefly
 └── gradlew.bat
 ```
 
-推荐按能力边界继续扩展模块：
+推荐按能力边界继续扩展目录：
 
 ```text
-modules/storage-jdbc
-modules/executor-http
-modules/api-http
+stores/jdbc
+executors/http
+apis/http
 plugins/xxx
 ```
 
@@ -87,6 +96,18 @@ Windows：
 ```
 
 demo 会注册一个本地处理器，并创建一个每 5 秒触发一次的 cron 任务。
+
+## 集成方式
+
+- 传统 Java 项目：使用 `integrations:embedded`，通过 `FireflyScheduler.create()` 嵌入。
+- Spring Boot 项目：使用 `integrations:spring-boot-starter`，声明 `FireflyJobRegistration` Bean。
+- 独立 server：`integrations:server-cli` 已保留入口，后续承载配置文件加载和独立进程运行。
+
+详细说明见 [docs/integration.md](docs/integration.md)。
+
+## 调度中心模型
+
+任务组、执行器、服务实例注册、心跳在线状态、持久化边界和远程触发协议见 [docs/scheduler-center.md](docs/scheduler-center.md)。
 
 ## 任务示例
 

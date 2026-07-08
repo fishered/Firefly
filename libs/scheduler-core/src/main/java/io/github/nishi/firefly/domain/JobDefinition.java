@@ -13,6 +13,7 @@ import java.util.Objects;
 @Builder(builderMethodName = "newBuilder", builderClassName = "Builder")
 public record JobDefinition(
         String id,
+        String groupId,
         String name,
         String handlerName,
         Schedule schedule,
@@ -30,6 +31,7 @@ public record JobDefinition(
      */
     public JobDefinition {
         Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(groupId, "groupId");
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(handlerName, "handlerName");
         Objects.requireNonNull(schedule, "schedule");
@@ -41,6 +43,9 @@ public record JobDefinition(
         parameters = Map.copyOf(Objects.requireNonNull(parameters, "parameters"));
         if (id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
+        }
+        if (groupId.isBlank()) {
+            throw new IllegalArgumentException("groupId must not be blank");
         }
         if (handlerName.isBlank()) {
             throw new IllegalArgumentException("handlerName must not be blank");
@@ -61,6 +66,7 @@ public record JobDefinition(
      */
     public static Builder builder() {
         return newBuilder()
+                .groupId("default")
                 .zoneId(ZoneId.of("UTC"))
                 .misfirePolicy(MisfirePolicy.FIRE_ONCE)
                 .misfireGrace(Duration.ofSeconds(5))

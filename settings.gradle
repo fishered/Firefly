@@ -21,5 +21,8 @@ dependencyResolutionManagement {
 rootProject.name = "firefly"
 
 include("libs:scheduler-core")
+include("integrations:embedded")
+include("integrations:spring-boot-starter")
+include("integrations:server-cli")
 include("server")
 

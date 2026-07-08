@@ -19,6 +19,9 @@ Firefly focuses on three goals:
 - Gradle Wrapper for reproducible builds
 - pure Java scheduler core in `libs/scheduler-core`
 - Guice wiring in the `server` module
+- embedded integration facade for traditional Java services
+- Spring Boot Starter auto-configuration entry point
+- Server CLI placeholder module
 - in-memory job repository
 - job-level IANA time zone support
 - 6-field cron: second minute hour day month weekday
@@ -35,7 +38,13 @@ firefly
 ├── libs
 │   └── scheduler-core     # pure scheduling core, no Guice/Spring
 ├── server                 # app entry point and Guice wiring
+├── integrations
+│   ├── embedded           # traditional Java / non-Spring integration
+│   ├── spring-boot-starter
+│   └── server-cli
 ├── docs
+│   ├── integration.md     # integration guide
+│   ├── scheduler-center.md
 │   └── timezone.md        # time zone and DST semantics
 ├── skills                 # project-specific collaboration rules
 ├── gradle/wrapper
@@ -48,9 +57,9 @@ firefly
 Recommended extension layout:
 
 ```text
-modules/storage-jdbc
-modules/executor-http
-modules/api-http
+stores/jdbc
+executors/http
+apis/http
 plugins/xxx
 ```
 
@@ -85,6 +94,18 @@ Windows:
 ```
 
 The demo registers a local handler and schedules a sample cron job every 5 seconds.
+
+## Integration
+
+- Traditional Java services: use `integrations:embedded` and embed Firefly through `FireflyScheduler.create()`.
+- Spring Boot services: use `integrations:spring-boot-starter` and declare `FireflyJobRegistration` beans.
+- Standalone server: `integrations:server-cli` keeps a command entry point for future config loading and process mode.
+
+See [docs/integration.md](docs/integration.md).
+
+## Scheduler Center Model
+
+Job groups, executors, service instance registration, heartbeat liveness, persistence boundaries, and remote trigger protocols are described in [docs/scheduler-center.md](docs/scheduler-center.md).
 
 ## Example Job
 

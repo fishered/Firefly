@@ -15,6 +15,9 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Default README: `README.md` in Chinese
 - English README: `README_EN.md`
 - Core module: `libs/scheduler-core`
+- Embedded integration module: `integrations/embedded`
+- Spring Boot starter module: `integrations/spring-boot-starter`
+- Server CLI placeholder module: `integrations/server-cli`
 - Server module: `server`
 
 ## Non-Negotiables
@@ -22,6 +25,9 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Do not add Spring or Spring Boot.
 - Keep `libs/scheduler-core` pure Java. It must not depend on Guice, HTTP, databases, or server runtime code.
 - Use Guice only in the `server` module for object wiring.
+- Put traditional embedded integration code in `integrations/embedded`.
+- Put Spring Boot auto-configuration only in `integrations/spring-boot-starter`; do not let Spring dependencies leak into core or traditional integration modules.
+- Keep `integrations/server-cli` thin until config loading, API, and standalone process semantics are deliberately designed.
 - Use Java 21.
 - Use Gradle Wrapper for normal project commands.
 - Prefer small interfaces and module boundaries over framework-heavy abstractions.

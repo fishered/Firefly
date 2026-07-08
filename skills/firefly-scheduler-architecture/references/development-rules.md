@@ -22,8 +22,9 @@ Rules:
 
 - `libs/scheduler-core` owns domain models, schedule calculation, repositories interfaces, dispatch policy, and core tests.
 - `server` owns app startup and Guice wiring.
-- Future transport modules should live under `modules`, such as `modules/api-http` or `modules/executor-http`.
-- Future storage implementations should live under `modules/storage-*`.
+- Future transport implementations should live under specific capability roots, such as `apis/http` or `executors/http`.
+- Future storage implementations should live under `stores/*`.
+- Keep executor registration and heartbeat abstractions in core, but put Netty/HTTP implementations outside core.
 
 ## Dependency Rules
 
@@ -53,6 +54,7 @@ Future persistent storage should be introduced behind repository interfaces. Pre
 - explicit version fields;
 - UTC instants for cursors and execution history;
 - separate task definition from runtime schedule state.
+- separate executor definitions, executor instances, job groups, job definitions, runtime state, and execution logs.
 
 ## Distributed Scheduling Direction
 
