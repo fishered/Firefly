@@ -1,0 +1,4 @@
+interface:
+  display_name: "Firefly Scheduler Architecture"
+  short_description: "Firefly scheduler design rules"
+  default_prompt: "Use $firefly-scheduler-architecture to design or modify Firefly scheduling behavior while preserving its lightweight architecture."

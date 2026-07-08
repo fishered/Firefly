@@ -1,0 +1,38 @@
+plugins {
+    id "base"
+}
+
+allprojects {
+    group = "io.github.nishi"
+    version = "0.1.0-SNAPSHOT"
+
+    if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
+        tasks.register("prepareKotlinBuildScriptModel") {
+            group = "ide"
+            description = "No-op compatibility task for IntelliJ IDEA Gradle import."
+        }
+    }
+}
+
+subprojects {
+    apply plugin: "java-library"
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = "UTF-8"
+        options.release = 21
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        testLogging {
+            events "passed", "skipped", "failed"
+        }
+    }
+}
+
