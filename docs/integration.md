@@ -2,6 +2,8 @@
 
 Firefly 的集成层分成三类入口：传统 Java 项目、Spring Boot 项目、独立 server CLI。核心原则是：调度核心保持纯 Java，框架适配放在独立模块里。
 
+页面操作、指标监控、审计告警这类能力通过 `plugins/*` 接入，不写进调度核心。
+
 ## 模块
 
 ```text
@@ -10,6 +12,13 @@ integrations
 ├── netty-spring-boot-starter
 ├── spring-boot-starter    # Spring Boot 自动装配
 └── server-cli             # 独立 server 命令入口占位
+```
+
+```text
+plugins
+├── plugin-api             # 插件 SPI
+├── admin-web              # 运维页面和 JSON 接口
+└── metrics-prometheus     # Prometheus 文本指标
 ```
 
 ## 传统项目快速集成
@@ -79,6 +88,26 @@ firefly:
 `integrations/server-cli` 当前只保留独立 server 命令入口。它的目标是后续承载配置文件加载、HTTP 管理 API、独立进程运行等能力。
 
 这个入口先保持很薄，避免在核心能力稳定前过早引入复杂运行时。
+
+## 可选插件
+
+插件由宿主服务显式启用。示例：
+
+```java
+FireflyPluginContext context = FireflyPluginContext.builder()
+        .jobRepository(jobRepository)
+        .nodeRegistry(nodeRegistry)
+        .build();
+
+try (FireflyPluginManager plugins = new FireflyPluginManager(List.of(
+        new AdminWebPlugin(),
+        new PrometheusMetricsPlugin()
+))) {
+    plugins.start(context);
+}
+```
+
+详细说明见 [plugins.md](plugins.md)。
 
 ## 远程执行器集成
 

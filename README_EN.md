@@ -23,6 +23,9 @@ Firefly focuses on three goals:
 - Spring Boot Starter auto-configuration entry point
 - Netty long-connection remote executor foundation
 - JDBC persistence for job definitions, nextFireTime CAS, node registry, heartbeats, shard leases, and fencing tokens
+- Plugin SPI for optional components outside the scheduler core
+- Admin Web plugin for lightweight operational pages and JSON endpoints
+- Prometheus Metrics plugin for an independent `/metrics` text endpoint
 - Server CLI placeholder module
 - in-memory job repository
 - job-level IANA time zone support
@@ -49,10 +52,15 @@ firefly
 │   └── netty              # remote executor long-connection transport
 ├── stores
 │   └── jdbc               # JDBC job repository and HA coordination storage
+├── plugins
+│   ├── plugin-api         # plugin SPI and lifecycle management
+│   ├── admin-web          # lightweight operational page / JSON endpoints
+│   └── metrics-prometheus # Prometheus text metrics plugin
 ├── docs
 │   ├── integration.md     # integration guide
 │   ├── ha-cluster.md
 │   ├── netty-executor.md
+│   ├── plugins.md
 │   ├── scheduler-center.md
 │   └── timezone.md        # time zone and DST semantics
 ├── skills                 # project-specific collaboration rules
@@ -120,6 +128,8 @@ Netty remote executor integration is described in [docs/netty-executor.md](docs/
 
 HA node roles, shard leases, fencing tokens, and JDBC storage are described in [docs/ha-cluster.md](docs/ha-cluster.md).
 
+Plugin SPI, Admin Web, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md).
+
 ## Example Job
 
 ```java
@@ -184,7 +194,7 @@ See [docs/timezone.md](docs/timezone.md).
 4. Execution history and state transitions.
 5. Remote executor authentication, TLS, and routing policies.
 6. Scheduler shard loading and local TimingIndex integration.
-7. Metrics and tracing.
+7. Tracing and richer plugin discovery.
 
 ## Name
 

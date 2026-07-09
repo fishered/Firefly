@@ -19,6 +19,10 @@ firefly
 │   └── netty
 ├── stores
 │   └── jdbc
+├── plugins
+│   ├── plugin-api
+│   ├── admin-web
+│   └── metrics-prometheus
 ├── server
 ├── docs
 ├── skills
@@ -33,6 +37,7 @@ Rules:
 - `server` owns app startup and Guice wiring.
 - Transport implementations should live under specific capability roots, such as `executors/netty`, `executors/http`, or `apis/http`.
 - Storage implementations should live under `stores/*`; `stores/jdbc` currently owns JDBC job repository, node registry, and shard lease coordination.
+- Optional operational components should live under `plugins/*`; `plugins/plugin-api` owns the SPI, while concrete plugins own their transport and presentation dependencies.
 - Keep executor registration and heartbeat abstractions in core, but put Netty/HTTP implementations outside core.
 
 ## Dependency Rules
@@ -50,6 +55,7 @@ Avoid in core:
 - HTTP server frameworks;
 - database clients;
 - executor network protocol clients.
+- metrics or admin-page implementations.
 
 ## Storage Direction
 

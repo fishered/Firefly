@@ -18,7 +18,8 @@
 
 目标：提供可操作、可观测的调度服务。
 
-- JDK HttpServer 或轻量框架暴露 API
+- Admin Web 插件增强操作能力
+- Prometheus Metrics 插件扩展调度指标
 - JSON 配置导入导出
 - 任务状态查询
 - 执行日志查询
@@ -66,4 +67,5 @@
 - Repository 是接口，数据库只是实现之一。
 - misfire 和 concurrency 是明确策略，不藏在执行细节里。
 - 核心模块不依赖 Spring，方便嵌入任意 Java 服务。
+- 页面、指标、审计和告警通过插件接入，不硬编码进调度核心。
 

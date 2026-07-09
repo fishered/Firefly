@@ -27,5 +27,8 @@ include("integrations:server-cli")
 include("integrations:netty-spring-boot-starter")
 include("executors:netty")
 include("stores:jdbc")
+include("plugins:plugin-api")
+include("plugins:admin-web")
+include("plugins:metrics-prometheus")
 include("server")
 
