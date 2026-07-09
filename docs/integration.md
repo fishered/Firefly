@@ -7,6 +7,7 @@ Firefly 的集成层分成三类入口：传统 Java 项目、Spring Boot 项目
 ```text
 integrations
 ├── embedded               # 传统 Java / 非 Spring 项目的嵌入式门面
+├── netty-spring-boot-starter
 ├── spring-boot-starter    # Spring Boot 自动装配
 └── server-cli             # 独立 server 命令入口占位
 ```
@@ -78,3 +79,56 @@ firefly:
 `integrations/server-cli` 当前只保留独立 server 命令入口。它的目标是后续承载配置文件加载、HTTP 管理 API、独立进程运行等能力。
 
 这个入口先保持很薄，避免在核心能力稳定前过早引入复杂运行时。
+
+## 远程执行器集成
+
+当业务服务不想把调度核心嵌入进程，或者希望统一由调度中心管理任务配置时，推荐使用 Netty 远程执行器：
+
+```text
+业务服务主动连接 -> scheduler gateway
+调度中心触发任务 -> gateway 按 executorName 路由到在线实例
+业务服务执行任务 -> ACK / REPORT_RESULT 返回结果
+```
+
+传统项目使用 `executors:netty`：
+
+```java
+NettyExecutorClient client = NettyExecutorClient.builder()
+        .schedulerHost("127.0.0.1")
+        .schedulerPort(9700)
+        .executorName("billing-executor")
+        .serviceName("billing-service")
+        .build()
+        .registerHandler("billingHandler", context -> {
+            // run business code
+        });
+
+client.start();
+```
+
+Spring Boot 项目使用 `integrations:netty-spring-boot-starter`：
+
+```yaml
+firefly:
+  executor:
+    netty:
+      enabled: true
+      auto-start: true
+      scheduler-host: 127.0.0.1
+      scheduler-port: 9700
+      executor-name: billing-executor
+      service-name: billing-service
+```
+
+业务代码只声明 handler Bean：
+
+```java
+@Bean
+NettyJobHandlerRegistration billingHandler() {
+    return NettyJobHandlerRegistration.of("billingHandler", context -> {
+        // run business code
+    });
+}
+```
+
+业务服务不需要开放监听端口。它只需要能连到调度中心 gateway。

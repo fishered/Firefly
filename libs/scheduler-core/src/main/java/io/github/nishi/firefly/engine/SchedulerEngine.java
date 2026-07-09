@@ -34,12 +34,17 @@ public final class SchedulerEngine {
     private static final int SAME_FIRE_TIME_HARD_LIMIT = 10_000;
 
     /**
-     * Maximum number of due fire-time groups drained in one scheduler tick.
+     * Maximum due records advanced in one scheduler tick.
      *
-     * <p>This caps scheduler work per tick while allowing bursts larger than one
-     * batch to progress without waiting for the next 500ms timer cycle.
+     * <p>This protects the timer thread from unbounded backlog while allowing
+     * many different fire-time groups to progress in the same tick.
      */
-    private static final int MAX_DUE_BATCHES_PER_TICK = 10;
+    private static final int MAX_DUE_RECORDS_PER_TICK = 10_000;
+
+    /**
+     * Secondary guardrail for pathological cases with many tiny fire-time groups.
+     */
+    private static final int MAX_DUE_FIRE_TIME_GROUPS_PER_TICK = 10_000;
 
     private final JobRepository repository;
     private final JobDispatcher dispatcher;
@@ -91,17 +96,21 @@ public final class SchedulerEngine {
          * time. Each record is advanced with repository compare-and-set before
          * dispatch, so stale records from concurrent updates are ignored safely.
          */
-        for (int batch = 0; batch < MAX_DUE_BATCHES_PER_TICK; batch++) {
+        int processedRecords = 0;
+        for (int group = 0; group < MAX_DUE_FIRE_TIME_GROUPS_PER_TICK
+                && processedRecords < MAX_DUE_RECORDS_PER_TICK; group++) {
+            int remainingRecordBudget = MAX_DUE_RECORDS_PER_TICK - processedRecords;
             DueJobBatch dueBatch = repository.findDueBatch(
                     now,
                     DUE_BATCH_SIZE,
-                    SAME_FIRE_TIME_HARD_LIMIT,
+                    Math.min(SAME_FIRE_TIME_HARD_LIMIT, remainingRecordBudget),
                     processedJobIds
             );
             List<ScheduledJobRecord> dueRecords = dueBatch.records();
             if (dueRecords.isEmpty()) {
                 return;
             }
+            processedRecords += dueRecords.size();
             if (dueBatch.truncated()) {
                 log.warning(() -> "same fire-time batch reached hard limit, fireTime="
                         + dueBatch.fireTime()

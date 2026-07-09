@@ -116,6 +116,23 @@ class SchedulerEngineTest {
         assertEquals(150, fixture.dispatchTimes().size());
     }
 
+    @Test
+    void drainsManyDifferentFireTimesInSingleTick() {
+        Instant now = Instant.parse("2026-07-06T00:10:00Z");
+        TestFixture fixture = new TestFixture(now);
+
+        for (int i = 0; i < 150; i++) {
+            JobDefinition job = jobBuilder("job-" + i)
+                    .misfireGrace(Duration.ofMinutes(30))
+                    .build();
+            fixture.repository.save(job, now.minusSeconds(i + 1L));
+        }
+
+        fixture.engine.tick();
+
+        assertEquals(150, fixture.scheduledFireTimes().size());
+    }
+
     private static JobDefinition.Builder jobBuilder(String id) {
         return JobDefinition.builder()
                 .id(id)

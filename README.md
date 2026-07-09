@@ -23,6 +23,8 @@ Firefly 关注三个核心目标：
 - `server` 模块使用 Guice 做对象装配
 - 传统 Java 项目的嵌入式集成门面
 - Spring Boot Starter 自动装配入口
+- Netty 长连接远程执行器基础实现
+- JDBC 持久化存储：任务定义、nextFireTime CAS、节点注册、心跳、shard lease、fencing token
 - Server CLI 占位模块
 - 内存版任务仓库
 - 任务级 IANA 时区支持
@@ -42,10 +44,17 @@ firefly
 ├── server                 # 启动入口和 Guice 装配
 ├── integrations
 │   ├── embedded           # 传统 Java / 非 Spring 集成
+│   ├── netty-spring-boot-starter
 │   ├── spring-boot-starter
 │   └── server-cli
+├── executors
+│   └── netty              # 远程执行器长连接实现
+├── stores
+│   └── jdbc               # JDBC 任务仓库和 HA 协调存储
 ├── docs
 │   ├── integration.md     # 集成方案
+│   ├── ha-cluster.md
+│   ├── netty-executor.md
 │   ├── scheduler-center.md
 │   └── timezone.md        # 时区和 DST 语义
 ├── skills                 # 项目专属协作规则
@@ -59,7 +68,6 @@ firefly
 推荐按能力边界继续扩展目录：
 
 ```text
-stores/jdbc
 executors/http
 apis/http
 plugins/xxx
@@ -101,6 +109,7 @@ demo 会注册一个本地处理器，并创建一个每 5 秒触发一次的 cr
 
 - 传统 Java 项目：使用 `integrations:embedded`，通过 `FireflyScheduler.create()` 嵌入。
 - Spring Boot 项目：使用 `integrations:spring-boot-starter`，声明 `FireflyJobRegistration` Bean。
+- 远程业务执行器：使用 `executors:netty`，业务服务主动连接调度中心 gateway，不需要业务侧开放监听端口。
 - 独立 server：`integrations:server-cli` 已保留入口，后续承载配置文件加载和独立进程运行。
 
 详细说明见 [docs/integration.md](docs/integration.md)。
@@ -108,6 +117,10 @@ demo 会注册一个本地处理器，并创建一个每 5 秒触发一次的 cr
 ## 调度中心模型
 
 任务组、执行器、服务实例注册、心跳在线状态、持久化边界和远程触发协议见 [docs/scheduler-center.md](docs/scheduler-center.md)。
+
+Netty 远程执行器接入见 [docs/netty-executor.md](docs/netty-executor.md)。
+
+HA 节点角色、shard lease、fencing token 和 JDBC 存储见 [docs/ha-cluster.md](docs/ha-cluster.md)。
 
 ## 任务示例
 
@@ -169,10 +182,10 @@ DST 行为：
 
 1. 轻量 HTTP 管理 API。
 2. JSON/YAML 任务定义加载。
-3. JDBC repository 模块。
+3. 执行历史和 token-aware runtime state。
 4. 执行历史和状态流转。
-5. 远程执行器协议。
-6. 调度分片和 lease 机制。
+5. 远程执行器鉴权、TLS、路由策略。
+6. 调度分片与本地 TimingIndex 加载。
 7. metrics 和 tracing。
 
 ## 名字

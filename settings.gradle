@@ -24,5 +24,8 @@ include("libs:scheduler-core")
 include("integrations:embedded")
 include("integrations:spring-boot-starter")
 include("integrations:server-cli")
+include("integrations:netty-spring-boot-starter")
+include("executors:netty")
+include("stores:jdbc")
 include("server")
 

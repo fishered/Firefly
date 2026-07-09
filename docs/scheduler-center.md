@@ -112,6 +112,17 @@ same nextFireTime -> same DueJobBatch -> same scheduledFireTime
 
 系统不能承诺所有任务在物理同一毫秒开始执行。JVM、OS、线程池、网络和下游 executor 都会造成抖动。Firefly 要做的是让计划时间一致、分发尽量同批、延迟可观测。
 
+实现上，内存 repository 的锁只保护本地 map 和 `nextFireTime` 索引。锁内只做快照读取或索引更新，不执行任务、不做网络调用、不等待下游服务。调度线程拿到 due batch 后释放锁，再推进状态和分发命令。
+
+如果 1000 个任务的 fire time 都不同，调度线程不会只处理固定 10 组就停。当前策略是按 tick 记录数预算推进：
+
+```text
+MAX_DUE_RECORDS_PER_TICK = 10000
+MAX_DUE_FIRE_TIME_GROUPS_PER_TICK = 10000
+```
+
+同一 fire time 的任务不会被 soft limit 拆开；不同 fire time 的任务会在同一 tick 内继续 drain，直到没有 due job 或达到预算上限。
+
 ## 4. 服务在线检查
 
 执行器实例在线状态通过 `ExecutorRegistry` 表达：
@@ -141,7 +152,7 @@ core
 └── ExecutorRegistry / ExecutorDispatcher 接口
 
 executors/netty
-└── 基于 Netty 的长连接、心跳、任务触发、ack
+└── 基于 Netty 的长连接、JSON 消息、心跳、任务触发、ack
 
 executors/http
 └── 基于 HTTP 的任务触发

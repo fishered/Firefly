@@ -21,6 +21,8 @@ Firefly focuses on three goals:
 - Guice wiring in the `server` module
 - embedded integration facade for traditional Java services
 - Spring Boot Starter auto-configuration entry point
+- Netty long-connection remote executor foundation
+- JDBC persistence for job definitions, nextFireTime CAS, node registry, heartbeats, shard leases, and fencing tokens
 - Server CLI placeholder module
 - in-memory job repository
 - job-level IANA time zone support
@@ -40,10 +42,17 @@ firefly
 ├── server                 # app entry point and Guice wiring
 ├── integrations
 │   ├── embedded           # traditional Java / non-Spring integration
+│   ├── netty-spring-boot-starter
 │   ├── spring-boot-starter
 │   └── server-cli
+├── executors
+│   └── netty              # remote executor long-connection transport
+├── stores
+│   └── jdbc               # JDBC job repository and HA coordination storage
 ├── docs
 │   ├── integration.md     # integration guide
+│   ├── ha-cluster.md
+│   ├── netty-executor.md
 │   ├── scheduler-center.md
 │   └── timezone.md        # time zone and DST semantics
 ├── skills                 # project-specific collaboration rules
@@ -57,7 +66,6 @@ firefly
 Recommended extension layout:
 
 ```text
-stores/jdbc
 executors/http
 apis/http
 plugins/xxx
@@ -99,6 +107,7 @@ The demo registers a local handler and schedules a sample cron job every 5 secon
 
 - Traditional Java services: use `integrations:embedded` and embed Firefly through `FireflyScheduler.create()`.
 - Spring Boot services: use `integrations:spring-boot-starter` and declare `FireflyJobRegistration` beans.
+- Remote business executors: use `executors:netty`; business services actively connect to the scheduler gateway and do not need to expose listener ports.
 - Standalone server: `integrations:server-cli` keeps a command entry point for future config loading and process mode.
 
 See [docs/integration.md](docs/integration.md).
@@ -106,6 +115,10 @@ See [docs/integration.md](docs/integration.md).
 ## Scheduler Center Model
 
 Job groups, executors, service instance registration, heartbeat liveness, persistence boundaries, and remote trigger protocols are described in [docs/scheduler-center.md](docs/scheduler-center.md).
+
+Netty remote executor integration is described in [docs/netty-executor.md](docs/netty-executor.md).
+
+HA node roles, shard leases, fencing tokens, and JDBC storage are described in [docs/ha-cluster.md](docs/ha-cluster.md).
 
 ## Example Job
 
@@ -167,10 +180,10 @@ See [docs/timezone.md](docs/timezone.md).
 
 1. Lightweight HTTP management API.
 2. JSON/YAML job definition loading.
-3. JDBC repository module.
+3. Execution history and token-aware runtime state.
 4. Execution history and state transitions.
-5. Remote executor protocol.
-6. Scheduler shard and lease mechanism.
+5. Remote executor authentication, TLS, and routing policies.
+6. Scheduler shard loading and local TimingIndex integration.
 7. Metrics and tracing.
 
 ## Name

@@ -10,6 +10,15 @@ Current layout:
 firefly
 ├── libs
 │   └── scheduler-core
+├── integrations
+│   ├── embedded
+│   ├── netty-spring-boot-starter
+│   ├── spring-boot-starter
+│   └── server-cli
+├── executors
+│   └── netty
+├── stores
+│   └── jdbc
 ├── server
 ├── docs
 ├── skills
@@ -22,8 +31,8 @@ Rules:
 
 - `libs/scheduler-core` owns domain models, schedule calculation, repositories interfaces, dispatch policy, and core tests.
 - `server` owns app startup and Guice wiring.
-- Future transport implementations should live under specific capability roots, such as `apis/http` or `executors/http`.
-- Future storage implementations should live under `stores/*`.
+- Transport implementations should live under specific capability roots, such as `executors/netty`, `executors/http`, or `apis/http`.
+- Storage implementations should live under `stores/*`; `stores/jdbc` currently owns JDBC job repository, node registry, and shard lease coordination.
 - Keep executor registration and heartbeat abstractions in core, but put Netty/HTTP implementations outside core.
 
 ## Dependency Rules
@@ -44,11 +53,11 @@ Avoid in core:
 
 ## Storage Direction
 
-Current storage is in-memory.
+Current job repository storage has in-memory and JDBC implementations. JDBC HA coordination storage exists for node registry and shard lease.
 
 The in-memory repository maintains an ordered `nextFireTime` index for due-job lookup. Do not reintroduce full collection scans for normal due queries.
 
-Future persistent storage should be introduced behind repository interfaces. Prefer:
+Persistent job/runtime storage should stay behind repository interfaces. Prefer:
 
 - optimistic locking for `nextFireTime`;
 - explicit version fields;
@@ -57,6 +66,7 @@ Future persistent storage should be introduced behind repository interfaces. Pre
 - separate executor definitions, executor instances, job groups, job definitions, runtime state, and execution logs.
 - Do not put persistent storage on the scheduler tick hot path. Scheduler nodes should use a local timing index and checkpoint runtime state asynchronously or through bounded write paths.
 - Do not split jobs with the same `nextFireTime` by normal soft batch limits; use same-fire-time batch dispatch with a separate hard safety limit.
+- Use shard lease and fencing token checks before a scheduler node advances runtime state.
 
 ## Distributed Scheduling Direction
 

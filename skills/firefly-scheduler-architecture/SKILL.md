@@ -18,6 +18,10 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Embedded integration module: `integrations/embedded`
 - Spring Boot starter module: `integrations/spring-boot-starter`
 - Server CLI placeholder module: `integrations/server-cli`
+- Netty executor module: `executors/netty`
+- Netty Spring Boot starter module: `integrations/netty-spring-boot-starter`
+- JDBC storage module: `stores/jdbc`
+- HA cluster model: `io.github.nishi.firefly.cluster`
 - Server module: `server`
 
 ## Non-Negotiables
@@ -28,6 +32,10 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Put traditional embedded integration code in `integrations/embedded`.
 - Put Spring Boot auto-configuration only in `integrations/spring-boot-starter`; do not let Spring dependencies leak into core or traditional integration modules.
 - Keep `integrations/server-cli` thin until config loading, API, and standalone process semantics are deliberately designed.
+- Keep Netty transport code in `executors/netty`; use JSON protocol frames and do not put Netty dependencies in `libs/scheduler-core`.
+- Keep HA coordination abstractions in core, but put JDBC/etcd/ZooKeeper implementations outside core.
+- Keep JDBC storage code in `stores/jdbc`; it may implement job repository, node registry, and shard lease, but should not make scheduler tick depend on full database scans.
+- Use shard lease and fencing token semantics for scheduler HA; do not implement HA as a single unguarded master flag.
 - Use Java 21.
 - Use Gradle Wrapper for normal project commands.
 - Prefer small interfaces and module boundaries over framework-heavy abstractions.
@@ -62,6 +70,14 @@ Wrapper command for contributors:
 - Do not use `ZoneId.systemDefault()` for job semantics.
 - Do not store business schedules as fixed offsets such as `+08:00` when region rules matter.
 - Cron expressions are interpreted in the job's local wall-clock time, then converted to UTC instants.
+
+## HA Model
+
+- Scheduler ownership is shard-based, not a single global master flag.
+- A node must hold the shard lease before loading jobs for that shard into its local TimingIndex.
+- Fencing tokens must be included in dispatch commands and persistent runtime-state updates.
+- Business executors connect outward to scheduler gateways; business services should not be required to expose a listener port.
+- The JDBC store currently provides `JdbcJobRepository`, `JdbcNodeRegistry`, `JdbcShardManager`, and `JdbcSchema`.
 
 ## DST Defaults
 
