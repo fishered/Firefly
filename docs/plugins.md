@@ -61,6 +61,12 @@ try (FireflyPluginManager plugins = new FireflyPluginManager(List.of(
 .\gradlew.bat :server:run --args="--firefly.admin-web.enabled=true"
 ```
 
+也可以通过插件列表启用：
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.plugins=admin-web"
+```
+
 启用后默认监听：
 
 ```text
@@ -92,6 +98,12 @@ http://127.0.0.1:9710/
 
 ```powershell
 .\gradlew.bat :server:run --args="--firefly.metrics.prometheus.enabled=true"
+```
+
+也可以通过插件列表启用：
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.plugins=metrics-prometheus"
 ```
 
 启用后默认监听：
@@ -133,6 +145,7 @@ $env:FIREFLY_METRICS_PROMETHEUS_ENABLED="true"
 ```text
 FIREFLY_ADMIN_WEB_ENABLED
 FIREFLY_ADMIN_WEB_PORT
+FIREFLY_PLUGINS
 FIREFLY_METRICS_PROMETHEUS_ENABLED
 FIREFLY_METRICS_PROMETHEUS_PORT
 ```

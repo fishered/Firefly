@@ -1,0 +1,45 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#f6f7f9"/>
+  <rect x="0" y="0" width="248" height="900" fill="#101820"/>
+  <text x="32" y="48" fill="#f8f4d8" font-family="Segoe UI, Arial" font-size="28" font-weight="700">Firefly</text>
+  <g font-family="Segoe UI, Arial" font-size="15">
+    <text x="36" y="148" fill="#9fb2bb">Overview</text>
+    <rect x="20" y="178" width="208" height="40" rx="6" fill="#1f3138"/>
+    <text x="36" y="204" fill="#ffffff">Jobs</text>
+    <text x="36" y="254" fill="#9fb2bb">Executors</text>
+    <text x="36" y="302" fill="#9fb2bb">Executions</text>
+    <text x="36" y="350" fill="#9fb2bb">Nodes</text>
+  </g>
+  <rect x="248" y="0" width="1192" height="72" fill="#ffffff"/>
+  <text x="288" y="45" fill="#172026" font-family="Segoe UI, Arial" font-size="24" font-weight="650">Jobs</text>
+  <rect x="1230" y="20" width="130" height="36" rx="6" fill="#172026"/>
+  <text x="1260" y="43" fill="#ffffff" font-family="Segoe UI, Arial" font-size="14">Create Job</text>
+
+  <rect x="288" y="104" width="1072" height="64" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="316" y="143" fill="#64717a" font-family="Segoe UI, Arial" font-size="14">Search job id, group, executor...</text>
+  <rect x="1082" y="118" width="120" height="36" rx="6" fill="#f2f4f7" stroke="#d9dee3"/>
+  <text x="1114" y="141" fill="#34424b" font-family="Segoe UI, Arial" font-size="14">Enabled</text>
+  <rect x="1218" y="118" width="112" height="36" rx="6" fill="#f2f4f7" stroke="#d9dee3"/>
+  <text x="1248" y="141" fill="#34424b" font-family="Segoe UI, Arial" font-size="14">Zone</text>
+
+  <rect x="288" y="196" width="1072" height="448" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <g font-family="Segoe UI, Arial" font-size="13">
+    <text x="316" y="236" fill="#64717a">Job ID</text><text x="530" y="236" fill="#64717a">Schedule</text><text x="708" y="236" fill="#64717a">Zone</text><text x="878" y="236" fill="#64717a">Executor</text><text x="1082" y="236" fill="#64717a">Next Fire</text><text x="1250" y="236" fill="#64717a">Actions</text>
+    <line x1="316" y1="252" x2="1328" y2="252" stroke="#edf0f2"/>
+    <text x="316" y="288" fill="#172026">remote-example-job</text><text x="530" y="288" fill="#172026">*/5 * * * * *</text><text x="708" y="288" fill="#64717a">Asia/Shanghai</text><text x="878" y="288" fill="#172026">example-executor</text><text x="1082" y="288" fill="#172026">22:20:05</text><text x="1250" y="288" fill="#1d4ed8">Trigger</text>
+    <text x="316" y="340" fill="#172026">billing-daily-report</text><text x="530" y="340" fill="#172026">0 30 22 * * *</text><text x="708" y="340" fill="#64717a">Asia/Shanghai</text><text x="878" y="340" fill="#172026">billing-executor</text><text x="1082" y="340" fill="#172026">22:30:00</text><text x="1250" y="340" fill="#1d4ed8">Edit</text>
+    <text x="316" y="392" fill="#172026">inventory-sync</text><text x="530" y="392" fill="#172026">0 */10 * * * *</text><text x="708" y="392" fill="#64717a">UTC</text><text x="878" y="392" fill="#172026">inventory-executor</text><text x="1082" y="392" fill="#172026">14:30:00</text><text x="1250" y="392" fill="#1d4ed8">Pause</text>
+  </g>
+
+  <rect x="288" y="676" width="520" height="160" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="316" y="714" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Next Fire Preview</text>
+  <text x="316" y="752" fill="#64717a" font-family="Segoe UI, Arial" font-size="13">Asia/Shanghai</text>
+  <text x="316" y="784" fill="#172026" font-family="Segoe UI, Arial" font-size="14">2026-07-09 22:20:05</text>
+  <text x="506" y="784" fill="#172026" font-family="Segoe UI, Arial" font-size="14">2026-07-09 22:20:10</text>
+  <text x="316" y="816" fill="#172026" font-family="Segoe UI, Arial" font-size="14">2026-07-09 22:20:15</text>
+
+  <rect x="840" y="676" width="520" height="160" rx="8" fill="#fffaf0" stroke="#f3d08a"/>
+  <text x="868" y="714" fill="#7a4d00" font-family="Segoe UI, Arial" font-size="18" font-weight="650">DST &amp; Timezone Guard</text>
+  <text x="868" y="752" fill="#7a4d00" font-family="Segoe UI, Arial" font-size="14">This job uses a region timezone. Firefly will preview skipped or repeated local times.</text>
+  <text x="868" y="790" fill="#7a4d00" font-family="Segoe UI, Arial" font-size="14">Recommendation: avoid fixed offsets when business time follows local rules.</text>
+</svg>

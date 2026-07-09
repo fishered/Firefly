@@ -1,0 +1,75 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#f6f7f9"/>
+  <rect x="0" y="0" width="248" height="900" fill="#101820"/>
+  <text x="32" y="48" fill="#f8f4d8" font-family="Segoe UI, Arial" font-size="28" font-weight="700">Firefly</text>
+  <text x="32" y="76" fill="#8fa3ad" font-family="Segoe UI, Arial" font-size="13">Scheduler Console</text>
+  <g font-family="Segoe UI, Arial" font-size="15">
+    <rect x="20" y="122" width="208" height="40" rx="6" fill="#1f3138"/>
+    <text x="36" y="148" fill="#ffffff">Overview</text>
+    <text x="36" y="206" fill="#9fb2bb">Jobs</text>
+    <text x="36" y="254" fill="#9fb2bb">Executors</text>
+    <text x="36" y="302" fill="#9fb2bb">Executions</text>
+    <text x="36" y="350" fill="#9fb2bb">Nodes</text>
+    <text x="36" y="398" fill="#9fb2bb">Plugins</text>
+    <text x="36" y="446" fill="#9fb2bb">Settings</text>
+  </g>
+
+  <rect x="248" y="0" width="1192" height="72" fill="#ffffff"/>
+  <text x="288" y="45" fill="#172026" font-family="Segoe UI, Arial" font-size="24" font-weight="650">Overview</text>
+  <rect x="1226" y="22" width="150" height="32" rx="6" fill="#fff7d6" stroke="#e5c84f"/>
+  <text x="1244" y="43" fill="#5f4b00" font-family="Segoe UI, Arial" font-size="13">standalone node</text>
+
+  <g font-family="Segoe UI, Arial">
+    <rect x="288" y="104" width="250" height="112" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+    <text x="312" y="136" fill="#64717a" font-size="13">Scheduler Status</text>
+    <circle cx="318" cy="174" r="8" fill="#23a26d"/>
+    <text x="338" y="181" fill="#172026" font-size="28" font-weight="700">Healthy</text>
+    <text x="312" y="202" fill="#7d8b94" font-size="12">tick lag p95: 412ms</text>
+
+    <rect x="562" y="104" width="250" height="112" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+    <text x="586" y="136" fill="#64717a" font-size="13">Enabled Jobs</text>
+    <text x="586" y="181" fill="#172026" font-size="34" font-weight="700">128</text>
+    <text x="650" y="181" fill="#23a26d" font-size="14">+12 today</text>
+
+    <rect x="836" y="104" width="250" height="112" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+    <text x="860" y="136" fill="#64717a" font-size="13">Online Executors</text>
+    <text x="860" y="181" fill="#172026" font-size="34" font-weight="700">16</text>
+    <text x="920" y="181" fill="#7d8b94" font-size="14">3 services</text>
+
+    <rect x="1110" y="104" width="250" height="112" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+    <text x="1134" y="136" fill="#64717a" font-size="13">Recent Failures</text>
+    <text x="1134" y="181" fill="#b42318" font-size="34" font-weight="700">3</text>
+    <text x="1188" y="181" fill="#7d8b94" font-size="14">last 24h</text>
+  </g>
+
+  <rect x="288" y="248" width="680" height="296" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="316" y="286" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Upcoming Fire Times</text>
+  <g font-family="Segoe UI, Arial" font-size="13">
+    <text x="316" y="326" fill="#64717a">Job</text><text x="570" y="326" fill="#64717a">Zone</text><text x="710" y="326" fill="#64717a">Next Fire</text><text x="880" y="326" fill="#64717a">Status</text>
+    <line x1="316" y1="342" x2="936" y2="342" stroke="#edf0f2"/>
+    <text x="316" y="378" fill="#172026">billing-daily-report</text><text x="570" y="378" fill="#64717a">Asia/Shanghai</text><text x="710" y="378" fill="#172026">22:30:00</text><text x="880" y="378" fill="#23a26d">ready</text>
+    <text x="316" y="426" fill="#172026">order-timeout-scan</text><text x="570" y="426" fill="#64717a">UTC</text><text x="710" y="426" fill="#172026">14:31:05</text><text x="880" y="426" fill="#23a26d">ready</text>
+    <text x="316" y="474" fill="#172026">inventory-sync</text><text x="570" y="474" fill="#64717a">America/New_York</text><text x="710" y="474" fill="#172026">10:32:00</text><text x="880" y="474" fill="#b7791f">dst watch</text>
+  </g>
+
+  <rect x="992" y="248" width="368" height="296" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="1020" y="286" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Node Roles</text>
+  <g font-family="Segoe UI, Arial" font-size="14">
+    <rect x="1020" y="318" width="120" height="30" rx="5" fill="#e7f6ef"/><text x="1042" y="339" fill="#157347">SCHEDULER</text>
+    <rect x="1152" y="318" width="92" height="30" rx="5" fill="#e8f1ff"/><text x="1179" y="339" fill="#1d4ed8">API</text>
+    <rect x="1256" y="318" width="92" height="30" rx="5" fill="#fff7d6"/><text x="1274" y="339" fill="#7a5a00">GATEWAY</text>
+    <text x="1020" y="390" fill="#64717a">Node ID</text><text x="1138" y="390" fill="#172026">firefly-server-node</text>
+    <text x="1020" y="426" fill="#64717a">Mode</text><text x="1138" y="426" fill="#172026">standalone</text>
+    <text x="1020" y="462" fill="#64717a">Plugins</text><text x="1138" y="462" fill="#172026">admin-web</text>
+  </g>
+
+  <rect x="288" y="576" width="1072" height="248" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="316" y="614" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Recent Executions</text>
+  <g font-family="Segoe UI, Arial" font-size="13">
+    <text x="316" y="654" fill="#64717a">Execution</text><text x="520" y="654" fill="#64717a">Job</text><text x="760" y="654" fill="#64717a">Executor</text><text x="980" y="654" fill="#64717a">Duration</text><text x="1140" y="654" fill="#64717a">Result</text>
+    <line x1="316" y1="670" x2="1328" y2="670" stroke="#edf0f2"/>
+    <text x="316" y="704" fill="#64717a">ex-10081</text><text x="520" y="704" fill="#172026">remote-example-job</text><text x="760" y="704" fill="#172026">example-executor</text><text x="980" y="704" fill="#172026">238ms</text><text x="1140" y="704" fill="#23a26d">SUCCEEDED</text>
+    <text x="316" y="748" fill="#64717a">ex-10080</text><text x="520" y="748" fill="#172026">inventory-sync</text><text x="760" y="748" fill="#172026">inventory-executor</text><text x="980" y="748" fill="#172026">1.2s</text><text x="1140" y="748" fill="#23a26d">SUCCEEDED</text>
+    <text x="316" y="792" fill="#64717a">ex-10079</text><text x="520" y="792" fill="#172026">billing-daily-report</text><text x="760" y="792" fill="#172026">billing-executor</text><text x="980" y="792" fill="#172026">-</text><text x="1140" y="792" fill="#b42318">FAILED</text>
+  </g>
+</svg>

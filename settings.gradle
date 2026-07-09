@@ -30,5 +30,7 @@ include("stores:jdbc")
 include("plugins:plugin-api")
 include("plugins:admin-web")
 include("plugins:metrics-prometheus")
+include("examples:embedded-basic")
+include("examples:netty-executor-basic")
 include("server")
 

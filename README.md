@@ -122,7 +122,7 @@ Windows：
 启用 Admin Web 和 Prometheus Metrics：
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.admin-web.enabled=true --firefly.metrics.prometheus.enabled=true"
+.\gradlew.bat :server:run --args="--firefly.plugins=admin-web,metrics-prometheus"
 ```
 
 ## 集成方式
@@ -142,9 +142,13 @@ Netty 远程执行器接入见 [docs/netty-executor.md](docs/netty-executor.md)�
 
 HA 节点角色、shard lease、fencing token 和 JDBC 存储见 [docs/ha-cluster.md](docs/ha-cluster.md)。
 
+JDBC store 和 schema 方言脚本见 [docs/jdbc-store.md](docs/jdbc-store.md)。
+
 插件体系、Admin Web 和 Prometheus Metrics 见 [docs/plugins.md](docs/plugins.md)。这些插件默认不随 server 加载，需要通过配置显式启用。
 
 模块边界和 executor/server 拆分方向见 [docs/module-boundaries.md](docs/module-boundaries.md)。
+
+示例程序见 [docs/examples.md](docs/examples.md)。
 
 ## 任务示例
 

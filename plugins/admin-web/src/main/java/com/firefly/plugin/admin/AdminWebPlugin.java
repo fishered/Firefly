@@ -3,6 +3,10 @@ package com.firefly.plugin.admin;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.firefly.cluster.FireflyNode;
+import com.firefly.domain.ConcurrencyPolicy;
+import com.firefly.domain.CronSchedule;
+import com.firefly.domain.JobDefinition;
+import com.firefly.domain.MisfirePolicy;
 import com.firefly.plugin.FireflyPlugin;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.store.ScheduledJobRecord;
@@ -11,8 +15,12 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -94,11 +102,19 @@ public final class AdminWebPlugin implements FireflyPlugin {
     }
 
     private void handleJobs(HttpExchange exchange) throws IOException {
-        respond(exchange, "application/json; charset=utf-8", AdminWebJson.jobs(jobs()));
+        if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            respond(exchange, 200, "application/json; charset=utf-8", AdminWebJson.jobs(jobs()));
+            return;
+        }
+        if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            createRemoteJob(exchange);
+            return;
+        }
+        respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
     }
 
     private void handleNodes(HttpExchange exchange) throws IOException {
-        respond(exchange, "application/json; charset=utf-8", AdminWebJson.nodes(nodes()));
+        respond(exchange, 200, "application/json; charset=utf-8", AdminWebJson.nodes(nodes()));
     }
 
     private List<ScheduledJobRecord> jobs() {
@@ -110,6 +126,54 @@ public final class AdminWebPlugin implements FireflyPlugin {
         return context.nodeRegistry()
                 .map(registry -> registry.listOnline(now, options.heartbeatTimeout()))
                 .orElse(List.of());
+    }
+
+    private void createRemoteJob(HttpExchange exchange) throws IOException {
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        Map<String, String> request = AdminWebJson.object(body);
+        String executorName = required(request, "executorName");
+        String businessHandlerName = required(request, "handlerName");
+        String jobId = required(request, "id");
+        String cron = request.getOrDefault("cron", "*/5 * * * * *");
+        ZoneId zoneId = ZoneId.of(request.getOrDefault("zoneId", "UTC"));
+        String registryHandlerName = "remote:" + executorName + ":" + businessHandlerName;
+
+        var repository = context.jobRepository()
+                .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
+        var handlerRegistry = context.jobHandlerRegistry()
+                .orElseThrow(() -> new IllegalStateException("jobHandlerRegistry is required"));
+        var dispatcher = context.remoteExecutorDispatcher()
+                .orElseThrow(() -> new IllegalStateException("remoteExecutorDispatcher is required"));
+
+        handlerRegistry.register(registryHandlerName, executionContext -> {
+            boolean dispatched = dispatcher.dispatch(executorName, businessHandlerName, executionContext);
+            if (!dispatched) {
+                throw new IllegalStateException("no online executor for " + executorName);
+            }
+        });
+
+        Map<String, String> parameters = new HashMap<>();
+        parameters.put("executorName", executorName);
+        parameters.put("handlerName", businessHandlerName);
+        request.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith("param."))
+                .forEach(entry -> parameters.put(entry.getKey().substring("param.".length()), entry.getValue()));
+
+        JobDefinition job = JobDefinition.builder()
+                .id(jobId)
+                .name(request.getOrDefault("name", jobId))
+                .handlerName(registryHandlerName)
+                .schedule(new CronSchedule(cron))
+                .zoneId(zoneId)
+                .misfirePolicy(MisfirePolicy.FIRE_ONCE)
+                .misfireGrace(Duration.ofSeconds(5))
+                .concurrencyPolicy(ConcurrencyPolicy.FORBID)
+                .timeout(Duration.ofSeconds(30))
+                .parameters(parameters)
+                .enabled(true)
+                .build();
+        repository.save(job, job.schedule().nextAfter(context.clock().instant(), job.zoneId()));
+        respond(exchange, 201, "application/json; charset=utf-8", "{\"status\":\"created\",\"id\":\"" + jobId + "\"}");
     }
 
     private String jobTable(List<ScheduledJobRecord> jobs) {
@@ -153,11 +217,23 @@ public final class AdminWebPlugin implements FireflyPlugin {
     }
 
     private void respond(HttpExchange exchange, String contentType, String body) throws IOException {
+        respond(exchange, 200, contentType, body);
+    }
+
+    private void respond(HttpExchange exchange, int status, String contentType, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+
+    private String required(Map<String, String> request, String key) {
+        String value = request.get(key);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("missing required field: " + key);
+        }
+        return value;
     }
 
     private String escape(String value) {

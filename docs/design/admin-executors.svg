@@ -1,0 +1,46 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#f6f7f9"/>
+  <rect x="0" y="0" width="248" height="900" fill="#101820"/>
+  <text x="32" y="48" fill="#f8f4d8" font-family="Segoe UI, Arial" font-size="28" font-weight="700">Firefly</text>
+  <g font-family="Segoe UI, Arial" font-size="15">
+    <text x="36" y="148" fill="#9fb2bb">Overview</text>
+    <text x="36" y="204" fill="#9fb2bb">Jobs</text>
+    <rect x="20" y="226" width="208" height="40" rx="6" fill="#1f3138"/>
+    <text x="36" y="252" fill="#ffffff">Executors</text>
+    <text x="36" y="302" fill="#9fb2bb">Executions</text>
+    <text x="36" y="350" fill="#9fb2bb">Nodes</text>
+  </g>
+  <rect x="248" y="0" width="1192" height="72" fill="#ffffff"/>
+  <text x="288" y="45" fill="#172026" font-family="Segoe UI, Arial" font-size="24" font-weight="650">Executors &amp; Nodes</text>
+
+  <rect x="288" y="104" width="510" height="320" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="316" y="142" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Executor Groups</text>
+  <g font-family="Segoe UI, Arial" font-size="14">
+    <rect x="316" y="170" width="454" height="68" rx="8" fill="#f7faf9" stroke="#d9ebe4"/>
+    <circle cx="338" cy="204" r="8" fill="#23a26d"/><text x="360" y="200" fill="#172026" font-weight="650">example-executor</text><text x="360" y="222" fill="#64717a">1 online instance · handlers: exampleHandler</text>
+    <rect x="316" y="254" width="454" height="68" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+    <circle cx="338" cy="288" r="8" fill="#23a26d"/><text x="360" y="284" fill="#172026" font-weight="650">billing-executor</text><text x="360" y="306" fill="#64717a">3 online instances · 12 jobs assigned</text>
+    <rect x="316" y="338" width="454" height="56" rx="8" fill="#fff7f5" stroke="#f0b8ae"/>
+    <circle cx="338" cy="366" r="8" fill="#b42318"/><text x="360" y="362" fill="#172026" font-weight="650">inventory-executor</text><text x="360" y="382" fill="#64717a">0 online instances</text>
+  </g>
+
+  <rect x="826" y="104" width="534" height="320" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="854" y="142" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Instances</text>
+  <g font-family="Segoe UI, Arial" font-size="13">
+    <text x="854" y="184" fill="#64717a">Instance</text><text x="1040" y="184" fill="#64717a">Service</text><text x="1200" y="184" fill="#64717a">Heartbeat</text>
+    <line x1="854" y1="200" x2="1328" y2="200" stroke="#edf0f2"/>
+    <text x="854" y="236" fill="#172026">instance-a2f9</text><text x="1040" y="236" fill="#172026">netty-executor-basic</text><text x="1200" y="236" fill="#23a26d">2s ago</text>
+    <text x="854" y="284" fill="#172026">billing-01</text><text x="1040" y="284" fill="#172026">billing-service</text><text x="1200" y="284" fill="#23a26d">4s ago</text>
+    <text x="854" y="332" fill="#172026">billing-02</text><text x="1040" y="332" fill="#172026">billing-service</text><text x="1200" y="332" fill="#23a26d">5s ago</text>
+  </g>
+
+  <rect x="288" y="456" width="1072" height="328" rx="8" fill="#ffffff" stroke="#e5e8eb"/>
+  <text x="316" y="494" fill="#172026" font-family="Segoe UI, Arial" font-size="18" font-weight="650">Cluster Nodes</text>
+  <g font-family="Segoe UI, Arial" font-size="13">
+    <text x="316" y="534" fill="#64717a">Node ID</text><text x="540" y="534" fill="#64717a">Mode</text><text x="690" y="534" fill="#64717a">Roles</text><text x="990" y="534" fill="#64717a">Owned Shards</text><text x="1190" y="534" fill="#64717a">Status</text>
+    <line x1="316" y1="550" x2="1328" y2="550" stroke="#edf0f2"/>
+    <text x="316" y="586" fill="#172026">firefly-server-node</text><text x="540" y="586" fill="#172026">standalone</text><text x="690" y="586" fill="#172026">SCHEDULER, API, GATEWAY</text><text x="990" y="586" fill="#64717a">local</text><text x="1190" y="586" fill="#23a26d">online</text>
+    <text x="316" y="638" fill="#172026">cluster-node-a</text><text x="540" y="638" fill="#172026">cluster</text><text x="690" y="638" fill="#172026">SCHEDULER</text><text x="990" y="638" fill="#64717a">0, 1, 4</text><text x="1190" y="638" fill="#23a26d">online</text>
+    <text x="316" y="690" fill="#172026">cluster-node-b</text><text x="540" y="690" fill="#172026">cluster</text><text x="690" y="690" fill="#172026">STANDBY, GATEWAY</text><text x="990" y="690" fill="#64717a">-</text><text x="1190" y="690" fill="#b7791f">standby</text>
+  </g>
+</svg>

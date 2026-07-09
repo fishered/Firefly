@@ -1,0 +1,2099 @@
+<html lang="zh-CN">
+
+  <head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firefly - 任务管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: '#0D9488',
+              secondary: '#F59E0B',
+              success: '#10B981',
+              danger: '#EF4444',
+              warning: '#F59E0B',
+              info: '#64748B',
+              light: '#F8FAFC',
+              dark: '#1E293B'
+            },
+            spacing: {
+              '5.5': '1.375rem',
+              'sidebar': '240px',
+              'header': '60px'
+            },
+            fontFamily: {
+              mono: ['Consolas', 'Monaco', 'monospace']
+            }
+          }
+        }
+      };
+    </script>
+    <style type="text/tailwindcss">
+      @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .scrollbar-thin {
+                scrollbar-width: thin;
+            }
+            .scrollbar-thin::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+            .scrollbar-thin::-webkit-scrollbar-thumb {
+                background-color: rgba(148, 163, 184, 0.3);
+                border-radius: 3px;
+            }
+            .modal-mask {
+                background-color: rgba(15, 23, 42, 0.6);
+                backdrop-filter: blur(2px);
+            }
+            .modal-mask.hidden {
+                display: none;
+            }
+            .modal-container.hidden {
+                display: none;
+            }
+            .status-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                display: inline-block;
+            }
+        }
+    </style>
+
+    <style>
+      /* 新增动画定义 */
+      @keyframes yt_modalFadeIn {
+        from {
+          opacity: 0;
+        }
+
+        to {
+          opacity: 1;
+        }
+      }
+
+      /* 新增动画定义 */
+      @keyframes yt_modalFadeOut {
+        from {
+          opacity: 1;
+        }
+
+        to {
+          opacity: 0;
+        }
+      }
+    </style>
+  </head>
+
+  <body class="bg-slate-50 text-slate-700 font-sans">
+
+
+    <div class="flex min-h-full">
+
+      <aside class="w-sidebar fixed top-0 left-0 h-full bg-white border-r border-slate-200 flex flex-col z-20 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+
+        <div class="h-header flex items-center px-5 border-b border-slate-200">
+
+          <div class="flex items-center gap-2">
+
+            <i class="fas fa-bolt text-primary text-xl"></i>
+
+
+            <span class="font-semibold text-lg text-dark">
+
+              Firefly
+            </span>
+          </div>
+        </div>
+
+
+        <nav class="flex-1 py-4 overflow-y-auto scrollbar-thin">
+
+          <ul class="flex flex-col gap-1 px-3">
+
+            <li>
+
+              <a id="nav-overview" data-uuid="Overview" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-600 hover:bg-slate-100 transition-all">
+
+                <i class="fas fa-home w-5 text-center"></i>
+
+
+                <span>
+
+                  总览
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-jobs" data-uuid="Jobs" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md bg-primary/10 text-primary font-medium">
+
+                <i class="fas fa-tasks w-5 text-center"></i>
+
+
+                <span>
+
+                  任务管理
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-executors" data-uuid="Executors" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-600 hover:bg-slate-100 transition-all">
+
+                <i class="fas fa-server w-5 text-center"></i>
+
+
+                <span>
+
+                  执行器
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-executions" data-uuid="Executions" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-600 hover:bg-slate-100 transition-all">
+
+                <i class="fas fa-history w-5 text-center"></i>
+
+
+                <span>
+
+                  执行记录
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-nodes" data-uuid="Nodes" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-600 hover:bg-slate-100 transition-all">
+
+                <i class="fas fa-network-wired w-5 text-center"></i>
+
+
+                <span>
+
+                  节点与集群
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-plugins" data-uuid="Plugins" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-600 hover:bg-slate-100 transition-all">
+
+                <i class="fas fa-puzzle-piece w-5 text-center"></i>
+
+
+                <span>
+
+                  插件
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-settings" data-uuid="Settings" href="javascript:void(0);" class="flex items-center gap-3 px-3 py-2.5 rounded-md text-slate-600 hover:bg-slate-100 transition-all">
+
+                <i class="fas fa-cog w-5 text-center"></i>
+
+
+                <span>
+
+                  配置
+                </span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+
+
+        <div class="p-4 border-t border-slate-200">
+
+          <div class="flex items-center gap-3">
+
+            <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
+
+              <i class="fas fa-user"></i>
+            </div>
+
+
+            <div class="flex flex-col">
+
+              <span class="text-sm font-medium">
+
+                管理员
+              </span>
+
+
+              <span class="text-xs text-slate-500">
+
+                v1.0.0
+              </span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+
+      <div class="flex-1 ml-sidebar">
+
+        <header class="h-header fixed top-0 left-sidebar right-0 bg-white border-b border-slate-200 flex items-center px-6 z-10">
+
+          <div class="flex items-center justify-between w-full">
+
+            <div class="flex items-center gap-2">
+
+              <h1 class="text-lg font-semibold text-dark">
+
+                任务管理
+              </h1>
+            </div>
+
+
+            <div class="flex items-center gap-4">
+
+              <button type="button" id="btn-create-job" class="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-all">
+
+                <i class="fas fa-plus"></i>
+
+
+                <span>
+
+                  新建任务
+                </span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+
+        <main class="pt-header p-6">
+
+          <div class="bg-white rounded-lg p-4 border border-slate-200 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+
+            <div class="flex flex-wrap items-center gap-4">
+
+              <div class="flex items-center gap-2">
+
+                <label class="text-sm text-slate-600">
+
+                  任务名称
+                </label>
+
+
+                <input type="text" class="px-3 py-1.5 border border-slate-300 rounded-md text-sm w-48 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="搜索任务名称">
+              </div>
+
+
+              <div class="flex items-center gap-2">
+
+                <label class="text-sm text-slate-600">
+
+                  执行器
+                </label>
+
+
+                <select class="px-3 py-1.5 border border-slate-300 rounded-md text-sm w-40 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="">
+
+                    全部执行器
+                  </option>
+
+
+                  <option value="executor1">
+
+                    order-executor
+                  </option>
+
+
+                  <option value="executor2">
+
+                    user-executor
+                  </option>
+
+
+                  <option value="executor3">
+
+                    notification-executor
+                  </option>
+                </select>
+              </div>
+
+
+              <div class="flex items-center gap-2">
+
+                <label class="text-sm text-slate-600">
+
+                  状态
+                </label>
+
+
+                <select class="px-3 py-1.5 border border-slate-300 rounded-md text-sm w-32 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="">
+
+                    全部状态
+                  </option>
+
+
+                  <option value="enabled">
+
+                    启用
+                  </option>
+
+
+                  <option value="disabled">
+
+                    禁用
+                  </option>
+
+
+                  <option value="paused">
+
+                    暂停
+                  </option>
+                </select>
+              </div>
+
+
+              <button type="button" class="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md hover:bg-slate-200 transition-all">
+
+                <i class="fas fa-search"></i>
+
+
+                <span>
+
+                  查询
+                </span>
+              </button>
+
+
+              <button type="button" class="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md hover:bg-slate-200 transition-all">
+
+                <i class="fas fa-redo"></i>
+
+
+                <span>
+
+                  重置
+                </span>
+              </button>
+            </div>
+          </div>
+
+
+          <div class="mt-4 bg-white rounded-lg border border-slate-200 shadow-[0_8px_30px_rgba(0,0,0,0.04)] overflow-hidden">
+
+            <div class="overflow-x-auto scrollbar-thin">
+
+              <table class="w-full text-sm text-left">
+
+                <thead class="bg-slate-50 text-slate-600 border-b border-slate-200">
+
+                  <tr>
+
+                    <th class="px-4 py-3 font-medium">
+
+                      Job ID
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      名称
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      分组
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      调度表达式
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      时区
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      下次触发时间
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      执行器
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      处理器
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      状态
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      上次执行结果
+                    </th>
+
+
+                    <th class="px-4 py-3 font-medium">
+
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+
+
+                <tbody class="divide-y divide-slate-200">
+
+                  <tr class="hover:bg-slate-50 transition-colors">
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      job-001
+                    </td>
+
+
+                    <td class="px-4 py-3 font-medium">
+
+                      每日订单对账
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      finance
+                    </td>
+
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      0 0 2 * * ?
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      Asia/Shanghai
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      2026-07-09 02:00:00
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      order-executor
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      reconciliationHandler
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span class="text-success">
+
+                          启用
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span>
+
+                          成功
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <div class="flex items-center gap-2 flex-wrap">
+
+                        <button type="button" class="edit-btn text-slate-500 hover:text-primary p-1" title="编辑">
+
+                          <i class="fas fa-edit"></i>
+                        </button>
+
+
+                        <button type="button" class="disable-btn text-slate-500 hover:text-warning p-1" title="禁用">
+
+                          <i class="fas fa-pause-circle"></i>
+                        </button>
+
+
+                        <button type="button" class="trigger-btn text-slate-500 hover:text-primary p-1" title="立即触发">
+
+                          <i class="fas fa-bolt"></i>
+                        </button>
+
+
+                        <button type="button" class="preview-btn text-slate-500 hover:text-info p-1" title="预览触发时间">
+
+                          <i class="fas fa-clock"></i>
+                        </button>
+
+
+                        <button type="button" class="view-executions-btn text-slate-500 hover:text-primary p-1" title="查看执行记录">
+
+                          <i class="fas fa-history"></i>
+                        </button>
+
+
+                        <button type="button" class="delete-btn text-slate-500 hover:text-danger p-1" title="删除">
+
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+
+                  <tr class="hover:bg-slate-50 transition-colors">
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      job-002
+                    </td>
+
+
+                    <td class="px-4 py-3 font-medium">
+
+                      每小时用户统计
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      user
+                    </td>
+
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      0 0 * * * ?
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      Asia/Shanghai
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      2026-07-09 15:00:00
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      user-executor
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      userStatisticsHandler
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span class="text-success">
+
+                          启用
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-danger"></span>
+
+
+                        <span class="text-danger">
+
+                          失败
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <div class="flex items-center gap-2 flex-wrap">
+
+                        <button type="button" class="edit-btn text-slate-500 hover:text-primary p-1" title="编辑">
+
+                          <i class="fas fa-edit"></i>
+                        </button>
+
+
+                        <button type="button" class="disable-btn text-slate-500 hover:text-warning p-1" title="禁用">
+
+                          <i class="fas fa-pause-circle"></i>
+                        </button>
+
+
+                        <button type="button" class="trigger-btn text-slate-500 hover:text-primary p-1" title="立即触发">
+
+                          <i class="fas fa-bolt"></i>
+                        </button>
+
+
+                        <button type="button" class="preview-btn text-slate-500 hover:text-info p-1" title="预览触发时间">
+
+                          <i class="fas fa-clock"></i>
+                        </button>
+
+
+                        <button type="button" class="view-executions-btn text-slate-500 hover:text-primary p-1" title="查看执行记录">
+
+                          <i class="fas fa-history"></i>
+                        </button>
+
+
+                        <button type="button" class="delete-btn text-slate-500 hover:text-danger p-1" title="删除">
+
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+
+                  <tr class="hover:bg-slate-50 transition-colors">
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      job-003
+                    </td>
+
+
+                    <td class="px-4 py-3 font-medium">
+
+                      每日推送报告
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      notification
+                    </td>
+
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      0 30 9 * * ?
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      America/New_York
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      2026-07-09 09:30:00
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      notification-executor
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      dailyReportHandler
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-slate-400"></span>
+
+
+                        <span class="text-slate-500">
+
+                          禁用
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span>
+
+                          成功
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <div class="flex items-center gap-2 flex-wrap">
+
+                        <button type="button" class="edit-btn text-slate-500 hover:text-primary p-1" title="编辑">
+
+                          <i class="fas fa-edit"></i>
+                        </button>
+
+
+                        <button type="button" class="enable-btn text-slate-500 hover:text-success p-1" title="启用">
+
+                          <i class="fas fa-play-circle"></i>
+                        </button>
+
+
+                        <button type="button" class="trigger-btn text-slate-500 hover:text-primary p-1" title="立即触发">
+
+                          <i class="fas fa-bolt"></i>
+                        </button>
+
+
+                        <button type="button" class="preview-btn text-slate-500 hover:text-info p-1" title="预览触发时间">
+
+                          <i class="fas fa-clock"></i>
+                        </button>
+
+
+                        <button type="button" class="view-executions-btn text-slate-500 hover:text-primary p-1" title="查看执行记录">
+
+                          <i class="fas fa-history"></i>
+                        </button>
+
+
+                        <button type="button" class="delete-btn text-slate-500 hover:text-danger p-1" title="删除">
+
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+
+                  <tr class="hover:bg-slate-50 transition-colors">
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      job-004
+                    </td>
+
+
+                    <td class="px-4 py-3 font-medium">
+
+                      30秒心跳检测
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      monitor
+                    </td>
+
+
+                    <td class="px-4 py-3 font-mono text-xs">
+
+                      fixed-rate:30000
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      UTC
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      2026-07-09 07:30:00
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      monitor-executor
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      heartbeatHandler
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-info"></span>
+
+
+                        <span class="text-info">
+
+                          暂停
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <span class="inline-flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span>
+
+                          成功
+                        </span>
+                      </span>
+                    </td>
+
+
+                    <td class="px-4 py-3">
+
+                      <div class="flex items-center gap-2 flex-wrap">
+
+                        <button type="button" class="edit-btn text-slate-500 hover:text-primary p-1" title="编辑">
+
+                          <i class="fas fa-edit"></i>
+                        </button>
+
+
+                        <button type="button" class="resume-btn text-slate-500 hover:text-success p-1" title="恢复">
+
+                          <i class="fas fa-play-circle"></i>
+                        </button>
+
+
+                        <button type="button" class="trigger-btn text-slate-500 hover:text-primary p-1" title="立即触发">
+
+                          <i class="fas fa-bolt"></i>
+                        </button>
+
+
+                        <button type="button" class="preview-btn text-slate-500 hover:text-info p-1" title="预览触发时间">
+
+                          <i class="fas fa-clock"></i>
+                        </button>
+
+
+                        <button type="button" class="view-executions-btn text-slate-500 hover:text-primary p-1" title="查看执行记录">
+
+                          <i class="fas fa-history"></i>
+                        </button>
+
+
+                        <button type="button" class="delete-btn text-slate-500 hover:text-danger p-1" title="删除">
+
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+
+            <div class="px-4 py-3 border-t border-slate-200 flex items-center justify-between">
+
+              <div class="text-sm text-slate-600">
+
+                显示 1-4 共 24 条记录
+              </div>
+
+
+              <div class="flex items-center gap-1">
+
+                <button type="button" class="p-2 border border-slate-200 rounded-md text-slate-500 hover:bg-slate-50 disabled:opacity-50" disabled="">
+
+                  <i class="fas fa-chevron-left"></i>
+                </button>
+
+
+                <button type="button" class="p-2 border border-primary bg-primary text-white rounded-md">
+
+                  1
+                </button>
+
+
+                <button type="button" class="p-2 border border-slate-200 rounded-md text-slate-700 hover:bg-slate-50">
+
+                  2
+                </button>
+
+
+                <button type="button" class="p-2 border border-slate-200 rounded-md text-slate-700 hover:bg-slate-50">
+
+                  3
+                </button>
+
+
+                <span class="px-2 text-slate-500">
+
+                  ...
+                </span>
+
+
+                <button type="button" class="p-2 border border-slate-200 rounded-md text-slate-700 hover:bg-slate-50">
+
+                  6
+                </button>
+
+
+                <button type="button" class="p-2 border border-slate-200 rounded-md text-slate-500 hover:bg-slate-50">
+
+                  <i class="fas fa-chevron-right"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+
+    <div id="job-modal-mask" class="modal-mask fixed inset-0 z-50 flex items-center justify-center hidden">
+      <!-- 创建/编辑任务弹窗 -->
+      <div id="job-modal" class="modal-container bg-white rounded-lg w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+
+        <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+
+          <h2 class="text-lg font-semibold text-dark">
+
+            新建任务
+          </h2>
+
+
+          <button type="button" id="close-job-modal" class="text-slate-400 hover:text-slate-600">
+
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+
+
+        <div class="p-6">
+
+          <form class="flex flex-col gap-5">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  任务名称
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <input type="text" class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="请输入任务名称">
+              </div>
+
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  任务分组
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <select class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="">
+
+                    请选择分组
+                  </option>
+
+
+                  <option value="finance">
+
+                    finance
+                  </option>
+
+
+                  <option value="user">
+
+                    user
+                  </option>
+
+
+                  <option value="notification">
+
+                    notification
+                  </option>
+
+
+                  <option value="monitor">
+
+                    monitor
+                  </option>
+                </select>
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  调度类型
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <div class="flex items-center gap-4">
+
+                  <label class="flex items-center gap-2 cursor-pointer">
+
+                    <input type="radio" name="scheduleType" value="cron" checked="" class="w-4 h-4 text-primary">
+
+
+                    <span>
+
+                      Cron 表达式
+                    </span>
+                  </label>
+
+
+                  <label class="flex items-center gap-2 cursor-pointer">
+
+                    <input type="radio" name="scheduleType" value="fixed-rate" class="w-4 h-4 text-primary">
+
+
+                    <span>
+
+                      固定频率
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  调度配置
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <input type="text" class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono" placeholder="0 0 2 * * ?">
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  时区
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <select class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="Asia/Shanghai">
+
+                    Asia/Shanghai (中国标准时间)
+                  </option>
+
+
+                  <option value="America/New_York">
+
+                    America/New_York (美国东部时间)
+                  </option>
+
+
+                  <option value="Europe/London">
+
+                    Europe/London (伦敦时间)
+                  </option>
+
+
+                  <option value="UTC">
+
+                    UTC (协调世界时)
+                  </option>
+                </select>
+
+
+                <div class="flex items-center gap-1 text-xs text-warning">
+
+                  <i class="fas fa-exclamation-triangle"></i>
+
+
+                  <span>
+
+                    该时区包含夏令时规则，部分本地时间可能会被跳过或重复
+                  </span>
+                </div>
+              </div>
+
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  执行器
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <select class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="">
+
+                    请选择执行器
+                  </option>
+
+
+                  <option value="order-executor">
+
+                    order-executor
+                  </option>
+
+
+                  <option value="user-executor">
+
+                    user-executor
+                  </option>
+
+
+                  <option value="notification-executor">
+
+                    notification-executor
+                  </option>
+
+
+                  <option value="monitor-executor">
+
+                    monitor-executor
+                  </option>
+                </select>
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  处理器名称
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <select class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="">
+
+                    请选择处理器
+                  </option>
+
+
+                  <option value="reconciliationHandler">
+
+                    reconciliationHandler
+                  </option>
+
+
+                  <option value="userStatisticsHandler">
+
+                    userStatisticsHandler
+                  </option>
+
+
+                  <option value="dailyReportHandler">
+
+                    dailyReportHandler
+                  </option>
+
+
+                  <option value="heartbeatHandler">
+
+                    heartbeatHandler
+                  </option>
+                </select>
+              </div>
+
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  错过触发策略
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <select class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="fire-and-proceed">
+
+                    Fire and Proceed
+                  </option>
+
+
+                  <option value="do-nothing">
+
+                    Do Nothing
+                  </option>
+
+
+                  <option value="fire-once-now">
+
+                    Fire Once Now
+                  </option>
+                </select>
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  并发策略
+
+
+                  <span class="text-danger">
+
+                    *
+                  </span>
+                </label>
+
+
+                <select class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary">
+
+                  <option value="concurrent">
+
+                    Concurrent
+                  </option>
+
+
+                  <option value="serial">
+
+                    Serial
+                  </option>
+
+
+                  <option value="discard">
+
+                    Discard
+                  </option>
+                </select>
+              </div>
+
+
+              <div class="flex flex-col gap-2">
+
+                <label class="text-sm font-medium text-slate-700">
+
+                  超时时间 (毫秒)
+                </label>
+
+
+                <input type="number" class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="300000" value="300000">
+              </div>
+            </div>
+
+
+            <div class="flex flex-col gap-2">
+
+              <label class="text-sm font-medium text-slate-700">
+
+                任务参数 (JSON格式)
+              </label>
+
+
+              <textarea rows="3" class="px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono text-sm" placeholder="{&quot;key&quot;: &quot;value&quot;}"></textarea>
+            </div>
+
+
+            <div class="flex flex-col gap-3 p-4 bg-slate-50 rounded-md border border-slate-200">
+
+              <div class="flex items-center justify-between">
+
+                <h3 class="text-sm font-medium text-slate-700">
+
+                  下次触发时间预览
+                </h3>
+
+
+                <button type="button" id="preview-fire-times" class="text-sm text-primary hover:text-primary/80">
+
+                  <i class="fas fa-sync-alt mr-1"></i>
+
+
+                  刷新预览
+
+                </button>
+              </div>
+
+
+              <div class="font-mono text-sm text-slate-600 flex flex-col gap-1">
+
+                <div>
+
+                  时区: Asia/Shanghai
+                </div>
+
+
+                <div>
+
+                  1. 2026-07-09 02:00:00
+                </div>
+
+
+                <div>
+
+                  2. 2026-07-10 02:00:00
+                </div>
+
+
+                <div>
+
+                  3. 2026-07-11 02:00:00
+                </div>
+
+
+                <div>
+
+                  4. 2026-07-12 02:00:00
+                </div>
+
+
+                <div>
+
+                  5. 2026-07-13 02:00:00
+                </div>
+
+
+                <div>
+
+                  6. 2026-07-14 02:00:00
+                </div>
+
+
+                <div>
+
+                  7. 2026-07-15 02:00:00
+                </div>
+
+
+                <div>
+
+                  8. 2026-07-16 02:00:00
+                </div>
+
+
+                <div>
+
+                  9. 2026-07-17 02:00:00
+                </div>
+
+
+                <div>
+
+                  10. 2026-07-18 02:00:00
+                </div>
+              </div>
+            </div>
+
+
+            <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
+
+              <button type="button" id="cancel-job-modal" class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition-all">
+
+                取消
+              </button>
+
+
+              <button type="button" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-all">
+
+                保存
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="preview-modal-mask" class="modal-mask fixed inset-0 z-50 flex items-center justify-center hidden">
+      <!-- 触发时间预览弹窗 -->
+      <div id="preview-modal" class="modal-container bg-white rounded-lg w-full max-w-md shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+
+        <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+
+          <h2 class="text-lg font-semibold text-dark">
+
+            下次10次触发时间
+          </h2>
+
+
+          <button type="button" id="close-preview-modal" class="text-slate-400 hover:text-slate-600">
+
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+
+
+        <div class="p-6">
+
+          <div class="flex flex-col gap-2">
+
+            <div class="flex items-center gap-2 text-sm text-slate-600">
+
+              <i class="fas fa-globe text-primary"></i>
+
+
+              <span>
+
+                时区: Asia/Shanghai
+              </span>
+            </div>
+
+
+            <div class="mt-2 font-mono text-sm text-slate-700 flex flex-col gap-2 max-h-72 overflow-y-auto scrollbar-thin">
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  1.
+                </span>
+
+
+                <span>
+
+                  2026-07-09 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  2.
+                </span>
+
+
+                <span>
+
+                  2026-07-10 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  3.
+                </span>
+
+
+                <span>
+
+                  2026-07-11 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  4.
+                </span>
+
+
+                <span>
+
+                  2026-07-12 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  5.
+                </span>
+
+
+                <span>
+
+                  2026-07-13 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  6.
+                </span>
+
+
+                <span>
+
+                  2026-07-14 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  7.
+                </span>
+
+
+                <span>
+
+                  2026-07-15 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  8.
+                </span>
+
+
+                <span>
+
+                  2026-07-16 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2 border-b border-slate-100">
+
+                <span class="w-6 text-slate-400">
+
+                  9.
+                </span>
+
+
+                <span>
+
+                  2026-07-17 02:00:00
+                </span>
+              </div>
+
+
+              <div class="flex items-center gap-2 p-2">
+
+                <span class="w-6 text-slate-400">
+
+                  10.
+                </span>
+
+
+                <span>
+
+                  2026-07-18 02:00:00
+                </span>
+              </div>
+            </div>
+          </div>
+
+
+          <div class="mt-6 flex items-center justify-end">
+
+            <button type="button" id="confirm-preview-modal" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-all">
+
+              确定
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="delete-modal-mask" class="modal-mask fixed inset-0 z-50 flex items-center justify-center hidden">
+      <!-- 删除确认弹窗 -->
+      <div id="delete-modal" class="modal-container bg-white rounded-lg w-full max-w-md shadow-[0_8px_30px_rgba(0,0,0,0.08)]">
+
+        <div class="p-6 flex flex-col items-center text-center">
+
+          <div class="w-12 h-12 rounded-full bg-danger/10 flex items-center justify-center text-danger text-2xl">
+
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+
+
+          <h3 class="mt-4 text-lg font-semibold text-dark">
+
+            确认删除任务
+          </h3>
+
+
+          <p class="mt-2 text-slate-600">
+
+            您确定要删除该任务吗？此操作不可撤销，任务将立即停止调度。
+          </p>
+
+
+          <div class="mt-6 flex items-center gap-3 w-full">
+
+            <button type="button" id="cancel-delete-modal" class="flex-1 px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition-all">
+
+              取消
+            </button>
+
+
+            <button type="button" class="flex-1 px-4 py-2 bg-danger text-white rounded-md hover:bg-danger/90 transition-all">
+
+              确认删除
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script></script>
+    <script>
+      window.ytHandles = {
+        openPage: function(url) {
+
+          // 当前窗口打开url页面
+          url += "&v=" + Math.random().toString(36).substring(2);
+          window.open(url, '_self');
+
+        },
+        //显示id为targetId的目标容器
+        show: function(targetId, callback) {
+          const modal = document.getElementById(targetId); //获取targetId的隐藏框元素
+          // 检查targetId的隐藏框元素是否存在
+          if (!modal) {
+            console.error('Modal element not found: targetId');
+            return;
+          }
+
+          // 递归清理子元素的内联样式和hidden类
+          const clearChildrenStyles = function(element) {
+            if (!element) return;
+            const children = element.children;
+            for (let i = 0; i < children.length; i++) {
+              const child = children[i];
+              // 清理hidden类
+              child.classList.remove("hidden");
+              // 清理内联样式
+              child.style.display = "";
+              child.style.visibility = "";
+              child.style.opacity = "";
+              child.style.transform = "";
+              child.style.animation = "";
+              // 递归处理子元素的子元素
+              clearChildrenStyles(child);
+            }
+          };
+          // 1. 清理该元素之前的状态和监听器
+          if (modal._hideAnimationEndHandler) {
+            modal.removeEventListener("animationend", modal._hideAnimationEndHandler);
+            delete modal._hideAnimationEndHandler;
+          }
+          if (modal._hideTimeout) {
+            clearTimeout(modal._hideTimeout);
+            delete modal._hideTimeout;
+          }
+          // 2. 移除目标元素的隐藏类并重置内联样式
+          modal.classList.remove("hidden");
+          modal.style.display = ""; // 清空内联隐藏，让 CSS 的 flex 自动接管
+          modal.style.visibility = "";
+          modal.style.opacity = "";
+          modal.style.transform = "";
+          modal.style.animation = "";
+          // 3. 递归清理所有子元素的内联样式和hidden类
+          clearChildrenStyles(modal);
+          // 4. 强制重绘以确保样式应用
+          void modal.offsetHeight;
+          // 5. 执行显示动画
+          modal.style.animation = 'yt_modalFadeIn 0.3s ease-out';
+          // 6. 动画结束后清理动画样式
+          const onAnimationEnd = function() {
+            modal.style.animation = "";
+            delete modal._showAnimationEndHandler;
+          };
+          modal._showAnimationEndHandler = onAnimationEnd;
+          modal.addEventListener("animationend", onAnimationEnd, {
+            once: true
+          });
+          if (callback) callback();
+
+        },
+        //关闭id为targetId的目标容器
+        hide: function(targetId) {
+          const modal = document.getElementById(targetId); //获取targetId的元素
+          // 检查targetId元素是否存在
+          if (!modal) {
+            console.error('Modal element not found: targetId');
+            return;
+          }
+
+          //1. 准备隐藏前先清理旧动画和监听器
+          if (modal._hideTimeout) clearTimeout(modal._hideTimeout);
+          if (modal._showAnimationEndHandler) {
+            modal.removeEventListener("animationend", modal._showAnimationEndHandler);
+            delete modal._showAnimationEndHandler;
+          }
+          modal.style.animation = "";
+          // 2. 强制重绘以确保样式应用
+          void modal.offsetHeight;
+          // 3. 启动淡出动画
+          modal.style.animation = 'yt_modalFadeOut 0.3s ease-out';
+          let animationCompleted = false;
+          const onAnimationEnd = function() {
+            if (animationCompleted) return;
+            animationCompleted = true;
+            // 4. 动画结束后，添加隐藏类并清空所有内联干扰样式
+            modal.classList.add("hidden");
+            modal.style.display = "";
+            modal.style.visibility = "";
+            modal.style.opacity = "";
+            modal.style.animation = "";
+            modal.style.transform = "";
+            // 清理引用
+            delete modal._hideAnimationEndHandler;
+            if (modal._hideTimeout) {
+              clearTimeout(modal._hideTimeout);
+              delete modal._hideTimeout;
+            }
+          };
+          // 5. 使用事件监听 + 定时器双重保险，确保清理逻辑一定会执行
+          modal._hideAnimationEndHandler = onAnimationEnd;
+          modal.addEventListener("animationend", onAnimationEnd, {
+            once: true
+          });
+          modal._hideTimeout = setTimeout(onAnimationEnd, 400); // 略长于动画时间
+
+        }
+      };
+
+      window.onload = function() {
+        try {
+          //为#nav-overview元素添加click事件监听器
+          let _el = document.getElementById(`nav-overview`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Overview&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-jobs元素添加click事件监听器
+          let _el = document.getElementById(`nav-jobs`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Jobs&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-executors元素添加click事件监听器
+          let _el = document.getElementById(`nav-executors`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Executors&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-executions元素添加click事件监听器
+          let _el = document.getElementById(`nav-executions`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Executions&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-nodes元素添加click事件监听器
+          let _el = document.getElementById(`nav-nodes`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Nodes&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-plugins元素添加click事件监听器
+          let _el = document.getElementById(`nav-plugins`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Plugins&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-settings元素添加click事件监听器
+          let _el = document.getElementById(`nav-settings`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Settings&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#btn-create-job元素添加click事件监听器
+          let _el = document.getElementById(`btn-create-job`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.show('job-modal-mask');
+            })
+          }
+        } catch (e) {
+          console.error('OpenModal error:', e);
+        }
+        try {
+          //为#close-job-modal元素添加click事件监听器
+          let _el = document.getElementById(`close-job-modal`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.hide('job-modal-mask');
+            })
+          }
+        } catch (e) {
+          console.error('CloseModal error:', e);
+        }
+        try {
+          //为#cancel-job-modal元素添加click事件监听器
+          let _el = document.getElementById(`cancel-job-modal`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.hide('job-modal-mask');
+            })
+          }
+        } catch (e) {
+          console.error('CloseModal error:', e);
+        }
+        try {
+          //为.preview-btn元素添加click事件监听器
+          [...document.querySelectorAll(`.preview-btn`)].forEach(function(item) {
+            item.addEventListener('click', function(event) {
+              ytHandles.show('preview-modal-mask');
+            })
+          })
+        } catch (e) {
+          console.error('OpenModal error:', e);
+        }
+        try {
+          //为#close-preview-modal元素添加click事件监听器
+          let _el = document.getElementById(`close-preview-modal`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.hide('preview-modal-mask');
+            })
+          }
+        } catch (e) {
+          console.error('CloseModal error:', e);
+        }
+        try {
+          //为#confirm-preview-modal元素添加click事件监听器
+          let _el = document.getElementById(`confirm-preview-modal`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.hide('preview-modal-mask');
+            })
+          }
+        } catch (e) {
+          console.error('CloseModal error:', e);
+        }
+        try {
+          //为.delete-btn元素添加click事件监听器
+          [...document.querySelectorAll(`.delete-btn`)].forEach(function(item) {
+            item.addEventListener('click', function(event) {
+              ytHandles.show('delete-modal-mask');
+            })
+          })
+        } catch (e) {
+          console.error('OpenModal error:', e);
+        }
+        try {
+          //为#cancel-delete-modal元素添加click事件监听器
+          let _el = document.getElementById(`cancel-delete-modal`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.hide('delete-modal-mask');
+            })
+          }
+        } catch (e) {
+          console.error('CloseModal error:', e);
+        }
+        try {
+          //为.edit-btn元素添加click事件监听器
+          [...document.querySelectorAll(`.edit-btn`)].forEach(function(item) {
+            item.addEventListener('click', function(event) {
+              ytHandles.show('job-modal-mask');
+            })
+          })
+        } catch (e) {
+          console.error('OpenModal error:', e);
+        }
+      }
+    </script>
+
+  </body>
+
+</html>

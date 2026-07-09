@@ -3,7 +3,9 @@ package com.firefly.plugin.admin;
 import com.firefly.cluster.FireflyNode;
 import com.firefly.store.ScheduledJobRecord;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 final class AdminWebJson {
     private AdminWebJson() {
@@ -42,7 +44,36 @@ final class AdminWebJson {
         return json.append("]}").toString();
     }
 
+    static Map<String, String> object(String json) {
+        String value = json.trim();
+        if (!value.startsWith("{") || !value.endsWith("}")) {
+            throw new IllegalArgumentException("json object expected");
+        }
+        value = value.substring(1, value.length() - 1).trim();
+        Map<String, String> map = new LinkedHashMap<>();
+        if (value.isEmpty()) {
+            return map;
+        }
+        for (String part : value.split(",")) {
+            String[] pair = part.split(":", 2);
+            if (pair.length != 2) {
+                throw new IllegalArgumentException("invalid json field: " + part);
+            }
+            map.put(unquote(pair[0].trim()), unquote(pair[1].trim()));
+        }
+        return map;
+    }
+
     private static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String unquote(String value) {
+        if (value.startsWith("\"") && value.endsWith("\"")) {
+            return value.substring(1, value.length() - 1)
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
+        }
+        return value;
     }
 }

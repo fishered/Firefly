@@ -1,0 +1,1216 @@
+<html lang="zh-CN">
+
+  <head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firefly Console - 总览</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: '#0F766E',
+              secondary: '#EAB308',
+              success: '#16A34A',
+              danger: '#DC2626',
+              warning: '#D97706',
+              info: '#475569',
+              neutral: {
+                50: '#F8FAFC',
+                100: '#F1F5F9',
+                200: '#E2E8F0',
+                300: '#CBD5E1',
+                700: '#334155',
+                800: '#1E293B',
+                900: '#0F172A',
+              }
+            },
+            spacing: {
+              '5.5': '1.375rem',
+              'sidebar': '240px',
+              'header': '60px'
+            }
+          }
+        }
+      };
+    </script>
+    <style type="text/tailwindcss">
+      @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
+            }
+            .sidebar-item-active {
+                @apply bg-primary/10 text-primary border-l-4 border-primary;
+            }
+            .status-dot {
+                @apply w-2 h-2 rounded-full;
+            }
+        }
+        .modal-mask.hidden {
+            display: none;
+        }
+    </style>
+
+    <style></style>
+  </head>
+
+  <body class="bg-neutral-50 text-neutral-800 font-sans">
+
+
+    <div class="flex min-h-full">
+
+      <aside class="w-sidebar fixed top-0 left-0 h-full bg-white border-r border-neutral-200 flex flex-col z-20">
+
+        <div class="h-header flex items-center px-5.5 border-b border-neutral-200">
+
+          <div class="flex items-center gap-2">
+
+            <i class="fas fa-fire-flame-curved text-primary text-xl"></i>
+
+
+            <span class="font-semibold text-lg">
+
+              Firefly
+            </span>
+          </div>
+        </div>
+
+
+        <nav class="flex-1 py-4 overflow-y-auto">
+
+          <ul class="flex flex-col">
+
+            <li>
+
+              <a id="nav-overview" data-uuid="Overview" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm sidebar-item-active">
+
+                <i class="fas fa-chart-line w-5 text-center"></i>
+
+
+                <span>
+
+                  总览
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-jobs" data-uuid="Jobs" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm text-neutral-700 hover:bg-neutral-50">
+
+                <i class="fas fa-tasks w-5 text-center"></i>
+
+
+                <span>
+
+                  任务管理
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-executors" data-uuid="Executors" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm text-neutral-700 hover:bg-neutral-50">
+
+                <i class="fas fa-server w-5 text-center"></i>
+
+
+                <span>
+
+                  执行器
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-executions" data-uuid="Executions" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm text-neutral-700 hover:bg-neutral-50">
+
+                <i class="fas fa-history w-5 text-center"></i>
+
+
+                <span>
+
+                  执行记录
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-nodes" data-uuid="Nodes" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm text-neutral-700 hover:bg-neutral-50">
+
+                <i class="fas fa-network-wired w-5 text-center"></i>
+
+
+                <span>
+
+                  节点与集群
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-plugins" data-uuid="Plugins" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm text-neutral-700 hover:bg-neutral-50">
+
+                <i class="fas fa-puzzle-piece w-5 text-center"></i>
+
+
+                <span>
+
+                  插件
+                </span>
+              </a>
+            </li>
+
+
+            <li>
+
+              <a id="nav-settings" data-uuid="Settings" href="javascript:void(0);" class="flex items-center gap-3 px-5.5 py-3 text-sm text-neutral-700 hover:bg-neutral-50">
+
+                <i class="fas fa-cog w-5 text-center"></i>
+
+
+                <span>
+
+                  配置
+                </span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+
+
+        <div class="p-4 border-t border-neutral-200">
+
+          <div class="flex items-center gap-3">
+
+            <div class="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
+
+              <i class="fas fa-user text-neutral-500"></i>
+            </div>
+
+
+            <div class="flex flex-col">
+
+              <span class="text-sm font-medium">
+
+                管理员
+              </span>
+
+
+              <span class="text-xs text-neutral-500">
+
+                v1.0.0
+              </span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+
+      <main class="flex-1 pl-sidebar">
+
+        <header class="h-header fixed top-0 left-sidebar right-0 bg-white border-b border-neutral-200 flex items-center px-6 z-10">
+
+          <div class="flex items-center justify-between w-full">
+
+            <h1 class="text-lg font-semibold">
+
+              总览
+            </h1>
+
+
+            <div class="flex items-center gap-4">
+
+              <button type="button" class="w-9 h-9 rounded-full flex items-center justify-center text-neutral-500 hover:bg-neutral-100">
+
+                <i class="fas fa-bell"></i>
+              </button>
+
+
+              <button type="button" class="w-9 h-9 rounded-full flex items-center justify-center text-neutral-500 hover:bg-neutral-100">
+
+                <i class="fas fa-question-circle"></i>
+              </button>
+            </div>
+          </div>
+        </header>
+
+
+        <div class="pt-header p-6">
+
+          <div class="flex flex-col gap-6">
+
+            <div class="bg-white rounded-lg p-5 card-shadow">
+
+              <div class="flex items-center gap-2 pb-4 border-b border-neutral-100">
+
+                <i class="fas fa-info-circle text-primary"></i>
+
+
+                <h2 class="text-base font-semibold">
+
+                  系统信息
+                </h2>
+              </div>
+
+
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-4">
+
+                <div class="flex flex-col gap-2">
+
+                  <span class="text-sm text-neutral-500">
+
+                    调度模式
+                  </span>
+
+
+                  <div class="flex items-center gap-2">
+
+                    <span class="px-2 py-1 bg-neutral-100 rounded text-sm font-medium">
+
+                      cluster
+                    </span>
+                  </div>
+                </div>
+
+
+                <div class="flex flex-col gap-2">
+
+                  <span class="text-sm text-neutral-500">
+
+                    当前节点角色
+                  </span>
+
+
+                  <div class="flex items-center gap-2">
+
+                    <span class="px-2 py-1 bg-primary/10 text-primary rounded text-sm font-medium">
+
+                      SCHEDULER
+                    </span>
+
+
+                    <span class="px-2 py-1 bg-info/10 text-info rounded text-sm font-medium">
+
+                      API
+                    </span>
+                  </div>
+                </div>
+
+
+                <div class="flex flex-col gap-2">
+
+                  <span class="text-sm text-neutral-500">
+
+                    调度器状态
+                  </span>
+
+
+                  <div class="flex items-center gap-2">
+
+                    <span class="status-dot bg-success"></span>
+
+
+                    <span class="text-sm font-medium text-success">
+
+                      运行正常
+                    </span>
+                  </div>
+                </div>
+
+
+                <div class="flex flex-col gap-2">
+
+                  <span class="text-sm text-neutral-500">
+
+                    系统运行时间
+                  </span>
+
+
+                  <span class="text-sm font-medium">
+
+                    12天 6小时 32分钟
+                  </span>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center justify-between pb-3">
+
+                  <span class="text-sm text-neutral-500">
+
+                    在线执行器
+                  </span>
+
+
+                  <div class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+
+                    <i class="fas fa-server"></i>
+                  </div>
+                </div>
+
+
+                <div class="flex items-end gap-2">
+
+                  <span class="text-3xl font-bold">
+
+                    12
+                  </span>
+
+
+                  <span class="text-sm text-neutral-500 pb-1">
+
+                    / 12
+                  </span>
+                </div>
+
+
+                <div class="pt-3 flex items-center gap-1">
+
+                  <span class="status-dot bg-success"></span>
+
+
+                  <span class="text-xs text-success">
+
+                    全部在线
+                  </span>
+                </div>
+              </div>
+
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center justify-between pb-3">
+
+                  <span class="text-sm text-neutral-500">
+
+                    启用任务数
+                  </span>
+
+
+                  <div class="w-8 h-8 rounded-full bg-secondary/10 flex items-center justify-center text-secondary">
+
+                    <i class="fas fa-check-circle"></i>
+                  </div>
+                </div>
+
+
+                <div class="flex items-end gap-2">
+
+                  <span class="text-3xl font-bold">
+
+                    86
+                  </span>
+
+
+                  <span class="text-sm text-neutral-500 pb-1">
+
+                    / 92
+                  </span>
+                </div>
+
+
+                <div class="pt-3 flex items-center gap-1">
+
+                  <span class="status-dot bg-warning"></span>
+
+
+                  <span class="text-xs text-warning">
+
+                    6个任务已禁用
+                  </span>
+                </div>
+              </div>
+
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center justify-between pb-3">
+
+                  <span class="text-sm text-neutral-500">
+
+                    未来1分钟待触发
+                  </span>
+
+
+                  <div class="w-8 h-8 rounded-full bg-info/10 flex items-center justify-center text-info">
+
+                    <i class="fas fa-clock"></i>
+                  </div>
+                </div>
+
+
+                <div class="flex items-end gap-2">
+
+                  <span class="text-3xl font-bold">
+
+                    17
+                  </span>
+
+
+                  <span class="text-sm text-neutral-500 pb-1">
+
+                    个任务
+                  </span>
+                </div>
+
+
+                <div class="pt-3 flex items-center gap-1">
+
+                  <span class="status-dot bg-info"></span>
+
+
+                  <span class="text-xs text-info">
+
+                    调度队列正常
+                  </span>
+                </div>
+              </div>
+
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center justify-between pb-3">
+
+                  <span class="text-sm text-neutral-500">
+
+                    最近失败数
+                  </span>
+
+
+                  <div class="w-8 h-8 rounded-full bg-danger/10 flex items-center justify-center text-danger">
+
+                    <i class="fas fa-exclamation-triangle"></i>
+                  </div>
+                </div>
+
+
+                <div class="flex items-end gap-2">
+
+                  <span class="text-3xl font-bold">
+
+                    3
+                  </span>
+
+
+                  <span class="text-sm text-neutral-500 pb-1">
+
+                    次/24h
+                  </span>
+                </div>
+
+
+                <div class="pt-3 flex items-center gap-1">
+
+                  <span class="status-dot bg-danger"></span>
+
+
+                  <span class="text-xs text-danger">
+
+                    需要关注
+                  </span>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center gap-2 pb-4 border-b border-neutral-100">
+
+                  <i class="fas fa-chart-area text-primary"></i>
+
+
+                  <h2 class="text-base font-semibold">
+
+                    调度延迟统计
+                  </h2>
+                </div>
+
+
+                <div class="pt-4 h-[200px]">
+
+                  <div id="latencyChart" class="w-full h-full min-h-8" _echarts_instance_="ec_1783610070484" style="user-select: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); position: relative;"></div>
+                </div>
+              </div>
+
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center gap-2 pb-4 border-b border-neutral-100">
+
+                  <i class="fas fa-chart-pie text-primary"></i>
+
+
+                  <h2 class="text-base font-semibold">
+
+                    执行状态分布
+                  </h2>
+                </div>
+
+
+                <div class="pt-4 h-[200px]">
+
+                  <div id="statusChart" class="w-full h-full min-h-8" _echarts_instance_="ec_1783610070485" style="user-select: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); position: relative;"></div>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center gap-2 pb-4 border-b border-neutral-100">
+
+                  <i class="fas fa-tachometer-alt text-primary"></i>
+
+
+                  <h2 class="text-base font-semibold">
+
+                    核心运行指标
+                  </h2>
+                </div>
+
+
+                <div class="pt-4 flex flex-col gap-4">
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <span class="text-sm text-neutral-600">
+
+                      平均调度延迟
+                    </span>
+
+
+                    <span class="text-sm font-medium">
+
+                      12ms
+                    </span>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <span class="text-sm text-neutral-600">
+
+                      最近1小时触发任务数
+                    </span>
+
+
+                    <span class="text-sm font-medium">
+
+                      1247
+                    </span>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <span class="text-sm text-neutral-600">
+
+                      最近1小时失配任务数
+                    </span>
+
+
+                    <span class="text-sm font-medium">
+
+                      0
+                    </span>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <span class="text-sm text-neutral-600">
+
+                      任务成功率
+                    </span>
+
+
+                    <span class="text-sm font-medium text-success">
+
+                      99.7%
+                    </span>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2">
+
+                    <span class="text-sm text-neutral-600">
+
+                      平均执行时长
+                    </span>
+
+
+                    <span class="text-sm font-medium">
+
+                      247ms
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+
+              <div class="bg-white rounded-lg p-5 card-shadow">
+
+                <div class="flex items-center gap-2 pb-4 border-b border-neutral-100">
+
+                  <i class="fas fa-puzzle-piece text-primary"></i>
+
+
+                  <h2 class="text-base font-semibold">
+
+                    已加载插件
+                  </h2>
+                </div>
+
+
+                <div class="pt-4 flex flex-col gap-3">
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <div class="flex items-center gap-2">
+
+                      <i class="fas fa-plug text-neutral-500"></i>
+
+
+                      <span class="text-sm">
+
+                        admin-web
+                      </span>
+                    </div>
+
+
+                    <div class="flex items-center gap-1">
+
+                      <span class="status-dot bg-success"></span>
+
+
+                      <span class="text-xs text-success">
+
+                        enabled
+                      </span>
+                    </div>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <div class="flex items-center gap-2">
+
+                      <i class="fas fa-plug text-neutral-500"></i>
+
+
+                      <span class="text-sm">
+
+                        metrics-prometheus
+                      </span>
+                    </div>
+
+
+                    <div class="flex items-center gap-1">
+
+                      <span class="status-dot bg-success"></span>
+
+
+                      <span class="text-xs text-success">
+
+                        enabled
+                      </span>
+                    </div>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <div class="flex items-center gap-2">
+
+                      <i class="fas fa-plug text-neutral-500"></i>
+
+
+                      <span class="text-sm">
+
+                        executor-gateway-netty
+                      </span>
+                    </div>
+
+
+                    <div class="flex items-center gap-1">
+
+                      <span class="status-dot bg-success"></span>
+
+
+                      <span class="text-xs text-success">
+
+                        enabled
+                      </span>
+                    </div>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2 border-b border-neutral-100">
+
+                    <div class="flex items-center gap-2">
+
+                      <i class="fas fa-plug text-neutral-500"></i>
+
+
+                      <span class="text-sm">
+
+                        jdbc-store
+                      </span>
+                    </div>
+
+
+                    <div class="flex items-center gap-1">
+
+                      <span class="status-dot bg-success"></span>
+
+
+                      <span class="text-xs text-success">
+
+                        enabled
+                      </span>
+                    </div>
+                  </div>
+
+
+                  <div class="flex items-center justify-between py-2">
+
+                    <div class="flex items-center gap-2">
+
+                      <i class="fas fa-plug text-neutral-500"></i>
+
+
+                      <span class="text-sm">
+
+                        alert-email
+                      </span>
+                    </div>
+
+
+                    <div class="flex items-center gap-1">
+
+                      <span class="status-dot bg-neutral-300"></span>
+
+
+                      <span class="text-xs text-neutral-500">
+
+                        disabled
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+
+    <script id="echarts_latencyChart" type="echarts">
+
+
+      {
+      "containId": "latencyChart",
+      "option": {
+        "tooltip": {
+          "trigger": "axis",
+          "axisPointer": {
+            "type": "shadow"
+          }
+        },
+        "grid": {
+          "left": "3%",
+          "right": "4%",
+          "bottom": "3%",
+          "top": "10%",
+          "containLabel": true
+        },
+        "xAxis": {
+          "type": "category",
+          "data": ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "现在"],
+          "axisLine": {
+            "lineStyle": {
+              "color": "#CBD5E1"
+            }
+          }
+        },
+        "yAxis": {
+          "type": "value",
+          "name": "ms",
+          "axisLine": {
+            "show": false
+          },
+          "splitLine": {
+            "lineStyle": {
+              "color": "#F1F5F9"
+            }
+          }
+        },
+        "series": [
+          {
+            "name": "调度延迟",
+            "type": "line",
+            "smooth": true,
+            "data": [8, 11, 15, 13, 10, 9, 12],
+            "itemStyle": {
+              "color": "#0F766E"
+            },
+            "areaStyle": {
+              "color": {
+                "type": "linear",
+                "x": 0,
+                "y": 0,
+                "x2": 0,
+                "y2": 1,
+                "colorStops": [
+                  {
+                    "offset": 0,
+                    "color": "rgba(15, 118, 110, 0.3)"
+                  },
+                  {
+                    "offset": 1,
+                    "color": "rgba(15, 118, 110, 0)"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+    
+                        </script>
+
+
+    <script id="echarts_statusChart" type="echarts">
+
+
+      {
+      "containId": "statusChart",
+      "option": {
+        "tooltip": {
+          "trigger": "item"
+        },
+        "legend": {
+          "orient": "vertical",
+          "right": "5%",
+          "top": "center"
+        },
+        "series": [
+          {
+            "name": "执行状态",
+            "type": "pie",
+            "radius": ["40%", "70%"],
+            "center": ["35%", "50%"],
+            "avoidLabelOverlap": false,
+            "itemStyle": {
+              "borderRadius": 4,
+              "borderColor": "#fff",
+              "borderWidth": 2
+            },
+            "label": {
+              "show": false,
+              "position": "center"
+            },
+            "emphasis": {
+              "label": {
+                "show": true,
+                "fontSize": 14,
+                "fontWeight": "bold"
+              }
+            },
+            "labelLine": {
+              "show": false
+            },
+            "data": [
+              { "value": 1189, "name": "SUCCEEDED", "itemStyle": { "color": "#16A34A" } },
+              { "value": 23, "name": "RUNNING", "itemStyle": { "color": "#2563EB" } },
+              { "value": 8, "name": "FAILED", "itemStyle": { "color": "#DC2626" } },
+              { "value": 3, "name": "TIMEOUT", "itemStyle": { "color": "#D97706" } },
+              { "value": 2, "name": "MISFIRED", "itemStyle": { "color": "#475569" } }
+            ]
+          }
+        ]
+      }
+    }
+    
+                        </script>
+
+    <script>
+      //图表初始化
+      try {
+
+        const container = document.getElementById('latencyChart');
+        const echart_latencyChart = echarts.init(container);
+        echart_latencyChart.setOption({
+          "tooltip": {
+            "trigger": "axis",
+            "axisPointer": {
+              "type": "shadow"
+            }
+          },
+          "grid": {
+            "left": "3%",
+            "right": "4%",
+            "bottom": "3%",
+            "top": "10%",
+            "containLabel": true
+          },
+          "xAxis": {
+            "type": "category",
+            "data": ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "现在"],
+            "axisLine": {
+              "lineStyle": {
+                "color": "#CBD5E1"
+              }
+            }
+          },
+          "yAxis": {
+            "type": "value",
+            "name": "ms",
+            "axisLine": {
+              "show": false
+            },
+            "splitLine": {
+              "lineStyle": {
+                "color": "#F1F5F9"
+              }
+            }
+          },
+          "series": [{
+            "name": "调度延迟",
+            "type": "line",
+            "smooth": true,
+            "data": [8, 11, 15, 13, 10, 9, 12],
+            "itemStyle": {
+              "color": "#0F766E"
+            },
+            "areaStyle": {
+              "color": {
+                "type": "linear",
+                "x": 0,
+                "y": 0,
+                "x2": 0,
+                "y2": 1,
+                "colorStops": [{
+                  "offset": 0,
+                  "color": "rgba(15, 118, 110, 0.3)"
+                }, {
+                  "offset": 1,
+                  "color": "rgba(15, 118, 110, 0)"
+                }]
+              }
+            }
+          }]
+        });
+
+        const resizeObserver = new ResizeObserver(() => {
+          echart_latencyChart.resize();
+        });
+        resizeObserver.observe(container);
+      } catch (err) {
+        console.log(err);
+      }
+
+      //图表初始化
+      try {
+
+        const container = document.getElementById('statusChart');
+        const echart_statusChart = echarts.init(container);
+        echart_statusChart.setOption({
+          "tooltip": {
+            "trigger": "item"
+          },
+          "legend": {
+            "orient": "vertical",
+            "right": "5%",
+            "top": "center"
+          },
+          "series": [{
+            "name": "执行状态",
+            "type": "pie",
+            "radius": ["40%", "70%"],
+            "center": ["35%", "50%"],
+            "avoidLabelOverlap": false,
+            "itemStyle": {
+              "borderRadius": 4,
+              "borderColor": "#fff",
+              "borderWidth": 2
+            },
+            "label": {
+              "show": false,
+              "position": "center"
+            },
+            "emphasis": {
+              "label": {
+                "show": true,
+                "fontSize": 14,
+                "fontWeight": "bold"
+              }
+            },
+            "labelLine": {
+              "show": false
+            },
+            "data": [{
+              "value": 1189,
+              "name": "SUCCEEDED",
+              "itemStyle": {
+                "color": "#16A34A"
+              }
+            }, {
+              "value": 23,
+              "name": "RUNNING",
+              "itemStyle": {
+                "color": "#2563EB"
+              }
+            }, {
+              "value": 8,
+              "name": "FAILED",
+              "itemStyle": {
+                "color": "#DC2626"
+              }
+            }, {
+              "value": 3,
+              "name": "TIMEOUT",
+              "itemStyle": {
+                "color": "#D97706"
+              }
+            }, {
+              "value": 2,
+              "name": "MISFIRED",
+              "itemStyle": {
+                "color": "#475569"
+              }
+            }]
+          }]
+        });
+
+        const resizeObserver = new ResizeObserver(() => {
+          echart_statusChart.resize();
+        });
+        resizeObserver.observe(container);
+      } catch (err) {
+        console.log(err);
+      }
+    </script>
+    <script>
+      window.ytHandles = {
+        openPage: function(url) {
+
+          // 当前窗口打开url页面
+          url += "&v=" + Math.random().toString(36).substring(2);
+          window.open(url, '_self');
+
+        }
+      };
+
+      window.onload = function() {
+        try {
+          //为#nav-overview元素添加click事件监听器
+          let _el = document.getElementById(`nav-overview`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Overview&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-jobs元素添加click事件监听器
+          let _el = document.getElementById(`nav-jobs`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Jobs&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-executors元素添加click事件监听器
+          let _el = document.getElementById(`nav-executors`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Executors&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-executions元素添加click事件监听器
+          let _el = document.getElementById(`nav-executions`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Executions&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-nodes元素添加click事件监听器
+          let _el = document.getElementById(`nav-nodes`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Nodes&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-plugins元素添加click事件监听器
+          let _el = document.getElementById(`nav-plugins`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Plugins&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-settings元素添加click事件监听器
+          let _el = document.getElementById(`nav-settings`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Settings&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+      }
+    </script>
+
+  </body>
+
+</html>

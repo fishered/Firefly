@@ -120,7 +120,7 @@ Enable the 5-second demo job:
 Enable Admin Web and Prometheus Metrics:
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.admin-web.enabled=true --firefly.metrics.prometheus.enabled=true"
+.\gradlew.bat :server:run --args="--firefly.plugins=admin-web,metrics-prometheus"
 ```
 
 ## Integration
@@ -140,9 +140,13 @@ Netty remote executor integration is described in [docs/netty-executor.md](docs/
 
 HA node roles, shard leases, fencing tokens, and JDBC storage are described in [docs/ha-cluster.md](docs/ha-cluster.md).
 
+JDBC store and schema dialect scripts are described in [docs/jdbc-store.md](docs/jdbc-store.md).
+
 Plugin SPI, Admin Web, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md). These plugins are not loaded by the server by default and must be enabled explicitly.
 
 Module boundaries and the executor/server split are described in [docs/module-boundaries.md](docs/module-boundaries.md).
+
+Runnable examples are described in [docs/examples.md](docs/examples.md).
 
 ## Example Job
 

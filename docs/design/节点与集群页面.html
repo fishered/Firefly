@@ -1,0 +1,908 @@
+<html lang="zh-CN">
+
+  <head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>节点与集群 - Firefly Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: '#0D9488',
+              secondary: '#F59E0B',
+              success: '#10B981',
+              danger: '#EF4444',
+              warning: '#F59E0B',
+              info: '#64748B',
+              light: '#F8FAFC',
+              dark: '#1E293B'
+            },
+            spacing: {
+              '5.5': '1.375rem',
+              'sidebar-w': '240px',
+              'header-h': '64px'
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        background-color: #F1F5F9;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+
+      .sidebar-item.active {
+        background-color: rgba(13, 148, 136, 0.1);
+        color: #0D9488;
+        border-left: 3px solid #0D9488;
+      }
+
+      .modal-mask {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+
+      .modal-mask.hidden {
+        display: none;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+    </style>
+
+    <style></style>
+  </head>
+
+  <body class="overflow-hidden">
+
+
+    <div class="flex h-full">
+
+      <aside class="w-sidebar-w h-full bg-white shadow-[0_8px_30px_rgba(0,0,0,0.04)] fixed left-0 top-0 z-50">
+
+        <div class="h-header-h flex items-center px-6 border-b border-slate-100">
+
+          <div class="flex items-center gap-2">
+
+            <i class="fas fa-fire text-primary text-xl"></i>
+
+
+            <span class="text-lg font-semibold text-dark">
+
+              Firefly
+            </span>
+          </div>
+        </div>
+
+
+        <div class="py-4">
+
+          <div class="sidebar-item flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-overview" data-uuid="Overview">
+
+            <i class="fas fa-chart-line w-5 text-center"></i>
+
+
+            <span>
+
+              总览
+            </span>
+          </div>
+
+
+          <div class="sidebar-item flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-jobs" data-uuid="Jobs">
+
+            <i class="fas fa-tasks w-5 text-center"></i>
+
+
+            <span>
+
+              任务管理
+            </span>
+          </div>
+
+
+          <div class="sidebar-item flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-executors" data-uuid="Executors">
+
+            <i class="fas fa-microchip w-5 text-center"></i>
+
+
+            <span>
+
+              执行器
+            </span>
+          </div>
+
+
+          <div class="sidebar-item flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-executions" data-uuid="Executions">
+
+            <i class="fas fa-history w-5 text-center"></i>
+
+
+            <span>
+
+              执行记录
+            </span>
+          </div>
+
+
+          <div class="sidebar-item active flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-nodes" data-uuid="Nodes">
+
+            <i class="fas fa-network-wired w-5 text-center"></i>
+
+
+            <span>
+
+              节点与集群
+            </span>
+          </div>
+
+
+          <div class="sidebar-item flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-plugins" data-uuid="Plugins">
+
+            <i class="fas fa-puzzle-piece w-5 text-center"></i>
+
+
+            <span>
+
+              插件
+            </span>
+          </div>
+
+
+          <div class="sidebar-item flex items-center gap-3 px-6 py-3 text-slate-600 hover:bg-slate-50 cursor-pointer transition-all" id="nav-settings" data-uuid="Settings">
+
+            <i class="fas fa-cog w-5 text-center"></i>
+
+
+            <span>
+
+              配置
+            </span>
+          </div>
+        </div>
+      </aside>
+
+
+      <main class="flex-1 ml-sidebar-w">
+
+        <header class="h-header-h bg-white border-b border-slate-200 fixed top-0 left-sidebar-w right-0 z-40 flex items-center px-6">
+
+          <div class="flex items-center justify-between w-full">
+
+            <div class="flex items-center gap-2">
+
+              <h1 class="text-xl font-semibold text-dark">
+
+                节点与集群
+              </h1>
+
+
+              <span class="px-2 py-0.5 text-xs bg-slate-100 text-slate-600 rounded">
+
+                Cluster Mode
+              </span>
+            </div>
+
+
+            <div class="flex items-center gap-4">
+
+              <button type="button" class="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 transition-all">
+
+                <i class="fas fa-sync-alt"></i>
+
+
+                <span>
+
+                  刷新
+                </span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+
+        <div class="pt-header-h p-6">
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 pb-6">
+
+            <div class="bg-white rounded-lg p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+
+              <div class="flex items-center justify-between">
+
+                <div>
+
+                  <p class="text-slate-500 text-sm pb-1">
+
+                    集群模式
+                  </p>
+
+
+                  <p class="text-xl font-semibold text-dark">
+
+                    Cluster
+                  </p>
+                </div>
+
+
+                <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+
+                  <i class="fas fa-server text-primary"></i>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="bg-white rounded-lg p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+
+              <div class="flex items-center justify-between">
+
+                <div>
+
+                  <p class="text-slate-500 text-sm pb-1">
+
+                    在线节点
+                  </p>
+
+
+                  <p class="text-xl font-semibold text-dark">
+
+                    3 / 3
+                  </p>
+                </div>
+
+
+                <div class="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center">
+
+                  <i class="fas fa-check-circle text-success"></i>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="bg-white rounded-lg p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+
+              <div class="flex items-center justify-between">
+
+                <div>
+
+                  <p class="text-slate-500 text-sm pb-1">
+
+                    总分片数
+                  </p>
+
+
+                  <p class="text-xl font-semibold text-dark">
+
+                    8
+                  </p>
+                </div>
+
+
+                <div class="w-10 h-10 rounded-full bg-info/10 flex items-center justify-center">
+
+                  <i class="fas fa-th-large text-info"></i>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="bg-white rounded-lg p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+
+              <div class="flex items-center justify-between">
+
+                <div>
+
+                  <p class="text-slate-500 text-sm pb-1">
+
+                    调度健康度
+                  </p>
+
+
+                  <p class="text-xl font-semibold text-success">
+
+                    100%
+                  </p>
+                </div>
+
+
+                <div class="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center">
+
+                  <i class="fas fa-heartbeat text-success"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+          <div class="bg-white rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.04)] pb-1">
+
+            <div class="p-5 border-b border-slate-100">
+
+              <h2 class="text-lg font-medium text-dark">
+
+                节点列表
+              </h2>
+            </div>
+
+
+            <div class="overflow-x-auto">
+
+              <table class="w-full">
+
+                <thead>
+
+                  <tr class="bg-slate-50 text-slate-600 text-sm">
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      节点ID
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      角色
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      模式
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      最后心跳
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      所属分片
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      租约到期
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      隔离令牌
+                    </th>
+
+
+                    <th class="text-left px-5 py-3 font-medium">
+
+                      状态
+                    </th>
+                  </tr>
+                </thead>
+
+
+                <tbody>
+
+                  <tr class="border-b border-slate-100 hover:bg-slate-50 transition-all">
+
+                    <td class="px-5 py-4 text-sm text-dark font-mono">
+
+                      node-a
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex gap-1">
+
+                        <span class="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded">
+
+                          SCHEDULER
+                        </span>
+
+
+                        <span class="px-2 py-0.5 text-xs bg-info/10 text-info rounded">
+
+                          API
+                        </span>
+                      </div>
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      Cluster
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      2024-05-20 14:32:18
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex gap-1 flex-wrap">
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-0
+                        </span>
+
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-2
+                        </span>
+
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-4
+                        </span>
+                      </div>
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      2024-05-20 14:33:18
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600 font-mono text-xs">
+
+                      7a2f9d3e...
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span class="text-success">
+
+                          在线
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+
+
+                  <tr class="border-b border-slate-100 hover:bg-slate-50 transition-all">
+
+                    <td class="px-5 py-4 text-sm text-dark font-mono">
+
+                      node-b
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex gap-1">
+
+                        <span class="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded">
+
+                          SCHEDULER
+                        </span>
+
+
+                        <span class="px-2 py-0.5 text-xs bg-info/10 text-info rounded">
+
+                          GATEWAY
+                        </span>
+                      </div>
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      Cluster
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      2024-05-20 14:32:17
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex gap-1 flex-wrap">
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-1
+                        </span>
+
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-3
+                        </span>
+
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-5
+                        </span>
+                      </div>
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      2024-05-20 14:33:17
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600 font-mono text-xs">
+
+                      8b3e4f2a...
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span class="text-success">
+
+                          在线
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+
+
+                  <tr class="hover:bg-slate-50 transition-all">
+
+                    <td class="px-5 py-4 text-sm text-dark font-mono">
+
+                      node-c
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex gap-1">
+
+                        <span class="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded">
+
+                          SCHEDULER
+                        </span>
+
+
+                        <span class="px-2 py-0.5 text-xs bg-info/10 text-info rounded">
+
+                          API
+                        </span>
+                      </div>
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      Cluster
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      2024-05-20 14:32:19
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex gap-1 flex-wrap">
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-6
+                        </span>
+
+
+                        <span class="px-1.5 py-0.5 text-xs bg-slate-100 rounded">
+
+                          shard-7
+                        </span>
+                      </div>
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600">
+
+                      2024-05-20 14:33:19
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm text-slate-600 font-mono text-xs">
+
+                      9c4d5g1b...
+                    </td>
+
+
+                    <td class="px-5 py-4 text-sm">
+
+                      <div class="flex items-center gap-1">
+
+                        <span class="status-dot bg-success"></span>
+
+
+                        <span class="text-success">
+
+                          在线
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+
+          <div class="pt-6">
+
+            <div class="bg-white rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.04)] p-5">
+
+              <h2 class="text-lg font-medium text-dark pb-4">
+
+                分片分布
+              </h2>
+
+
+              <div id="shardChart" class="h-[300px] min-h-8" _echarts_instance_="ec_1783610070706" style="user-select: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); position: relative;"></div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+
+    <script id="echarts_shardChart" type="echarts">
+
+
+      `
+    {
+        "containId": "shardChart",
+        "option": {
+            "tooltip": {
+                "trigger": "item",
+                "formatter": "{b}: {c} 个分片"
+            },
+            "legend": {
+                "orient": "horizontal",
+                "bottom": "0",
+                "data": ["node-a", "node-b", "node-c"]
+            },
+            "series": [
+                {
+                    "name": "分片分布",
+                    "type": "pie",
+                    "radius": ["40%", "70%"],
+                    "avoidLabelOverlap": false,
+                    "itemStyle": {
+                        "borderRadius": 4,
+                        "borderColor": "#fff",
+                        "borderWidth": 2
+                    },
+                    "label": {
+                        "show": true,
+                        "formatter": "{b}\n{c} 个分片"
+                    },
+                    "emphasis": {
+                        "label": {
+                            "show": true,
+                            "fontSize": 16,
+                            "fontWeight": "bold"
+                        }
+                    },
+                    "data": [
+                        { "value": 3, "name": "node-a", "itemStyle": { "color": "#0D9488" } },
+                        { "value": 3, "name": "node-b", "itemStyle": { "color": "#3B82F6" } },
+                        { "value": 2, "name": "node-c", "itemStyle": { "color": "#F59E0B" } }
+                    ]
+                }
+            ]
+        }
+    }
+    `
+    
+                        </script>
+
+    <script>
+      //图表初始化
+      try {
+
+        const container = document.getElementById('shardChart');
+        const echart_shardChart = echarts.init(container);
+        echart_shardChart.setOption({
+          "tooltip": {
+            "trigger": "item",
+            "formatter": "{b}: {c} 个分片"
+          },
+          "legend": {
+            "orient": "horizontal",
+            "bottom": "0",
+            "data": ["node-a", "node-b", "node-c"]
+          },
+          "series": [{
+            "name": "分片分布",
+            "type": "pie",
+            "radius": ["40%", "70%"],
+            "avoidLabelOverlap": false,
+            "itemStyle": {
+              "borderRadius": 4,
+              "borderColor": "#fff",
+              "borderWidth": 2
+            },
+            "label": {
+              "show": true,
+              "formatter": "{b}\n{c} 个分片"
+            },
+            "emphasis": {
+              "label": {
+                "show": true,
+                "fontSize": 16,
+                "fontWeight": "bold"
+              }
+            },
+            "data": [{
+              "value": 3,
+              "name": "node-a",
+              "itemStyle": {
+                "color": "#0D9488"
+              }
+            }, {
+              "value": 3,
+              "name": "node-b",
+              "itemStyle": {
+                "color": "#3B82F6"
+              }
+            }, {
+              "value": 2,
+              "name": "node-c",
+              "itemStyle": {
+                "color": "#F59E0B"
+              }
+            }]
+          }]
+        });
+
+        const resizeObserver = new ResizeObserver(() => {
+          echart_shardChart.resize();
+        });
+        resizeObserver.observe(container);
+      } catch (err) {
+        console.log(err);
+      }
+    </script>
+    <script>
+      window.ytHandles = {
+        openPage: function(url) {
+
+          // 当前窗口打开url页面
+          url += "&v=" + Math.random().toString(36).substring(2);
+          window.open(url, '_self');
+
+        }
+      };
+
+      window.onload = function() {
+        try {
+          //为#nav-overview元素添加click事件监听器
+          let _el = document.getElementById(`nav-overview`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Overview&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-jobs元素添加click事件监听器
+          let _el = document.getElementById(`nav-jobs`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Jobs&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-executors元素添加click事件监听器
+          let _el = document.getElementById(`nav-executors`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Executors&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-executions元素添加click事件监听器
+          let _el = document.getElementById(`nav-executions`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Executions&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-nodes元素添加click事件监听器
+          let _el = document.getElementById(`nav-nodes`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Nodes&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-plugins元素添加click事件监听器
+          let _el = document.getElementById(`nav-plugins`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Plugins&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+        try {
+          //为#nav-settings元素添加click事件监听器
+          let _el = document.getElementById(`nav-settings`);
+          if (_el) {
+            _el.addEventListener('click', function(event) {
+              ytHandles.openPage('/viewUIHtmlPreview.html?appuuid=2075233419767316480&uuid=Settings&version=1&pageType=web&w=1920&h=1080');
+            })
+          }
+        } catch (e) {
+          console.error('OpenPage error:', e);
+        }
+      }
+    </script>
+
+  </body>
+
+</html>

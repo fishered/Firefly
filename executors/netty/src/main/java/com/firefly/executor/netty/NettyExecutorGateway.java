@@ -1,6 +1,7 @@
 package com.firefly.executor.netty;
 
 import com.firefly.engine.ExecutionCommand;
+import com.firefly.domain.ExecutionContext;
 import com.firefly.executor.ExecutorRegistry;
 import com.firefly.executor.InMemoryExecutorRegistry;
 import io.netty.bootstrap.ServerBootstrap;
@@ -86,6 +87,15 @@ public final class NettyExecutorGateway implements AutoCloseable {
                 .orElse(false);
     }
 
+    public boolean dispatch(String executorName, String handlerName, ExecutionContext context) {
+        return connectionRegistry.select(executorName)
+                .map(channel -> {
+                    channel.writeAndFlush(codec.encode(triggerMessage(handlerName, context)) + "\n");
+                    return true;
+                })
+                .orElse(false);
+    }
+
     public ExecutorRegistry executorRegistry() {
         return executorRegistry;
     }
@@ -117,6 +127,21 @@ public final class NettyExecutorGateway implements AutoCloseable {
         payload.put("ownerNodeId", command.ownerNodeId());
         payload.put("fencingToken", Long.toString(command.fencingToken()));
         command.definition().parameters().forEach((key, value) -> payload.put("param." + key, value));
+        return new NettyExecutorMessage(
+                UUID.randomUUID().toString(),
+                NettyExecutorMessageType.TRIGGER_JOB,
+                payload
+        );
+    }
+
+    private NettyExecutorMessage triggerMessage(String handlerName, ExecutionContext context) {
+        Map<String, String> payload = new LinkedHashMap<>();
+        payload.put("executionId", context.executionId());
+        payload.put("jobId", context.jobId());
+        payload.put("handlerName", handlerName);
+        payload.put("scheduledFireTime", context.scheduledFireTime().toString());
+        payload.put("dispatchTime", context.dispatchTime().toString());
+        context.parameters().forEach((key, value) -> payload.put("param." + key, value));
         return new NettyExecutorMessage(
                 UUID.randomUUID().toString(),
                 NettyExecutorMessageType.TRIGGER_JOB,

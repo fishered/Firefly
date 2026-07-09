@@ -7,6 +7,7 @@ import com.firefly.cluster.NodeRegistry;
 import com.firefly.cluster.NodeRole;
 import com.firefly.cluster.NodeStatus;
 import com.firefly.engine.SchedulerEngine;
+import com.firefly.executor.netty.NettyExecutorGateway;
 import com.firefly.plugin.FireflyPlugin;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.plugin.FireflyPluginManager;
@@ -34,10 +35,12 @@ public final class FireflyBootstrap implements AutoCloseable {
 
     private final SchedulerEngine engine;
     private final FireflyPluginManager plugins;
+    private final NettyExecutorGateway executorGateway;
 
-    private FireflyBootstrap(SchedulerEngine engine, FireflyPluginManager plugins) {
+    private FireflyBootstrap(SchedulerEngine engine, FireflyPluginManager plugins, NettyExecutorGateway executorGateway) {
         this.engine = engine;
         this.plugins = plugins;
+        this.executorGateway = executorGateway;
     }
 
     public static FireflyBootstrap start(ServerOptions options) {
@@ -57,14 +60,19 @@ public final class FireflyBootstrap implements AutoCloseable {
         SchedulerEngine engine = injector.getInstance(SchedulerEngine.class);
         engine.start();
 
+        NettyExecutorGateway executorGateway = startExecutorGateway(options);
         FireflyPluginManager plugins = new FireflyPluginManager(configuredPlugins(options));
-        plugins.start(FireflyPluginContext.builder()
+        FireflyPluginContext.Builder pluginContext = FireflyPluginContext.builder()
                 .jobRepository(repository)
-                .nodeRegistry(nodeRegistry)
-                .build());
+                .jobHandlerRegistry(handlerRegistry)
+                .nodeRegistry(nodeRegistry);
+        if (executorGateway != null) {
+            pluginContext.remoteExecutorDispatcher(executorGateway::dispatch);
+        }
+        plugins.start(pluginContext.build());
 
         log.info("Firefly server started");
-        return new FireflyBootstrap(engine, plugins);
+        return new FireflyBootstrap(engine, plugins, executorGateway);
     }
 
     public void await() throws InterruptedException {
@@ -74,6 +82,9 @@ public final class FireflyBootstrap implements AutoCloseable {
     @Override
     public void close() {
         plugins.close();
+        if (executorGateway != null) {
+            executorGateway.close();
+        }
         engine.stop();
     }
 
@@ -85,8 +96,9 @@ public final class FireflyBootstrap implements AutoCloseable {
                 now,
                 now,
                 NodeStatus.ONLINE,
-                Map.of("mode", "server")
+                Map.of("mode", options.nodeMode().name().toLowerCase())
         ));
+        log.info("Firefly node mode: " + options.nodeMode().name().toLowerCase());
     }
 
     private static Set<NodeRole> nodeRoles(ServerOptions options) {
@@ -94,6 +106,9 @@ public final class FireflyBootstrap implements AutoCloseable {
         roles.add(NodeRole.SCHEDULER);
         if (options.adminWebEnabled()) {
             roles.add(NodeRole.API);
+        }
+        if (options.nettyExecutorGatewayEnabled()) {
+            roles.add(NodeRole.GATEWAY);
         }
         return Set.copyOf(roles);
     }
@@ -118,5 +133,21 @@ public final class FireflyBootstrap implements AutoCloseable {
             log.info("Metrics: http://127.0.0.1:" + options.prometheusMetricsPort() + "/metrics");
         }
         return plugins;
+    }
+
+    private static NettyExecutorGateway startExecutorGateway(ServerOptions options) {
+        if (!options.nettyExecutorGatewayEnabled()) {
+            log.info("Netty executor gateway disabled");
+            return null;
+        }
+        NettyExecutorGateway gateway = new NettyExecutorGateway(options.nettyExecutorGatewayPort());
+        try {
+            gateway.start();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while starting netty executor gateway", e);
+        }
+        log.info("Netty executor gateway: 127.0.0.1:" + options.nettyExecutorGatewayPort());
+        return gateway;
     }
 }

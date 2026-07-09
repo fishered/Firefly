@@ -59,3 +59,30 @@ transports
 也就是说：**server 侧 gateway 可以成为 server 的内置模块，业务侧 executor client 不应该放进 server。**
 
 这个方向更接近 Elasticsearch 的 bootstrap + modules/plugins 思路：宿主负责生命周期，模块提供能力，插件按需加载。
+
+## Bootstrap 配置
+
+server bootstrap 支持节点模式：
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.node.mode=standalone"
+.\gradlew.bat :server:run --args="--firefly.node.mode=cluster"
+```
+
+server bootstrap 也支持插件列表：
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.plugins=admin-web,metrics-prometheus"
+```
+
+当前 executor gateway 是 server 可启用的内置能力：
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.executor.gateway.netty.enabled=true"
+```
+
+后续拆分时，建议保留这个原则：
+
+- `server` 负责装配 gateway 和生命周期。
+- `executors/*` 提供业务侧 SDK/client。
+- 共享协议再下沉到独立 transport/protocol 模块。

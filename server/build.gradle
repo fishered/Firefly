@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     implementation project(":libs:scheduler-core")
+    implementation project(":executors:netty")
     implementation project(":plugins:plugin-api")
     implementation project(":plugins:admin-web")
     implementation project(":plugins:metrics-prometheus")

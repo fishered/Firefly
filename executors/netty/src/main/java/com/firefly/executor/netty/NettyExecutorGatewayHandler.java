@@ -10,8 +10,11 @@ import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
+import java.util.logging.Logger;
 
 final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<String> {
+    private static final Logger log = Logger.getLogger(NettyExecutorGatewayHandler.class.getName());
+
     private final ExecutorRegistry executorRegistry;
     private final NettyExecutorConnectionRegistry connectionRegistry;
     private final NettyExecutorJsonCodec codec;
@@ -65,6 +68,10 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 .lastHeartbeatAt(now)
                 .build());
         connectionRegistry.register(executorName, instanceId, context.channel());
+        log.info(() -> "executor registered: executor=" + executorName
+                + ", instance=" + instanceId
+                + ", service=" + serviceName
+                + ", remote=" + remoteHost(context));
     }
 
     private void heartbeat(Map<String, String> payload) {
@@ -74,6 +81,8 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
     private void unregister(ChannelHandlerContext context, Map<String, String> payload) {
         executorRegistry.markOffline(payload.get("executorName"), payload.get("instanceId"));
         connectionRegistry.unregister(context.channel());
+        log.info(() -> "executor unregistered: executor=" + payload.get("executorName")
+                + ", instance=" + payload.get("instanceId"));
     }
 
     private String remoteHost(ChannelHandlerContext context) {

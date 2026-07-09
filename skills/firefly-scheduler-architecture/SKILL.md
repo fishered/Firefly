@@ -24,6 +24,7 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Plugin API module: `plugins/plugin-api`
 - Admin Web plugin: `plugins/admin-web`
 - Prometheus Metrics plugin: `plugins/metrics-prometheus`
+- Embedded example module: `examples/embedded-basic`
 - HA cluster model: `com.firefly.cluster`
 - Server module: `server`
 
@@ -38,6 +39,7 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Keep Netty transport code in `executors/netty`; use JSON protocol frames and do not put Netty dependencies in `libs/scheduler-core`.
 - Keep HA coordination abstractions in core, but put JDBC/etcd/ZooKeeper implementations outside core.
 - Keep JDBC storage code in `stores/jdbc`; it may implement job repository, node registry, and shard lease, but should not make scheduler tick depend on full database scans.
+- Keep JDBC schema SQL in dialect resource scripts; do not hardcode database-specific DDL in Java code.
 - Keep optional operations, pages, and metrics in `plugins/*`; do not hardcode Prometheus, HTTP pages, or plugin runtime code into `libs/scheduler-core`.
 - Use shard lease and fencing token semantics for scheduler HA; do not implement HA as a single unguarded master flag.
 - Use Java 21.
