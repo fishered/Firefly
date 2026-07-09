@@ -109,7 +109,19 @@ Windows:
 .\gradlew.bat :server:run
 ```
 
-The demo registers a local handler and schedules a sample cron job every 5 seconds.
+By default the server starts in lightweight mode: no Admin Web, no Prometheus Metrics, and no demo job.
+
+Enable the 5-second demo job:
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.demo.enabled=true"
+```
+
+Enable Admin Web and Prometheus Metrics:
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.admin-web.enabled=true --firefly.metrics.prometheus.enabled=true"
+```
 
 ## Integration
 
@@ -128,7 +140,9 @@ Netty remote executor integration is described in [docs/netty-executor.md](docs/
 
 HA node roles, shard leases, fencing tokens, and JDBC storage are described in [docs/ha-cluster.md](docs/ha-cluster.md).
 
-Plugin SPI, Admin Web, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md).
+Plugin SPI, Admin Web, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md). These plugins are not loaded by the server by default and must be enabled explicitly.
+
+Module boundaries and the executor/server split are described in [docs/module-boundaries.md](docs/module-boundaries.md).
 
 ## Example Job
 

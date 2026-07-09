@@ -10,5 +10,5 @@ dependencies {
 }
 
 application {
-    mainClass = "io.github.nishi.firefly.cli.FireflyCli"
+    mainClass = "com.firefly.cli.FireflyCli"
 }

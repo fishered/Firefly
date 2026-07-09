@@ -24,7 +24,7 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Plugin API module: `plugins/plugin-api`
 - Admin Web plugin: `plugins/admin-web`
 - Prometheus Metrics plugin: `plugins/metrics-prometheus`
-- HA cluster model: `io.github.nishi.firefly.cluster`
+- HA cluster model: `com.firefly.cluster`
 - Server module: `server`
 
 ## Non-Negotiables
@@ -96,7 +96,7 @@ When adding product-facing task creation or validation, prefer warnings plus nex
 
 - Project name: `Firefly`
 - Gradle root project: `firefly`
-- Java package: `io.github.nishi.firefly`
+- Java package: `com.firefly`
 - Avoid reintroducing `light-scheduler` or `lightscheduler`.
 
 ## Documentation

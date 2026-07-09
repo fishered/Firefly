@@ -3,7 +3,7 @@ plugins {
 }
 
 allprojects {
-    group = "io.github.nishi"
+    group = "com.firefly"
     version = "0.1.0-SNAPSHOT"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {

@@ -89,6 +89,14 @@ firefly:
 
 这个入口先保持很薄，避免在核心能力稳定前过早引入复杂运行时。
 
+当前 `server` 模块使用 `FireflyBootstrap` 管理启动流程。默认只启动调度服务，不自动注册 demo 任务，也不加载 Admin Web 或 Prometheus Metrics。
+
+启用 demo：
+
+```powershell
+.\gradlew.bat :server:run --args="--firefly.demo.enabled=true"
+```
+
 ## 可选插件
 
 插件由宿主服务显式启用。示例：

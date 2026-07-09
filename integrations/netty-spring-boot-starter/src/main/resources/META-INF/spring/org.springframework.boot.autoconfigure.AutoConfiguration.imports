@@ -1,1 +1,1 @@
-io.github.nishi.firefly.spring.netty.FireflyNettyExecutorAutoConfiguration
+com.firefly.spring.netty.FireflyNettyExecutorAutoConfiguration
