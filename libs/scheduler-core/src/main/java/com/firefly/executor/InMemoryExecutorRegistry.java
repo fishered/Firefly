@@ -62,6 +62,16 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
     }
 
     @Override
+    public List<ExecutorInstance> listAll() {
+        synchronized (lock) {
+            return instances.values().stream()
+                    .sorted(Comparator.comparing(ExecutorInstance::executorName)
+                            .thenComparing(ExecutorInstance::instanceId))
+                    .toList();
+        }
+    }
+
+    @Override
     public List<ExecutorInstance> listOnline(String executorName, Instant now, Duration heartbeatTimeout) {
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(heartbeatTimeout, "heartbeatTimeout");
@@ -84,6 +94,8 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
         return new ExecutorInstance(
                 current.executorName(),
                 current.instanceId(),
+                current.sessionId(),
+                current.gatewayNodeId(),
                 current.serviceName(),
                 current.host(),
                 current.port(),

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firefly Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">◆</span>
+      <span class="brand-name">Firefly</span>
+    </div>
+
+    <nav class="nav-list" aria-label="Firefly admin navigation">
+      <button class="nav active" type="button" data-view="overview"><span class="nav-icon">⌁</span><span>总览</span></button>
+      <button class="nav" type="button" data-view="jobs"><span class="nav-icon">☷</span><span>任务管理</span></button>
+      <button class="nav" type="button" data-view="executors"><span class="nav-icon">▤</span><span>执行器</span></button>
+      <button class="nav" type="button" data-view="executions"><span class="nav-icon">↺</span><span>执行记录</span></button>
+      <button class="nav" type="button" data-view="nodes"><span class="nav-icon">⌘</span><span>节点与集群</span></button>
+      <button class="nav" type="button" data-view="plugins"><span class="nav-icon">✣</span><span>插件</span></button>
+      <button class="nav" type="button" data-view="settings"><span class="nav-icon">⚙</span><span>配置</span></button>
+    </nav>
+
+    <div class="user-box">
+      <div class="avatar">●</div>
+      <div>
+        <div>管理员</div>
+        <small>v1.0.0</small>
+      </div>
+    </div>
+  </aside>
+
+  <main class="page">
+    <header class="topbar">
+      <div class="title-row">
+        <h1 id="page-title">总览</h1>
+        <span id="page-badge" class="title-badge hidden"></span>
+      </div>
+      <div id="page-actions" class="page-actions"></div>
+    </header>
+
+    <section id="view-root" class="view-root" aria-live="polite"></section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="modal-root"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

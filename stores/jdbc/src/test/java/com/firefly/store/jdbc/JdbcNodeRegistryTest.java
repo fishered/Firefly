@@ -18,8 +18,10 @@ class JdbcNodeRegistryTest {
     @Test
     void registersAndHeartbeatsNodes() {
         DataSource dataSource = JdbcTestSupport.dataSource();
-        JdbcNodeRegistry registry = new JdbcNodeRegistry(dataSource);
         Instant now = Instant.parse("2026-07-09T10:00:00Z");
+        java.util.concurrent.atomic.AtomicReference<Instant> databaseNow =
+                new java.util.concurrent.atomic.AtomicReference<>(now.minusSeconds(40));
+        JdbcNodeRegistry registry = new JdbcNodeRegistry(dataSource, ignored -> databaseNow.get());
 
         registry.register(FireflyNode.builder()
                 .nodeId("node-1")
@@ -30,11 +32,13 @@ class JdbcNodeRegistryTest {
                 .build());
 
         assertTrue(registry.find("node-1").isPresent());
-        assertTrue(registry.listOnline(now, Duration.ofSeconds(30)).isEmpty());
+        databaseNow.set(now);
+        assertTrue(registry.listOnline(Instant.EPOCH, Duration.ofSeconds(30)).isEmpty());
 
+        databaseNow.set(now.plusSeconds(1));
         registry.heartbeat("node-1", now);
 
-        assertEquals(List.of("node-1"), registry.listOnline(now, Duration.ofSeconds(30)).stream()
+        assertEquals(List.of("node-1"), registry.listOnline(Instant.EPOCH, Duration.ofSeconds(30)).stream()
                 .map(FireflyNode::nodeId)
                 .toList());
         assertEquals("az-a", registry.find("node-1").orElseThrow().metadata().get("zone"));

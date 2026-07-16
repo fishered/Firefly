@@ -15,6 +15,8 @@ public interface SchedulerCatalog {
 
     Optional<ExecutorDefinition> findExecutor(String name);
 
+    List<ExecutorDefinition> listExecutors();
+
     void saveJobGroup(JobGroupDefinition group);
 
     Optional<JobGroupDefinition> findJobGroup(String groupId);

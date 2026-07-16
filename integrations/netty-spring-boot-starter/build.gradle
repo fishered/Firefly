@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    api project(":executors:netty")
+    api project(":transports:netty")
 
     compileOnly "org.springframework.boot:spring-boot-autoconfigure:3.3.5"
     compileOnly "org.projectlombok:lombok:1.18.34"

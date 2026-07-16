@@ -11,11 +11,11 @@ Firefly 节点可以拥有多个角色：
 
 ```text
 SCHEDULER   负责持有 shard lease、扫描本地 TimingIndex、生成 ExecutionCommand
-STANDBY     可以接管 scheduler 职责，但没拿到 lease 时不主动调度
 GATEWAY     维护 executor Netty 长连接
 API         暴露管理 API 和配置写入入口
-EXECUTOR    业务执行节点
 ```
+
+`STANDBY` 不是配置角色，而是 `SCHEDULER` 节点没拿到 shard lease 时的运行态。
 
 单机模式：
 
@@ -23,13 +23,27 @@ EXECUTOR    业务执行节点
 node-1: SCHEDULER + GATEWAY + API
 ```
 
-集群模式：
+第一阶段推荐的最小 HA 集群是三个节点都启用全角色：
 
 ```text
 node-1: SCHEDULER + GATEWAY + API
-node-2: STANDBY + GATEWAY
-node-3: STANDBY + GATEWAY
+node-2: SCHEDULER + GATEWAY + API
+node-3: SCHEDULER + GATEWAY + API
 ```
+
+配置示例：
+
+```properties
+firefly.node.mode=cluster
+firefly.node.name=firefly-node-1
+firefly.node.roles=api,gateway,scheduler
+firefly.store.type=jdbc
+firefly.scheduler.coordination.reconcile-interval=PT1S
+firefly.scheduler.coordination.node-timeout=PT5S
+firefly.scheduler.coordination.lease-duration=PT10S
+```
+
+默认故障窗口满足 `node timeout < shard lease`：失效节点会先从在线成员集合移除，其他节点在旧 lease 到期后接管；fencing token 负责拒绝旧 owner 的后续写入。配置加载时会拒绝不满足该约束的组合。
 
 后续也可以拆成更细的部署：
 
@@ -65,6 +79,8 @@ new owner loads jobs and resumes scheduling
 ```text
 jobId -> ShardHasher -> shardId
 ```
+
+分片总数由 `firefly.scheduler.shard-count` 指定，默认 `32`。它会在集群首次初始化时写入共享元数据，之后所有节点必须保持一致；启动时会在迁移前和迁移锁内校验，避免并发首启覆盖。当前不做在线自动重分片。
 
 每个 shard 同一时刻只能被一个 scheduler node 持有：
 
@@ -115,7 +131,7 @@ ownerNodeId
 fencingToken
 ```
 
-后续持久化实现必须在更新 `job_runtime_state` 时校验 fencing token。
+当前 JDBC 游标推进已经在同一条 CAS 中校验到期时间、shard owner、fencing token 和数据库时间下未过期的 lease。JVM 时钟即使偏快，也不能在数据库 `next_fire_time` 之前推进游标。
 
 ## 避免重复触发
 
@@ -129,11 +145,15 @@ execution log unique   防止重复记录
 executor idempotency   业务侧最终兜底
 ```
 
+Netty 客户端可使用 `FileExecutorResultStore` 将已完成目标结果保存到持久卷，同一 `executionId` 在进程重启后可直接重放结果。协议 v1 同时协商 `TARGET_ACK`、`RESULT_REPORT` 等能力，协商不完整时双方拒绝继续使用连接。
+
 不要承诺绝对 exactly-once。更现实的目标是 effectively-once：
 
 ```text
 尽量只触发一次 + 存储防重复 + 执行侧幂等
 ```
+
+文件结果存储不能覆盖“业务副作用已经发生，但结果尚未持久化时进程崩溃”的窗口，也不能替代跨实例业务幂等。因此 Firefly 的语义仍是 at-least-once 传递基础上的 effectively-once，而不是绝对 exactly-once。
 
 ## 业务服务 HA
 
@@ -153,35 +173,11 @@ job -> group -> executor -> online executor instance
 
 如果某个 executor instance 心跳超时，router 不再选择它。
 
-如果所有实例都不可用，任务进入 dispatch failure / misfire 策略，而不是假装执行成功。
+如果所有实例都不可用，任务进入 dispatch failure / misfire 策略，而不是假装执行成功。广播和分片的下一次 attempt 只重试失败、超时或缺失目标，不会再次执行已经成功的目标。
 
-## 当前落地代码
+## 实现进度
 
-已落地：
-
-- `NodeRole`
-- `NodeStatus`
-- `FireflyNode`
-- `NodeRegistry`
-- `InMemoryNodeRegistry`
-- `ShardLease`
-- `ShardManager`
-- `InMemoryShardManager`
-- `ShardHasher`
-- `ExecutionCommand.ownerNodeId`
-- `ExecutionCommand.fencingToken`
-- `stores/jdbc`
-- `JdbcSchema`
-- `JdbcJobRepository`
-- `JdbcNodeRegistry`
-- `JdbcShardManager`
-
-下一步：
-
-- token-aware runtime state 和 execution log。
-- scheduler 按 shard lease 加载本地 TimingIndex。
-- Netty executor client 支持多个 gateway seed address 重连。
-- gateway 根据 fencing token 拒绝过期 command。
+当前实现进度统一维护在 [implementation-progress.md](implementation-progress.md)。
 
 ## 存储边界
 
@@ -194,4 +190,4 @@ shard lease             决定哪个节点可以扫描哪一片任务
 fencing token           防止旧 owner 在恢复后继续写入
 ```
 
-`JdbcJobRepository` 目前用 `jobId + expected nextFireTime` 推进调度游标，并递增 `version`。后续实现 token-aware runtime state 时，需要把 `ownerNodeId`、`fencingToken` 也放进同一个 CAS 更新边界。这样即使旧节点恢复，它携带的旧 token 也无法推进任务游标。
+`JdbcJobRepository` 使用 `jobId + expected nextFireTime + ownerNodeId + fencingToken + leaseUntil` 推进调度游标并递增 `version`。execution/target 终态采用单向状态机，ACK、结果聚合和 timeout 通过父行锁串行化，避免故障切换中的状态回退。

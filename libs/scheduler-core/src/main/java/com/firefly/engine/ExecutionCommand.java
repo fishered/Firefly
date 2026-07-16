@@ -10,6 +10,8 @@ import java.util.Objects;
  */
 public record ExecutionCommand(
         String executionId,
+        String rootExecutionId,
+        int runAttempt,
         JobDefinition definition,
         Instant scheduledFireTime,
         Instant dispatchTime,
@@ -22,11 +24,23 @@ public record ExecutionCommand(
             Instant scheduledFireTime,
             Instant dispatchTime
     ) {
-        this(executionId, definition, scheduledFireTime, dispatchTime, "local", 1L);
+        this(executionId, executionId, 0, definition, scheduledFireTime, dispatchTime, "local", 1L);
+    }
+
+    public ExecutionCommand(
+            String executionId,
+            JobDefinition definition,
+            Instant scheduledFireTime,
+            Instant dispatchTime,
+            String ownerNodeId,
+            long fencingToken
+    ) {
+        this(executionId, executionId, 0, definition, scheduledFireTime, dispatchTime, ownerNodeId, fencingToken);
     }
 
     public ExecutionCommand {
         Objects.requireNonNull(executionId, "executionId");
+        Objects.requireNonNull(rootExecutionId, "rootExecutionId");
         Objects.requireNonNull(definition, "definition");
         Objects.requireNonNull(scheduledFireTime, "scheduledFireTime");
         Objects.requireNonNull(dispatchTime, "dispatchTime");
@@ -34,6 +48,8 @@ public record ExecutionCommand(
         if (executionId.isBlank()) {
             throw new IllegalArgumentException("executionId must not be blank");
         }
+        if (rootExecutionId.isBlank()) throw new IllegalArgumentException("rootExecutionId must not be blank");
+        if (runAttempt < 0) throw new IllegalArgumentException("runAttempt must not be negative");
         if (ownerNodeId.isBlank()) {
             throw new IllegalArgumentException("ownerNodeId must not be blank");
         }

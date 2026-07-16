@@ -1,8 +1,12 @@
 package com.firefly.store.jdbc;
 
 import com.firefly.domain.ConcurrencyPolicy;
+import com.firefly.cluster.ShardHasher;
 import com.firefly.domain.CronSchedule;
 import com.firefly.domain.FixedRateSchedule;
+import com.firefly.domain.ExecutorCompletionPolicy;
+import com.firefly.domain.ExecutorDispatchMode;
+import com.firefly.domain.ExecutorRoutingStrategy;
 import com.firefly.domain.JobDefinition;
 import com.firefly.domain.MisfirePolicy;
 import com.firefly.store.DueJobBatch;
@@ -32,6 +36,9 @@ final class JdbcJobRepositoryTest {
         assertEquals("reportHandler", record.definition().handlerName());
         assertEquals(ZoneId.of("Asia/Shanghai"), record.definition().zoneId());
         assertEquals(Map.of("tenant", "firefly"), record.definition().parameters());
+        assertEquals(ExecutorDispatchMode.BROADCAST, record.definition().dispatchMode());
+        assertEquals(ExecutorRoutingStrategy.CONSISTENT_HASH, record.definition().routingStrategy());
+        assertEquals(ExecutorCompletionPolicy.QUORUM, record.definition().completionPolicy());
         assertEquals(nextFireTime, record.nextFireTime());
     }
 
@@ -98,6 +105,33 @@ final class JdbcJobRepositoryTest {
         );
     }
 
+    @Test
+    void requiresTheCurrentShardFencingTokenWhenAdvancingAClusterJob() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        java.util.concurrent.atomic.AtomicReference<Instant> databaseNow =
+                new java.util.concurrent.atomic.AtomicReference<>(now);
+        JdbcJobRepository repository = new JdbcJobRepository(dataSource, ignored -> databaseNow.get());
+        JdbcShardManager shards = new JdbcShardManager(dataSource, ignored -> databaseNow.get());
+        Instant first = now.plusSeconds(5);
+        Instant second = first.plusSeconds(60);
+        JobDefinition job = reportJob("fenced-report", first);
+        repository.save(job, first);
+        int shardId = ShardHasher.shardFor(job.id(), 32);
+        var lease = shards.acquire(shardId, "node-a", first.minusSeconds(1), Duration.ofMinutes(5)).orElseThrow();
+
+        assertFalse(repository.updateNextFireTimeWithLease(
+                job.id(), first, second, "node-a", lease.fencingToken() + 1
+        ));
+        assertFalse(repository.updateNextFireTimeWithLease(
+                job.id(), first, second, "node-a", lease.fencingToken()
+        ));
+        databaseNow.set(first);
+        assertTrue(repository.updateNextFireTimeWithLease(
+                job.id(), first, second, "node-a", lease.fencingToken()
+        ));
+    }
+
     private JdbcJobRepository repository() {
         DataSource dataSource = JdbcTestSupport.dataSource();
         return new JdbcJobRepository(dataSource);
@@ -117,6 +151,10 @@ final class JdbcJobRepositoryTest {
                 .maxCatchUpCount(5)
                 .timeout(Duration.ofSeconds(30))
                 .parameters(Map.of("tenant", "firefly"))
+                .dispatchMode(ExecutorDispatchMode.BROADCAST)
+                .routingStrategy(ExecutorRoutingStrategy.CONSISTENT_HASH)
+                .completionPolicy(ExecutorCompletionPolicy.QUORUM)
+                .routingKey("tenant:firefly")
                 .enabled(true)
                 .build();
     }

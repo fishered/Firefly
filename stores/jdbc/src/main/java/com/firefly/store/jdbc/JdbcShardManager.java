@@ -21,9 +21,15 @@ public final class JdbcShardManager implements ShardManager {
     private static final Instant RELEASED_LEASE_UNTIL = Instant.EPOCH;
 
     private final DataSource dataSource;
+    private final JdbcTimeSource timeSource;
 
     public JdbcShardManager(DataSource dataSource) {
+        this(dataSource, JdbcTimeSource.database());
+    }
+
+    JdbcShardManager(DataSource dataSource, JdbcTimeSource timeSource) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+        this.timeSource = Objects.requireNonNull(timeSource, "timeSource");
     }
 
     @Override
@@ -36,13 +42,15 @@ public final class JdbcShardManager implements ShardManager {
              */
             connection.setAutoCommit(false);
             try {
+                Instant databaseNow = timeSource.now(connection);
                 ShardLease current = selectForUpdate(connection, shardId).orElse(null);
                 ShardLease next;
                 if (current == null) {
-                    next = new ShardLease(shardId, nodeId, now.plus(leaseDuration), 1L);
+                    next = new ShardLease(shardId, nodeId, databaseNow.plus(leaseDuration), 1L);
                     insert(connection, next);
                 } else {
-                    boolean heldByOther = current.leaseUntil().isAfter(now) && !current.ownerNodeId().equals(nodeId);
+                    boolean active = current.leaseUntil().isAfter(databaseNow);
+                    boolean heldByOther = active && !current.ownerNodeId().equals(nodeId);
                     if (heldByOther) {
                         connection.rollback();
                         return Optional.empty();
@@ -51,10 +59,10 @@ public final class JdbcShardManager implements ShardManager {
                      * Reacquiring by the same owner is a renewal-style operation. A different owner
                      * must receive a larger fencing token so stale commands can be rejected later.
                      */
-                    long token = current.ownerNodeId().equals(nodeId)
+                    long token = active && current.ownerNodeId().equals(nodeId)
                             ? current.fencingToken()
                             : current.fencingToken() + 1;
-                    next = new ShardLease(shardId, nodeId, now.plus(leaseDuration), token);
+                    next = new ShardLease(shardId, nodeId, databaseNow.plus(leaseDuration), token);
                     update(connection, next);
                 }
                 connection.commit();
@@ -79,8 +87,9 @@ public final class JdbcShardManager implements ShardManager {
             Duration leaseDuration
     ) {
         validate(shardId, nodeId, now, leaseDuration);
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement("""
+        try (Connection connection = dataSource.getConnection()) {
+            Instant databaseNow = timeSource.now(connection);
+            try (PreparedStatement statement = connection.prepareStatement("""
                      update firefly_shard_lease
                      set lease_until = ?
                      where shard_id = ?
@@ -88,16 +97,17 @@ public final class JdbcShardManager implements ShardManager {
                        and fencing_token = ?
                        and lease_until >= ?
                      """)) {
-            Instant leaseUntil = now.plus(leaseDuration);
+            Instant leaseUntil = databaseNow.plus(leaseDuration);
             statement.setTimestamp(1, Timestamp.from(leaseUntil));
             statement.setInt(2, shardId);
             statement.setString(3, nodeId);
             statement.setLong(4, fencingToken);
-            statement.setTimestamp(5, Timestamp.from(now));
+            statement.setTimestamp(5, Timestamp.from(databaseNow));
             if (statement.executeUpdate() == 0) {
                 return Optional.empty();
             }
             return Optional.of(new ShardLease(shardId, nodeId, leaseUntil, fencingToken));
+            }
         } catch (SQLException e) {
             throw new JdbcException("failed to renew shard lease", e);
         }

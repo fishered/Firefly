@@ -1,160 +1,63 @@
 package com.firefly.time;
 
+import com.cronutils.model.Cron;
+import com.cronutils.model.CronType;
+import com.cronutils.model.definition.CronDefinitionBuilder;
+import com.cronutils.model.time.ExecutionTime;
+import com.cronutils.parser.CronParser;
+
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.util.BitSet;
-import java.util.List;
 import java.util.Objects;
 
+/** Spring 5.3 compatible six-field cron expression backed by cron-utils. */
 public final class CronExpression {
-    private static final int MAX_SEARCH_SECONDS = 366 * 24 * 60 * 60;
+    private static final CronParser PARSER = new CronParser(
+            CronDefinitionBuilder.instanceDefinitionFor(CronType.SPRING53)
+    );
 
     private final String expression;
-    private final CronField seconds;
-    private final CronField minutes;
-    private final CronField hours;
-    private final CronField daysOfMonth;
-    private final CronField months;
-    private final CronField daysOfWeek;
+    private final ExecutionTime executionTime;
 
-    private CronExpression(
-            String expression,
-            CronField seconds,
-            CronField minutes,
-            CronField hours,
-            CronField daysOfMonth,
-            CronField months,
-            CronField daysOfWeek
-    ) {
+    private CronExpression(String expression, Cron cron) {
         this.expression = expression;
-        this.seconds = seconds;
-        this.minutes = minutes;
-        this.hours = hours;
-        this.daysOfMonth = daysOfMonth;
-        this.months = months;
-        this.daysOfWeek = daysOfWeek;
+        this.executionTime = ExecutionTime.forCron(cron);
     }
 
     public static CronExpression parse(String expression) {
         Objects.requireNonNull(expression, "expression");
-        String[] parts = expression.trim().split("\\s+");
-        if (parts.length != 6) {
-            throw new IllegalArgumentException("cron expression must contain 6 fields: second minute hour day month week");
+        String normalized = expression.trim();
+        if (normalized.split("\\s+").length != 6) {
+            throw new IllegalArgumentException(
+                    "cron expression must contain 6 fields: second minute hour day month week"
+            );
         }
-        return new CronExpression(
-                expression,
-                CronField.parse(parts[0], 0, 59),
-                CronField.parse(parts[1], 0, 59),
-                CronField.parse(parts[2], 0, 23),
-                CronField.parse(parts[3], 1, 31),
-                CronField.parse(parts[4], 1, 12),
-                CronField.parse(parts[5], 0, 7)
-        );
+        Cron cron = PARSER.parse(normalized);
+        cron.validate();
+        return new CronExpression(normalized, cron);
     }
 
     public Instant nextAfter(Instant after, ZoneId zoneId) {
-        ZonedDateTime cursor = after.atZone(zoneId).plusSeconds(1).withNano(0);
-        for (int i = 0; i < MAX_SEARCH_SECONDS; i++) {
-            if (matches(cursor.toLocalDateTime())) {
-                return cursor.toInstant();
+        Objects.requireNonNull(after, "after");
+        Objects.requireNonNull(zoneId, "zoneId");
+        ZonedDateTime zonedAfter = after.atZone(zoneId);
+        LocalDateTime localAfter = zonedAfter.toLocalDateTime().withNano(0);
+        if (executionTime.isMatch(zonedAfter.withNano(0))) {
+            for (ZoneOffset offset : zoneId.getRules().getValidOffsets(localAfter)) {
+                ZonedDateTime overlapCandidate = ZonedDateTime.ofLocal(localAfter, zoneId, offset);
+                if (overlapCandidate.toInstant().isAfter(after)) return overlapCandidate.toInstant();
             }
-            cursor = cursor.plusSeconds(1);
         }
-        throw new IllegalStateException("no next fire time found within one year for cron: " + expression);
-    }
-
-    private boolean matches(LocalDateTime dateTime) {
-        int cronWeek = dateTime.getDayOfWeek().getValue() % 7;
-        return seconds.matches(dateTime.getSecond())
-                && minutes.matches(dateTime.getMinute())
-                && hours.matches(dateTime.getHour())
-                && months.matches(dateTime.getMonthValue())
-                && daysOfMonth.matches(dateTime.getDayOfMonth())
-                && (daysOfWeek.matches(cronWeek) || daysOfWeek.matches(7));
+        return executionTime.nextExecution(zonedAfter)
+                .orElseThrow(() -> new IllegalStateException("no next fire time for cron: " + expression))
+                .toInstant();
     }
 
     @Override
     public String toString() {
         return expression;
     }
-
-    private static final class CronField {
-        private final BitSet allowed;
-        private final int min;
-        private final int max;
-
-        private CronField(BitSet allowed, int min, int max) {
-            this.allowed = allowed;
-            this.min = min;
-            this.max = max;
-        }
-
-        static CronField parse(String value, int min, int max) {
-            BitSet allowed = new BitSet(max + 1);
-            if ("*".equals(value) || "?".equals(value)) {
-                allowed.set(min, max + 1);
-                return new CronField(allowed, min, max);
-            }
-
-            List<String> parts = List.of(value.split(","));
-            for (String part : parts) {
-                applyPart(allowed, part.trim(), min, max);
-            }
-            return new CronField(allowed, min, max);
-        }
-
-        private static void applyPart(BitSet allowed, String part, int min, int max) {
-            if (part.isBlank()) {
-                throw new IllegalArgumentException("empty cron field segment");
-            }
-
-            String rangePart = part;
-            int step = 1;
-            if (part.contains("/")) {
-                String[] stepParts = part.split("/", -1);
-                if (stepParts.length != 2) {
-                    throw new IllegalArgumentException("invalid cron step: " + part);
-                }
-                rangePart = stepParts[0];
-                step = Integer.parseInt(stepParts[1]);
-                if (step < 1) {
-                    throw new IllegalArgumentException("cron step must be positive: " + part);
-                }
-            }
-
-            int start;
-            int end;
-            if ("*".equals(rangePart) || "?".equals(rangePart)) {
-                start = min;
-                end = max;
-            } else if (rangePart.contains("-")) {
-                String[] range = rangePart.split("-", -1);
-                if (range.length != 2) {
-                    throw new IllegalArgumentException("invalid cron range: " + part);
-                }
-                start = Integer.parseInt(range[0]);
-                end = Integer.parseInt(range[1]);
-            } else {
-                start = Integer.parseInt(rangePart);
-                end = start;
-            }
-
-            if (start < min || end > max || start > end) {
-                throw new IllegalArgumentException("cron value out of range: " + part);
-            }
-            for (int i = start; i <= end; i += step) {
-                allowed.set(i);
-            }
-        }
-
-        boolean matches(int value) {
-            if (value < min || value > max) {
-                return false;
-            }
-            return allowed.get(value);
-        }
-    }
 }
-

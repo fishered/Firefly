@@ -23,18 +23,25 @@ import java.util.Optional;
  */
 public final class JdbcNodeRegistry implements NodeRegistry {
     private final DataSource dataSource;
+    private final JdbcTimeSource timeSource;
 
     public JdbcNodeRegistry(DataSource dataSource) {
+        this(dataSource, JdbcTimeSource.database());
+    }
+
+    JdbcNodeRegistry(DataSource dataSource, JdbcTimeSource timeSource) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+        this.timeSource = Objects.requireNonNull(timeSource, "timeSource");
     }
 
     @Override
     public void register(FireflyNode node) {
         Objects.requireNonNull(node, "node");
         try (Connection connection = dataSource.getConnection()) {
-            int updated = updateNode(connection, node);
+            Instant databaseNow = timeSource.now(connection);
+            int updated = updateNode(connection, node, databaseNow);
             if (updated == 0) {
-                insertNode(connection, node);
+                insertNode(connection, node, databaseNow);
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to register firefly node", e);
@@ -69,7 +76,7 @@ public final class JdbcNodeRegistry implements NodeRegistry {
                      set last_heartbeat_at = ?, status = ?
                      where node_id = ?
                      """)) {
-            statement.setTimestamp(1, Timestamp.from(heartbeatAt));
+            statement.setTimestamp(1, Timestamp.from(timeSource.now(connection)));
             statement.setString(2, NodeStatus.ONLINE.name());
             statement.setString(3, nodeId);
             return statement.executeUpdate() > 0;
@@ -96,13 +103,13 @@ public final class JdbcNodeRegistry implements NodeRegistry {
 
     @Override
     public List<FireflyNode> listOnline(Instant now, Duration heartbeatTimeout) {
-        Instant oldestAllowedHeartbeat = now.minus(heartbeatTimeout);
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
                      select node_id, roles, registered_at, last_heartbeat_at, status, metadata
                      from firefly_node
                      where status = ? and last_heartbeat_at >= ?
                      """)) {
+            Instant oldestAllowedHeartbeat = timeSource.now(connection).minus(heartbeatTimeout);
             statement.setString(1, NodeStatus.ONLINE.name());
             statement.setTimestamp(2, Timestamp.from(oldestAllowedHeartbeat));
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -119,18 +126,18 @@ public final class JdbcNodeRegistry implements NodeRegistry {
         }
     }
 
-    private int updateNode(Connection connection, FireflyNode node) throws SQLException {
+    private int updateNode(Connection connection, FireflyNode node, Instant databaseNow) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 update firefly_node
                 set roles = ?, registered_at = ?, last_heartbeat_at = ?, status = ?, metadata = ?
                 where node_id = ?
                 """)) {
-            bindNodeForUpdate(statement, node);
+            bindNodeForUpdate(statement, node, databaseNow);
             return statement.executeUpdate();
         }
     }
 
-    private void insertNode(Connection connection, FireflyNode node) throws SQLException {
+    private void insertNode(Connection connection, FireflyNode node, Instant databaseNow) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 insert into firefly_node
                 (node_id, roles, registered_at, last_heartbeat_at, status, metadata)
@@ -138,18 +145,22 @@ public final class JdbcNodeRegistry implements NodeRegistry {
                 """)) {
             statement.setString(1, node.nodeId());
             statement.setString(2, JdbcEncoding.encodeRoles(node.roles()));
-            statement.setTimestamp(3, Timestamp.from(node.registeredAt()));
-            statement.setTimestamp(4, Timestamp.from(node.lastHeartbeatAt()));
+            statement.setTimestamp(3, Timestamp.from(databaseNow));
+            statement.setTimestamp(4, Timestamp.from(databaseNow));
             statement.setString(5, node.status().name());
             statement.setString(6, JdbcEncoding.encodeMap(node.metadata()));
             statement.executeUpdate();
         }
     }
 
-    private void bindNodeForUpdate(PreparedStatement statement, FireflyNode node) throws SQLException {
+    private void bindNodeForUpdate(
+            PreparedStatement statement,
+            FireflyNode node,
+            Instant databaseNow
+    ) throws SQLException {
         statement.setString(1, JdbcEncoding.encodeRoles(node.roles()));
-        statement.setTimestamp(2, Timestamp.from(node.registeredAt()));
-        statement.setTimestamp(3, Timestamp.from(node.lastHeartbeatAt()));
+        statement.setTimestamp(2, Timestamp.from(databaseNow));
+        statement.setTimestamp(3, Timestamp.from(databaseNow));
         statement.setString(4, node.status().name());
         statement.setString(5, JdbcEncoding.encodeMap(node.metadata()));
         statement.setString(6, node.nodeId());

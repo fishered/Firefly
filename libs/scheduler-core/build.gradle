@@ -3,6 +3,9 @@ plugins {
 }
 
 dependencies {
+    implementation "com.cronutils:cron-utils:9.2.1"
+    runtimeOnly "org.slf4j:slf4j-nop:2.0.7"
+
     compileOnly "org.projectlombok:lombok:1.18.34"
     annotationProcessor "org.projectlombok:lombok:1.18.34"
 

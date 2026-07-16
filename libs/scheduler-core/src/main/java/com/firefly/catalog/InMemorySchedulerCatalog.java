@@ -36,6 +36,15 @@ public final class InMemorySchedulerCatalog implements SchedulerCatalog {
     }
 
     @Override
+    public List<ExecutorDefinition> listExecutors() {
+        synchronized (lock) {
+            return executors.values().stream()
+                    .sorted(Comparator.comparing(ExecutorDefinition::name))
+                    .toList();
+        }
+    }
+
+    @Override
     public void saveJobGroup(JobGroupDefinition group) {
         Objects.requireNonNull(group, "group");
         synchronized (lock) {

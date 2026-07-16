@@ -21,7 +21,7 @@ Firefly 示例放在 `examples/*`，用于验证不同集成方式。
 - 打印执行上下文。
 - 成功执行 3 次或等待 8 秒后自动退出。
 
-它不依赖 Spring，也不启动 server、Admin Web 或 Prometheus Metrics。
+它不依赖 Spring，也不启动 server、Admin HTTP 或 Prometheus Metrics。
 
 ## Netty Executor Basic
 
@@ -32,7 +32,7 @@ Firefly 示例放在 `examples/*`，用于验证不同集成方式。
 第一步，启动 server，并启用 Admin API 和 Netty executor gateway：
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.node.mode=standalone --firefly.plugins=admin-web --firefly.executor.gateway.netty.enabled=true"
+.\gradlew.bat :server:launcher:run
 ```
 
 第二步，启动业务 executor example：
@@ -41,9 +41,15 @@ Firefly 示例放在 `examples/*`，用于验证不同集成方式。
 .\gradlew.bat :examples:netty-executor-basic:run
 ```
 
-server 控制台应看到 executor 注册日志。
+server 控制台应看到 executor 注册日志。example 默认会调用 Admin API 创建 `remote-example-job`，然后等待调度中心按 cron 触发本地 `exampleHandler`。
 
-第三步，通过 API 创建远程任务：
+如果只想注册 executor、不自动创建 job，可以这样运行：
+
+```powershell
+.\gradlew.bat :examples:netty-executor-basic:run --args="--createJob=false"
+```
+
+此时可以手动通过 API 创建远程任务：
 
 ```powershell
 Invoke-RestMethod `

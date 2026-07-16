@@ -45,11 +45,11 @@ dispatch execution command
 checkpoint runtime state asynchronously
 ```
 
-数据库变慢时，已加载到内存的任务应继续运行；配置变更和 checkpoint 可以延迟或重试。只有超过安全窗口后才进入降级或保护模式。
+当前实现已经使用 owner 本地 `SchedulerTimingIndex`：配置变更递增共享 `jobs.revision`，Scheduler 在 revision 或 shard ownership 变化时重载索引，并按最近 `nextFireTime` 动态唤醒。真正触发仍同步提交数据库 CAS + execution + Outbox 事务，因此数据库不可用时不会继续产生无法 fencing 的新执行。
 
 ## 2. 任务组与执行器
 
-Firefly 采用三层关系：
+Firefly 采用三层关系，并用结构化 `JobDestination` 表达本地或远程目标：
 
 ```text
 JobDefinition -> JobGroupDefinition -> ExecutorDefinition -> ExecutorInstance
@@ -125,6 +125,10 @@ MAX_DUE_FIRE_TIME_GROUPS_PER_TICK = 10000
 
 ## 4. 服务在线检查
 
+### 执行重试
+
+业务重试使用稳定的 `rootExecutionId` 和递增 `runAttempt`。`maxAttempts` 包含初始执行；失败和 timeout 可分别启停，并支持有上限的指数退避。当前广播和分片会重试整个逻辑运行，不只重试失败目标，因此业务 Handler 应以 `rootExecutionId` 实现幂等。
+
 执行器实例在线状态通过 `ExecutorRegistry` 表达：
 
 - 服务启动时注册 `ExecutorInstance`。
@@ -151,10 +155,10 @@ Netty 不是业务协议，它是 TCP 通讯实现。Firefly 不应该把 Netty 
 core
 └── ExecutorRegistry / ExecutorDispatcher 接口
 
-executors/netty
+transports/netty
 └── 基于 Netty 的长连接、JSON 消息、心跳、任务触发、ack
 
-executors/http
+transports/http
 └── 基于 HTTP 的任务触发
 ```
 
@@ -179,21 +183,6 @@ UNREGISTER_EXECUTOR
 
 这样调度中心像监听者，但不是被动观察者：它维护在线实例视图，在任务到期时选择合适实例发送触发命令。
 
-## 6. 当前落地状态
+## 6. 实现进度
 
-已落地的基础代码：
-
-- `ExecutorDefinition`
-- `ExecutorInstance`
-- `JobGroupDefinition`
-- `JobDefinition.groupId`
-- `SchedulerCatalog`
-- `InMemorySchedulerCatalog`
-- `ExecutorRegistry`
-- `InMemoryExecutorRegistry`
-- `ScheduleSpec`
-- `ScheduleSpecParser`
-- `DueJobBatch`
-- `ExecutionCommand`
-
-这些是后续 JDBC、Netty、HTTP executor 的共同地基。下一步更适合做 `stores/jdbc`，先把配置和 runtime state 持久化，再接远程 executor 协议。
+当前实现进度统一维护在 [implementation-progress.md](implementation-progress.md)。

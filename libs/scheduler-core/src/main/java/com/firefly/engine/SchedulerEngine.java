@@ -1,16 +1,20 @@
 package com.firefly.engine;
 
 import com.firefly.domain.JobDefinition;
+import com.firefly.cluster.ShardLease;
+import com.firefly.cluster.ShardHasher;
+import com.firefly.cluster.ShardOwnership;
 import com.firefly.domain.MisfirePolicy;
-import com.firefly.store.DueJobBatch;
 import com.firefly.store.JobRepository;
 import com.firefly.store.ScheduledJobRecord;
+import com.firefly.metrics.SchedulerMetrics;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executors;
@@ -24,16 +28,6 @@ public final class SchedulerEngine {
     private static final Logger log = Logger.getLogger(SchedulerEngine.class.getName());
 
     /**
-     * Maximum records loaded from the repository in a single due-job query.
-     */
-    private static final int DUE_BATCH_SIZE = 100;
-
-    /**
-     * Hard guardrail for jobs sharing one exact fire time.
-     */
-    private static final int SAME_FIRE_TIME_HARD_LIMIT = 10_000;
-
-    /**
      * Maximum due records advanced in one scheduler tick.
      *
      * <p>This protects the timer thread from unbounded backlog while allowing
@@ -41,21 +35,63 @@ public final class SchedulerEngine {
      */
     private static final int MAX_DUE_RECORDS_PER_TICK = 10_000;
 
-    /**
-     * Secondary guardrail for pathological cases with many tiny fire-time groups.
-     */
-    private static final int MAX_DUE_FIRE_TIME_GROUPS_PER_TICK = 10_000;
+    private static final long MAX_IDLE_WAKEUP_MILLIS = 500;
 
     private final JobRepository repository;
     private final JobDispatcher dispatcher;
     private final Clock clock;
     private final ScheduledExecutorService timer;
     private final AtomicBoolean started = new AtomicBoolean();
+    private final ShardOwnership shardOwnership;
+    private final int shardCount;
+    private final boolean transactionalOutbox;
+    private final SchedulerMetrics metrics;
+    private final SchedulerTimingIndex timingIndex = new SchedulerTimingIndex();
+    private long loadedConfigurationVersion = Long.MIN_VALUE;
+    private Set<Integer> loadedShards = Set.of();
 
     public SchedulerEngine(JobRepository repository, JobDispatcher dispatcher, Clock clock) {
+        this(repository, dispatcher, clock, () -> Map.of(0, new ShardLease(0, "local", Instant.MAX, 1L)), 1, false);
+    }
+
+    public SchedulerEngine(
+            JobRepository repository,
+            JobDispatcher dispatcher,
+            Clock clock,
+            ShardOwnership shardOwnership,
+            int shardCount
+    ) {
+        this(repository, dispatcher, clock, shardOwnership, shardCount, false);
+    }
+
+    public SchedulerEngine(
+            JobRepository repository,
+            JobDispatcher dispatcher,
+            Clock clock,
+            ShardOwnership shardOwnership,
+            int shardCount,
+            boolean transactionalOutbox
+    ) {
+        this(repository, dispatcher, clock, shardOwnership, shardCount, transactionalOutbox,
+                new SchedulerMetrics());
+    }
+
+    public SchedulerEngine(
+            JobRepository repository,
+            JobDispatcher dispatcher,
+            Clock clock,
+            ShardOwnership shardOwnership,
+            int shardCount,
+            boolean transactionalOutbox,
+            SchedulerMetrics metrics
+    ) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.shardOwnership = Objects.requireNonNull(shardOwnership, "shardOwnership");
+        this.shardCount = shardCount;
+        this.transactionalOutbox = transactionalOutbox;
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.timer = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "firefly-timer");
             thread.setDaemon(false);
@@ -67,7 +103,7 @@ public final class SchedulerEngine {
         if (!started.compareAndSet(false, true)) {
             return;
         }
-        timer.scheduleWithFixedDelay(this::safeTick, 0, 500, TimeUnit.MILLISECONDS);
+        scheduleNext(0);
         log.info("firefly started");
     }
 
@@ -87,57 +123,85 @@ public final class SchedulerEngine {
         }
     }
 
-    public void tick() {
+    private void scheduledTick() {
+        if (!started.get()) return;
+        safeTick();
+        if (started.get()) scheduleNext(nextDelayMillis());
+    }
+
+    private void scheduleNext(long delayMillis) {
+        timer.schedule(this::scheduledTick, Math.max(0, delayMillis), TimeUnit.MILLISECONDS);
+    }
+
+    private synchronized long nextDelayMillis() {
+        Instant nextFireTime = timingIndex.nextFireTime();
+        if (nextFireTime == null) return MAX_IDLE_WAKEUP_MILLIS;
+        long delay = Duration.between(clock.instant(), nextFireTime).toMillis();
+        return Math.max(1, Math.min(MAX_IDLE_WAKEUP_MILLIS, delay));
+    }
+
+    public synchronized void tick() {
         Instant now = clock.instant();
-        Set<String> processedJobIds = new HashSet<>();
-
-        /**
-         * Drain same-fire-time batch dispatch groups using the same logical tick
-         * time. Each record is advanced with repository compare-and-set before
-         * dispatch, so stale records from concurrent updates are ignored safely.
-         */
-        int processedRecords = 0;
-        for (int group = 0; group < MAX_DUE_FIRE_TIME_GROUPS_PER_TICK
-                && processedRecords < MAX_DUE_RECORDS_PER_TICK; group++) {
-            int remainingRecordBudget = MAX_DUE_RECORDS_PER_TICK - processedRecords;
-            DueJobBatch dueBatch = repository.findDueBatch(
-                    now,
-                    DUE_BATCH_SIZE,
-                    Math.min(SAME_FIRE_TIME_HARD_LIMIT, remainingRecordBudget),
-                    processedJobIds
-            );
-            List<ScheduledJobRecord> dueRecords = dueBatch.records();
-            if (dueRecords.isEmpty()) {
-                return;
-            }
-            processedRecords += dueRecords.size();
-            if (dueBatch.truncated()) {
-                log.warning(() -> "same fire-time batch reached hard limit, fireTime="
-                        + dueBatch.fireTime()
-                        + ", limit=" + SAME_FIRE_TIME_HARD_LIMIT);
-            }
-
-            for (ScheduledJobRecord record : dueRecords) {
-                processedJobIds.add(record.definition().id());
-                List<Instant> fireTimes = calculateFireTimes(record, now);
-                Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
-                boolean updated = repository.updateNextFireTime(
-                        record.definition().id(),
-                        record.nextFireTime(),
-                        nextFireTime
-                );
-                if (!updated) {
-                    continue;
-                }
-                Instant dispatchTime = clock.instant();
-                fireTimes.forEach(fireTime -> dispatcher.dispatch(new ExecutionCommand(
-                        executionId(record.definition(), fireTime),
-                        record.definition(),
-                        fireTime,
-                        dispatchTime
-                )));
-            }
+        Map<Integer, ShardLease> leases = shardOwnership.ownedShards();
+        if (leases.isEmpty()) {
+            timingIndex.replace(List.of());
+            loadedShards = Set.of();
+            return;
         }
+        refreshTimingIndex(leases.keySet());
+        List<ScheduledJobRecord> dueRecords = timingIndex.pollDue(now, MAX_DUE_RECORDS_PER_TICK);
+        for (ScheduledJobRecord record : dueRecords) {
+            int shardId = ShardHasher.shardFor(record.definition().id(), shardCount);
+            ShardLease lease = leases.get(shardId);
+            if (lease == null) {
+                forceReload();
+                continue;
+            }
+            List<Instant> fireTimes = calculateFireTimes(record, now);
+            Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
+            Instant dispatchTime = clock.instant();
+            List<ExecutionCommand> commands = fireTimes.stream().map(fireTime -> new ExecutionCommand(
+                    executionId(record.definition(), fireTime), record.definition(), fireTime, dispatchTime,
+                    lease.ownerNodeId(), lease.fencingToken()
+            )).toList();
+            boolean updated = transactionalOutbox && !commands.isEmpty()
+                    ? repository.advanceAndEnqueue(
+                            record.definition().id(), record.nextFireTime(), nextFireTime, commands
+                    )
+                    : repository.updateNextFireTimeWithLease(
+                            record.definition().id(), record.nextFireTime(), nextFireTime,
+                            lease.ownerNodeId(), lease.fencingToken()
+                    );
+            if (!updated) {
+                forceReload();
+                continue;
+            }
+            timingIndex.add(new ScheduledJobRecord(record.definition(), nextFireTime));
+            commands.forEach(command -> metrics.observeScheduleDelay(
+                    Duration.between(command.scheduledFireTime(), command.dispatchTime())
+            ));
+            if (!transactionalOutbox) commands.forEach(dispatcher::dispatch);
+        }
+        Instant remainingDue = timingIndex.nextFireTime();
+        if (dueRecords.size() == MAX_DUE_RECORDS_PER_TICK
+                && remainingDue != null && !remainingDue.isAfter(now)) {
+            log.warning("scheduler due backlog reached per-tick limit=" + MAX_DUE_RECORDS_PER_TICK);
+            metrics.recordDueBacklog();
+        }
+    }
+
+    private void refreshTimingIndex(Set<Integer> shardIds) {
+        Set<Integer> currentShards = Set.copyOf(shardIds);
+        long configurationVersion = repository.configurationVersion();
+        if (!currentShards.equals(loadedShards) || configurationVersion != loadedConfigurationVersion) {
+            timingIndex.replace(repository.listForShards(currentShards, shardCount));
+            loadedShards = currentShards;
+            loadedConfigurationVersion = configurationVersion;
+        }
+    }
+
+    private void forceReload() {
+        loadedConfigurationVersion = Long.MIN_VALUE;
     }
 
     private List<Instant> calculateFireTimes(ScheduledJobRecord record, Instant now) {

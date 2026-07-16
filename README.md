@@ -26,7 +26,7 @@ Firefly 关注三个核心目标：
 - Netty 长连接远程执行器基础实现
 - JDBC 持久化存储：任务定义、nextFireTime CAS、节点注册、心跳、shard lease、fencing token
 - 插件 SPI：可选组件通过独立插件接入，不硬编码到调度核心
-- Admin Web 插件：轻量运维页面和 JSON 接口
+- Admin HTTP API 与独立 Node Admin UI：管理接口和运维页面分离
 - Prometheus Metrics 插件：独立 `/metrics` 文本指标端点
 - Server CLI 占位模块
 - 内存版任务仓库
@@ -56,9 +56,9 @@ firefly
 │   └── jdbc               # JDBC 任务仓库和 HA 协调存储
 ├── plugins
 │   ├── plugin-api         # 插件 SPI 和生命周期管理
-│   ├── admin-web          # 轻量运维页面 / JSON 接口
 │   └── metrics-prometheus # Prometheus 文本指标插件
 ├── docs
+│   ├── deployment.md      # 镜像构建和容器部署
 │   ├── integration.md     # 集成方案
 │   ├── ha-cluster.md
 │   ├── netty-executor.md
@@ -76,8 +76,8 @@ firefly
 推荐按能力边界继续扩展目录：
 
 ```text
-executors/http
-apis/http
+transports/http
+apis/admin-http
 plugins/xxx
 ```
 
@@ -102,34 +102,52 @@ Windows：
 运行 demo server：
 
 ```bash
-./gradlew :server:run
+./gradlew :server:launcher:run
 ```
 
 Windows：
 
 ```powershell
-.\gradlew.bat :server:run
+.\gradlew.bat :server:launcher:run
 ```
 
-默认启动只运行轻量 server，不加载 Admin Web、Prometheus Metrics，也不注册 demo 任务。
+在项目根目录启动时会自动加载 `config/firefly-server.properties`。当前默认 profile 是 `pg`，会启用 Admin HTTP、Prometheus Metrics、Netty executor gateway，并使用本地 PostgreSQL 持久化；demo 任务仍然默认关闭。
+
+节点职责由 `firefly.node.roles` 指定。默认配置是单进程全角色：
+
+```properties
+firefly.node.mode=standalone
+firefly.node.name=firefly-standalone
+firefly.node.roles=api,gateway,scheduler
+```
+
+`cluster` 模式必须使用 JDBC 共享存储，并且每个节点需要唯一的 `firefly.node.name`。
 
 启用 5 秒 demo 任务：
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.demo.enabled=true"
+.\gradlew.bat :server:launcher:run --args="--firefly.demo.enabled=true"
 ```
 
-启用 Admin Web 和 Prometheus Metrics：
+切换到 H2 本地文件存储：
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.plugins=admin-web,metrics-prometheus"
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=h2"
 ```
+
+切换到内存存储：
+
+```powershell
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=memory"
+```
+
+配置主文件位于 `config/firefly-server.properties`，差异化配置位于 `config/profiles/*.properties`。命令行参数和环境变量会覆盖配置文件中的值。
 
 ## 集成方式
 
 - 传统 Java 项目：使用 `integrations:embedded`，通过 `FireflyScheduler.create()` 嵌入。
 - Spring Boot 项目：使用 `integrations:spring-boot-starter`，声明 `FireflyJobRegistration` Bean。
-- 远程业务执行器：使用 `executors:netty`，业务服务主动连接调度中心 gateway，不需要业务侧开放监听端口。
+- 远程业务执行器：使用 `transports:netty`，业务服务主动连接调度中心 gateway，不需要业务侧开放监听端口。
 - 独立 server：`integrations:server-cli` 已保留入口，后续承载配置文件加载和独立进程运行。
 
 详细说明见 [docs/integration.md](docs/integration.md)。
@@ -144,9 +162,11 @@ HA 节点角色、shard lease、fencing token 和 JDBC 存储见 [docs/ha-cluste
 
 JDBC store 和 schema 方言脚本见 [docs/jdbc-store.md](docs/jdbc-store.md)。
 
-插件体系、Admin Web 和 Prometheus Metrics 见 [docs/plugins.md](docs/plugins.md)。这些插件默认不随 server 加载，需要通过配置显式启用。
+插件体系、Admin HTTP 和 Prometheus Metrics 见 [docs/plugins.md](docs/plugins.md)。这些插件默认不随 server 加载，需要通过配置显式启用。
 
 模块边界和 executor/server 拆分方向见 [docs/module-boundaries.md](docs/module-boundaries.md)。
+
+镜像构建和容器节点角色配置见 [docs/deployment.md](docs/deployment.md)。
 
 示例程序见 [docs/examples.md](docs/examples.md)。
 
@@ -221,3 +241,34 @@ DST 行为：
 Firefly 的意思是“萤火虫”。
 
 它轻、小、安静，却能在需要的时候准时发光。未来当调度节点分布在不同机器、不同地域、不同业务服务中时，每个节点都像一点微光，共同组成一个稳定、有秩序的任务网络。
+
+## Admin API 与 UI 约定
+
+Admin HTTP 是可选管理 API，Admin UI 是独立 Node 服务。页面资源不放进 scheduler core，也不随 Admin HTTP jar 内嵌。
+
+- Java 入口：apis/admin-http/src/main/java/com/firefly/api/admin/http/AdminHttpPlugin.java
+- Node UI：ui/admin
+- 页面路由：/、/jobs、/executors、/nodes
+- JSON 接口：/api/health、/api/overview、/api/jobs、/api/executors、/api/nodes
+
+默认启动方式是先启动 Firefly server，再进入 `ui/admin` 执行 `npm start`。Node UI 默认监听 `127.0.0.1:9720`，并将 `/api/*` 代理到 `FIREFLY_ADMIN_API`，默认值为 `http://127.0.0.1:9710`。
+
+不要把完整 HTML 页面内嵌到 Java text block 中；新增管理接口进入 `apis/admin-http`，前端页面与 Node 服务进入 `ui/admin`。
+
+## 目标模块边界
+
+Firefly 后续按运行时、API、UI、传输和客户端拆分模块：
+
+`	ext
+libs/scheduler-core        调度核心，纯 Java
+server                     运行时装配、启动、生命周期
+apis/admin-model          Admin DTO 和 ViewModel
+apis/admin-http           Admin HTTP API
+ui/admin                  Node 前端工程
+plugins/plugin-api        插件 SPI
+plugins/metrics-prometheus Prometheus 指标插件
+transports/netty          Netty 协议与传输
+clients/executor-netty    业务侧执行器 SDK
+`
+
+原则上，Admin UI 作为独立 Node 前端演进；Admin API 属于 server/API 层。`apis/admin-http` 和 `ui/admin` 是长期分离的 API/UI 模块。

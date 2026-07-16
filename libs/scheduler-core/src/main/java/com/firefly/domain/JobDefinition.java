@@ -24,6 +24,13 @@ public record JobDefinition(
         int maxCatchUpCount,
         Duration timeout,
         Map<String, String> parameters,
+        JobDestination destination,
+        ExecutionRetryPolicy retryPolicy,
+        ExecutorDispatchMode dispatchMode,
+        ExecutorRoutingStrategy routingStrategy,
+        ExecutorCompletionPolicy completionPolicy,
+        int shardCount,
+        String routingKey,
         boolean enabled
 ) {
     /**
@@ -41,6 +48,12 @@ public record JobDefinition(
         Objects.requireNonNull(concurrencyPolicy, "concurrencyPolicy");
         Objects.requireNonNull(timeout, "timeout");
         parameters = Map.copyOf(Objects.requireNonNull(parameters, "parameters"));
+        destination = destination == null ? legacyDestination(handlerName, parameters) : destination;
+        retryPolicy = retryPolicy == null ? legacyRetryPolicy(parameters) : retryPolicy;
+        Objects.requireNonNull(dispatchMode, "dispatchMode");
+        Objects.requireNonNull(routingStrategy, "routingStrategy");
+        Objects.requireNonNull(completionPolicy, "completionPolicy");
+        Objects.requireNonNull(routingKey, "routingKey");
         if (id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
         }
@@ -59,6 +72,9 @@ public record JobDefinition(
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout must be positive");
         }
+        if (shardCount < 1) {
+            throw new IllegalArgumentException("shardCount must be greater than 0");
+        }
     }
 
     /**
@@ -74,7 +90,61 @@ public record JobDefinition(
                 .maxCatchUpCount(10)
                 .timeout(Duration.ofMinutes(5))
                 .parameters(Map.of())
+                .destination(null)
+                .retryPolicy(null)
+                .dispatchMode(ExecutorDispatchMode.UNICAST)
+                .routingStrategy(ExecutorRoutingStrategy.ROUND_ROBIN)
+                .completionPolicy(ExecutorCompletionPolicy.ALL_SUCCESS)
+                .shardCount(1)
+                .routingKey("")
                 .enabled(true);
     }
+
+    public JobDefinition withEnabled(boolean value) {
+        return new JobDefinition(
+                id, groupId, name, handlerName, schedule, zoneId, misfirePolicy, misfireGrace,
+                concurrencyPolicy, maxCatchUpCount, timeout, parameters, destination, retryPolicy,
+                dispatchMode, routingStrategy,
+                completionPolicy, shardCount, routingKey, value
+        );
+    }
+
+    public boolean remote() {
+        return destination.remote();
+    }
+
+    public String businessHandlerName() {
+        String configured = parameters.get("handlerName");
+        if (configured != null && !configured.isBlank()) return configured;
+        if (handlerName.startsWith("remote:")) {
+            String[] parts = handlerName.split(":", 3);
+            if (parts.length == 3) return parts[2];
+        }
+        return handlerName;
+    }
+
+    private static JobDestination legacyDestination(String handlerName, Map<String, String> parameters) {
+        String executorName = parameters.get("executorName");
+        if (executorName != null && !executorName.isBlank()) return JobDestination.remote(executorName);
+        if (handlerName.startsWith("remote:")) {
+            String[] parts = handlerName.split(":", 3);
+            if (parts.length > 1 && !parts[1].isBlank()) return JobDestination.remote(parts[1]);
+        }
+        return JobDestination.local();
+    }
+
+    private static ExecutionRetryPolicy legacyRetryPolicy(Map<String, String> parameters) {
+        String maxAttempts = parameters.get("firefly.retry.maxAttempts");
+        if (maxAttempts == null) return ExecutionRetryPolicy.none();
+        return new ExecutionRetryPolicy(
+                Integer.parseInt(maxAttempts),
+                Duration.parse(parameters.getOrDefault("firefly.retry.initialDelay", "PT0S")),
+                Double.parseDouble(parameters.getOrDefault("firefly.retry.multiplier", "1.0")),
+                Duration.parse(parameters.getOrDefault("firefly.retry.maxDelay", "PT0S")),
+                Boolean.parseBoolean(parameters.getOrDefault("firefly.retry.onFailure", "true")),
+                Boolean.parseBoolean(parameters.getOrDefault("firefly.retry.onTimeout", "true"))
+        );
+    }
+
 }
 

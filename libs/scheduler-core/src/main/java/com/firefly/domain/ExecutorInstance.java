@@ -13,6 +13,8 @@ import java.util.Objects;
 public record ExecutorInstance(
         String executorName,
         String instanceId,
+        String sessionId,
+        String gatewayNodeId,
         String serviceName,
         String host,
         int port,
@@ -25,6 +27,8 @@ public record ExecutorInstance(
     public ExecutorInstance {
         Objects.requireNonNull(executorName, "executorName");
         Objects.requireNonNull(instanceId, "instanceId");
+        sessionId = sessionId == null || sessionId.isBlank() ? instanceId : sessionId;
+        gatewayNodeId = gatewayNodeId == null || gatewayNodeId.isBlank() ? "local" : gatewayNodeId;
         Objects.requireNonNull(serviceName, "serviceName");
         Objects.requireNonNull(host, "host");
         Objects.requireNonNull(protocol, "protocol");
@@ -56,6 +60,7 @@ public record ExecutorInstance(
         return newBuilder()
                 .host("localhost")
                 .port(0)
+                .gatewayNodeId("local")
                 .protocol(ExecutorProtocol.EMBEDDED)
                 .status(ExecutorInstanceStatus.ONLINE)
                 .metadata(Map.of());

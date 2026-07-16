@@ -1,19 +1,12 @@
-plugins {
-    id "application"
-}
+// Parent project for server runtime modules.
 
-dependencies {
-    implementation project(":libs:scheduler-core")
-    implementation project(":executors:netty")
-    implementation project(":plugins:plugin-api")
-    implementation project(":plugins:admin-web")
-    implementation project(":plugins:metrics-prometheus")
-    implementation "com.google.inject:guice:7.0.0"
-    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
-    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"
+sourceSets {
+    main {
+        java.setSrcDirs([])
+        resources.setSrcDirs([])
+    }
+    test {
+        java.setSrcDirs([])
+        resources.setSrcDirs([])
+    }
 }
-
-application {
-    mainClass = "com.firefly.server.App"
-}
-

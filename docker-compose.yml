@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: firefly
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "5432:5432"
+    volumes:
+      - firefly-postgres:/var/lib/postgresql/data
+
+  firefly-node-1:
+    image: firefly:local
+    build: .
+    depends_on:
+      - postgres
+    environment:
+      FIREFLY_NODE_MODE: cluster
+      FIREFLY_NODE_NAME: firefly-node-1
+      FIREFLY_NODE_ROLES: api,gateway,scheduler
+      FIREFLY_ADMIN_HTTP_HOST: 0.0.0.0
+      FIREFLY_METRICS_PROMETHEUS_HOST: 0.0.0.0
+      FIREFLY_STORE_TYPE: jdbc
+      FIREFLY_JDBC_URL: jdbc:postgresql://postgres:5432/firefly
+      FIREFLY_JDBC_USERNAME: postgres
+      FIREFLY_JDBC_PASSWORD: "123456"
+      FIREFLY_JDBC_DIALECT: postgresql
+      FIREFLY_JDBC_SCHEMA_MODE: initialize-if-empty
+    ports:
+      - "9700:9700"
+      - "9710:9710"
+      - "9711:9711"
+
+  firefly-node-2:
+    image: firefly:local
+    depends_on:
+      - postgres
+      - firefly-node-1
+    environment:
+      FIREFLY_NODE_MODE: cluster
+      FIREFLY_NODE_NAME: firefly-node-2
+      FIREFLY_NODE_ROLES: api,gateway,scheduler
+      FIREFLY_ADMIN_HTTP_HOST: 0.0.0.0
+      FIREFLY_METRICS_PROMETHEUS_HOST: 0.0.0.0
+      FIREFLY_STORE_TYPE: jdbc
+      FIREFLY_JDBC_URL: jdbc:postgresql://postgres:5432/firefly
+      FIREFLY_JDBC_USERNAME: postgres
+      FIREFLY_JDBC_PASSWORD: "123456"
+      FIREFLY_JDBC_DIALECT: postgresql
+      FIREFLY_JDBC_SCHEMA_MODE: initialize-if-empty
+
+  firefly-node-3:
+    image: firefly:local
+    depends_on:
+      - postgres
+      - firefly-node-1
+    environment:
+      FIREFLY_NODE_MODE: cluster
+      FIREFLY_NODE_NAME: firefly-node-3
+      FIREFLY_NODE_ROLES: api,gateway,scheduler
+      FIREFLY_ADMIN_HTTP_HOST: 0.0.0.0
+      FIREFLY_METRICS_PROMETHEUS_HOST: 0.0.0.0
+      FIREFLY_STORE_TYPE: jdbc
+      FIREFLY_JDBC_URL: jdbc:postgresql://postgres:5432/firefly
+      FIREFLY_JDBC_USERNAME: postgres
+      FIREFLY_JDBC_PASSWORD: "123456"
+      FIREFLY_JDBC_DIALECT: postgresql
+      FIREFLY_JDBC_SCHEMA_MODE: initialize-if-empty
+
+volumes:
+  firefly-postgres:

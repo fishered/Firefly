@@ -24,7 +24,7 @@ Firefly focuses on three goals:
 - Netty long-connection remote executor foundation
 - JDBC persistence for job definitions, nextFireTime CAS, node registry, heartbeats, shard leases, and fencing tokens
 - Plugin SPI for optional components outside the scheduler core
-- Admin Web plugin for lightweight operational pages and JSON endpoints
+- Admin HTTP API plus independent Node Admin UI for separated management APIs and operational pages
 - Prometheus Metrics plugin for an independent `/metrics` text endpoint
 - Server CLI placeholder module
 - in-memory job repository
@@ -54,9 +54,9 @@ firefly
 │   └── jdbc               # JDBC job repository and HA coordination storage
 ├── plugins
 │   ├── plugin-api         # plugin SPI and lifecycle management
-│   ├── admin-web          # lightweight operational page / JSON endpoints
 │   └── metrics-prometheus # Prometheus text metrics plugin
 ├── docs
+│   ├── deployment.md      # image build and container deployment
 │   ├── integration.md     # integration guide
 │   ├── ha-cluster.md
 │   ├── netty-executor.md
@@ -74,8 +74,8 @@ firefly
 Recommended extension layout:
 
 ```text
-executors/http
-apis/http
+transports/http
+apis/admin-http
 plugins/xxx
 ```
 
@@ -100,34 +100,52 @@ Windows:
 Run the demo server:
 
 ```bash
-./gradlew :server:run
+./gradlew :server:launcher:run
 ```
 
 Windows:
 
 ```powershell
-.\gradlew.bat :server:run
+.\gradlew.bat :server:launcher:run
 ```
 
-By default the server starts in lightweight mode: no Admin Web, no Prometheus Metrics, and no demo job.
+When started from the project root, the server automatically loads `config/firefly-server.properties`. The current default profile is `pg`, which enables Admin HTTP, Prometheus Metrics, the Netty executor gateway, and local PostgreSQL persistence; the demo job is still disabled by default.
+
+Node duties are configured with `firefly.node.roles`. The default config runs a single process with all server roles:
+
+```properties
+firefly.node.mode=standalone
+firefly.node.name=firefly-standalone
+firefly.node.roles=api,gateway,scheduler
+```
+
+`cluster` mode requires JDBC shared storage, and each node must use a unique `firefly.node.name`.
 
 Enable the 5-second demo job:
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.demo.enabled=true"
+.\gradlew.bat :server:launcher:run --args="--firefly.demo.enabled=true"
 ```
 
-Enable Admin Web and Prometheus Metrics:
+Switch to local H2 file storage:
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.plugins=admin-web,metrics-prometheus"
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=h2"
 ```
+
+Switch to in-memory storage:
+
+```powershell
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=memory"
+```
+
+The main config file is `config/firefly-server.properties`, and profile-specific values live in `config/profiles/*.properties`. Command-line flags and environment variables override file values.
 
 ## Integration
 
 - Traditional Java services: use `integrations:embedded` and embed Firefly through `FireflyScheduler.create()`.
 - Spring Boot services: use `integrations:spring-boot-starter` and declare `FireflyJobRegistration` beans.
-- Remote business executors: use `executors:netty`; business services actively connect to the scheduler gateway and do not need to expose listener ports.
+- Remote business executors: use `transports:netty`; business services actively connect to the scheduler gateway and do not need to expose listener ports.
 - Standalone server: `integrations:server-cli` keeps a command entry point for future config loading and process mode.
 
 See [docs/integration.md](docs/integration.md).
@@ -142,9 +160,11 @@ HA node roles, shard leases, fencing tokens, and JDBC storage are described in [
 
 JDBC store and schema dialect scripts are described in [docs/jdbc-store.md](docs/jdbc-store.md).
 
-Plugin SPI, Admin Web, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md). These plugins are not loaded by the server by default and must be enabled explicitly.
+Plugin SPI, Admin HTTP, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md). These plugins are not loaded by the server by default and must be enabled explicitly.
 
 Module boundaries and the executor/server split are described in [docs/module-boundaries.md](docs/module-boundaries.md).
+
+Image build and container node role configuration are described in [docs/deployment.md](docs/deployment.md).
 
 Runnable examples are described in [docs/examples.md](docs/examples.md).
 
@@ -219,3 +239,34 @@ See [docs/timezone.md](docs/timezone.md).
 Firefly means "萤火虫".
 
 It is small, quiet, and able to light up at the right moment. As scheduler nodes spread across machines, regions, and services, each node can become a small point of light in a reliable task network.
+
+## Admin API and UI Convention
+
+Admin HTTP is an optional management API, and Admin UI is an independent Node service. Frontend resources must not be placed in scheduler core or embedded in the Admin HTTP jar.
+
+- Java entry point: apis/admin-http/src/main/java/com/firefly/api/admin/http/AdminHttpPlugin.java
+- Node UI: ui/admin
+- Page routes: /, /jobs, /executors, /nodes
+- JSON endpoints: /api/health, /api/overview, /api/jobs, /api/executors, /api/nodes
+
+Start Firefly server first, then run `npm start` in `ui/admin`. The Node UI listens on `127.0.0.1:9720` by default and proxies `/api/*` to `FIREFLY_ADMIN_API`, defaulting to `http://127.0.0.1:9710`.
+
+Do not embed full HTML pages in Java text blocks. New management endpoints go into `apis/admin-http`; frontend pages and the Node service go into `ui/admin`.
+
+## Target Module Boundaries
+
+Firefly is moving toward separate runtime, API, UI, transport, and client modules:
+
+`	ext
+libs/scheduler-core        pure Java scheduling core
+server                     runtime wiring, startup, lifecycle
+apis/admin-model          Admin DTOs and view models
+apis/admin-http           Admin HTTP APIs
+ui/admin                  Node-based Admin UI
+plugins/plugin-api        plugin SPI
+plugins/metrics-prometheus Prometheus metrics plugin
+transports/netty          Netty protocol and transport
+clients/executor-netty    business-side executor SDK
+`
+
+Admin UI should evolve as an independent Node frontend, while Admin APIs belong to the server/API layer. `apis/admin-http` and `ui/admin` are long-term separate API/UI modules.

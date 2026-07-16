@@ -18,11 +18,11 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Embedded integration module: `integrations/embedded`
 - Spring Boot starter module: `integrations/spring-boot-starter`
 - Server CLI placeholder module: `integrations/server-cli`
-- Netty executor module: `executors/netty`
+- Netty executor module: `transports/netty`
 - Netty Spring Boot starter module: `integrations/netty-spring-boot-starter`
 - JDBC storage module: `stores/jdbc`
 - Plugin API module: `plugins/plugin-api`
-- Admin Web plugin: `plugins/admin-web`
+- Admin HTTP/API and Admin UI: `apis/admin-http` and `ui/admin`
 - Prometheus Metrics plugin: `plugins/metrics-prometheus`
 - Embedded example module: `examples/embedded-basic`
 - HA cluster model: `com.firefly.cluster`
@@ -36,7 +36,7 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Put traditional embedded integration code in `integrations/embedded`.
 - Put Spring Boot auto-configuration only in `integrations/spring-boot-starter`; do not let Spring dependencies leak into core or traditional integration modules.
 - Keep `integrations/server-cli` thin until config loading, API, and standalone process semantics are deliberately designed.
-- Keep Netty transport code in `executors/netty`; use JSON protocol frames and do not put Netty dependencies in `libs/scheduler-core`.
+- Keep Netty transport code in `transports/netty`; use JSON protocol frames and do not put Netty dependencies in `libs/scheduler-core`.
 - Keep HA coordination abstractions in core, but put JDBC/etcd/ZooKeeper implementations outside core.
 - Keep JDBC storage code in `stores/jdbc`; it may implement job repository, node registry, and shard lease, but should not make scheduler tick depend on full database scans.
 - Keep JDBC schema SQL in dialect resource scripts; do not hardcode database-specific DDL in Java code.
@@ -110,3 +110,29 @@ Keep documentation bilingual where useful:
 - `docs/timezone.md`: detailed time-zone and DST semantics.
 
 Update docs when changing user-visible scheduling semantics.
+
+## Admin HTTP And UI Rules
+
+- Keep Admin HTTP and Admin UI optional and isolated in `apis/admin-http` and `ui/admin`. Do not put web pages, HTTP handlers, or frontend dependencies into libs/scheduler-core.
+- Keep Node Admin UI source, static assets, and its local Node service in `ui/admin`. Do not embed full HTML pages in Java text blocks.
+- Keep Java code responsible for plugin lifecycle and JSON APIs. Keep page markup, CSS, browser JavaScript, and Node service code in `ui/admin`.
+- Treat the Admin UI as an independent Node service that proxies `/api/*` to `apis/admin-http`. Do not package the full UI into `apis/admin-http` unless a separate distribution mode is explicitly requested.
+- Update README.md, README_EN.md, and docs/plugins.md whenever Admin HTTP routes, APIs, packaging, or activation behavior changes.
+
+## Server Configuration Rules
+
+- Keep the default server config at `config/firefly-server.properties`; it should contain common runtime settings and a `firefly.config.profile` selector.
+- Put environment or storage-specific settings in `config/profiles/*.properties`. Do not create duplicate full server config files for pg/h2/memory variants.
+- Keep precedence as CLI flags > environment variables > profile config > main config > code defaults.
+- Use `--firefly.config.profile=<name>` or `FIREFLY_CONFIG_PROFILE` to switch profiles. Use `firefly.config.profile=none` only when intentionally disabling profile loading.
+
+## Target Module Boundaries
+
+- Keep libs/scheduler-core as the pure scheduling domain core.
+- Treat server as runtime wiring, bootstrap, and lifecycle. Do not turn it into a mixed UI/API/plugin blob.
+- Put Admin DTOs and ViewModels in apis/admin-model.
+- Put management HTTP endpoints in apis/admin-http.
+- Put Node-based Admin UI source or build outputs under ui/admin.
+- Keep plugins for optional runtime extensions such as metrics-prometheus, not for the long-term Admin UI shape.
+- Split executor-related code by responsibility: transports/netty for protocol and transport, clients/executor-netty for business-side SDK, and server-side gateway wiring in the server/runtime layer.
+- Treat `apis/admin-http` and `ui/admin` as separate API/UI modules. New Admin API work should go to apis/admin-http, and UI work should go to ui/admin.

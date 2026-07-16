@@ -1,0 +1,21 @@
+plugins {
+    id 'application'
+}
+
+dependencies {
+    implementation project(':server:bootstrap')
+    implementation project(':stores:jdbc')
+    runtimeOnly 'com.h2database:h2:2.2.224'
+    runtimeOnly 'org.postgresql:postgresql:42.7.3'
+}
+
+application {
+    mainClass = 'com.firefly.server.App'
+}
+
+tasks.register('migrateSchema', JavaExec) {
+    group = 'application'
+    description = 'Initialize or upgrade the configured Firefly JDBC schema without starting the server.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.firefly.server.SchemaTool'
+}

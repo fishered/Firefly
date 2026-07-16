@@ -40,6 +40,21 @@ class CronExpressionTest {
     }
 
     @Test
+    void supportsLastDayAndNthWeekdayExpressions() {
+        CronExpression lastDay = CronExpression.parse("0 0 0 L * *");
+        CronExpression secondMonday = CronExpression.parse("0 0 9 * * MON#2");
+
+        assertEquals(
+                Instant.parse("2026-07-31T00:00:00Z"),
+                lastDay.nextAfter(Instant.parse("2026-07-01T00:00:00Z"), ZoneId.of("UTC"))
+        );
+        assertEquals(
+                Instant.parse("2026-07-13T09:00:00Z"),
+                secondMonday.nextAfter(Instant.parse("2026-07-01T00:00:00Z"), ZoneId.of("UTC"))
+        );
+    }
+
+    @Test
     void rejectsInvalidFieldCount() {
         assertThrows(IllegalArgumentException.class, () -> CronExpression.parse("* * * * *"));
     }

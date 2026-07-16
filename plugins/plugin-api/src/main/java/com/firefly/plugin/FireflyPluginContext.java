@@ -1,9 +1,12 @@
 package com.firefly.plugin;
 
 import com.firefly.cluster.NodeRegistry;
+import com.firefly.catalog.SchedulerCatalog;
 import com.firefly.executor.ExecutorRegistry;
+import com.firefly.execution.ExecutionRepository;
 import com.firefly.registry.JobHandlerRegistry;
 import com.firefly.store.JobRepository;
+import com.firefly.metrics.SchedulerMetrics;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -18,7 +21,10 @@ public final class FireflyPluginContext {
     private final JobHandlerRegistry jobHandlerRegistry;
     private final NodeRegistry nodeRegistry;
     private final ExecutorRegistry executorRegistry;
+    private final SchedulerCatalog schedulerCatalog;
+    private final ExecutionRepository executionRepository;
     private final RemoteExecutorDispatcher remoteExecutorDispatcher;
+    private final SchedulerMetrics schedulerMetrics;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -26,7 +32,10 @@ public final class FireflyPluginContext {
         this.jobHandlerRegistry = builder.jobHandlerRegistry;
         this.nodeRegistry = builder.nodeRegistry;
         this.executorRegistry = builder.executorRegistry;
+        this.schedulerCatalog = builder.schedulerCatalog;
+        this.executionRepository = builder.executionRepository;
         this.remoteExecutorDispatcher = builder.remoteExecutorDispatcher;
+        this.schedulerMetrics = builder.schedulerMetrics;
     }
 
     public static Builder builder() {
@@ -53,8 +62,20 @@ public final class FireflyPluginContext {
         return Optional.ofNullable(executorRegistry);
     }
 
+    public Optional<SchedulerCatalog> schedulerCatalog() {
+        return Optional.ofNullable(schedulerCatalog);
+    }
+
+    public Optional<ExecutionRepository> executionRepository() {
+        return Optional.ofNullable(executionRepository);
+    }
+
     public Optional<RemoteExecutorDispatcher> remoteExecutorDispatcher() {
         return Optional.ofNullable(remoteExecutorDispatcher);
+    }
+
+    public Optional<SchedulerMetrics> schedulerMetrics() {
+        return Optional.ofNullable(schedulerMetrics);
     }
 
     public static final class Builder {
@@ -63,7 +84,10 @@ public final class FireflyPluginContext {
         private JobHandlerRegistry jobHandlerRegistry;
         private NodeRegistry nodeRegistry;
         private ExecutorRegistry executorRegistry;
+        private SchedulerCatalog schedulerCatalog;
+        private ExecutionRepository executionRepository;
         private RemoteExecutorDispatcher remoteExecutorDispatcher;
+        private SchedulerMetrics schedulerMetrics;
 
         private Builder() {
         }
@@ -93,8 +117,23 @@ public final class FireflyPluginContext {
             return this;
         }
 
+        public Builder schedulerCatalog(SchedulerCatalog schedulerCatalog) {
+            this.schedulerCatalog = Objects.requireNonNull(schedulerCatalog, "schedulerCatalog");
+            return this;
+        }
+
+        public Builder executionRepository(ExecutionRepository executionRepository) {
+            this.executionRepository = Objects.requireNonNull(executionRepository, "executionRepository");
+            return this;
+        }
+
         public Builder remoteExecutorDispatcher(RemoteExecutorDispatcher remoteExecutorDispatcher) {
             this.remoteExecutorDispatcher = Objects.requireNonNull(remoteExecutorDispatcher, "remoteExecutorDispatcher");
+            return this;
+        }
+
+        public Builder schedulerMetrics(SchedulerMetrics schedulerMetrics) {
+            this.schedulerMetrics = Objects.requireNonNull(schedulerMetrics, "schedulerMetrics");
             return this;
         }
 

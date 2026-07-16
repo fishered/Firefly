@@ -19,5 +19,7 @@ public interface ExecutorRegistry {
 
     boolean markOffline(String executorName, String instanceId);
 
+    List<ExecutorInstance> listAll();
+
     List<ExecutorInstance> listOnline(String executorName, Instant now, Duration heartbeatTimeout);
 }

@@ -1,4 +1,4 @@
-# Firefly Development Rules
+﻿# Firefly Development Rules
 
 Use this reference for architecture, module layout, storage/executor/API planning, documentation, and tests.
 
@@ -56,6 +56,16 @@ Avoid in core:
 - database clients;
 - executor network protocol clients.
 - metrics or admin-page implementations.
+
+
+## Server Configuration Rules
+
+The default server configuration lives at `config/firefly-server.properties`. It should contain common runtime settings and a `firefly.config.profile` selector.
+
+- Put storage or environment-specific settings in `config/profiles/*.properties`.
+- Do not create duplicate full server config files for pg/h2/memory variants.
+- Keep precedence as CLI flags > environment variables > profile config > main config > code defaults.
+- Switch profiles with `--firefly.config.profile=<name>` or `FIREFLY_CONFIG_PROFILE`.
 
 ## Storage Direction
 

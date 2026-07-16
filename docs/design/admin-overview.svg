@@ -60,7 +60,7 @@
     <rect x="1256" y="318" width="92" height="30" rx="5" fill="#fff7d6"/><text x="1274" y="339" fill="#7a5a00">GATEWAY</text>
     <text x="1020" y="390" fill="#64717a">Node ID</text><text x="1138" y="390" fill="#172026">firefly-server-node</text>
     <text x="1020" y="426" fill="#64717a">Mode</text><text x="1138" y="426" fill="#172026">standalone</text>
-    <text x="1020" y="462" fill="#64717a">Plugins</text><text x="1138" y="462" fill="#172026">admin-web</text>
+    <text x="1020" y="462" fill="#64717a">Plugins</text><text x="1138" y="462" fill="#172026">admin-http</text>
   </g>
 
   <rect x="288" y="576" width="1072" height="248" rx="8" fill="#ffffff" stroke="#e5e8eb"/>

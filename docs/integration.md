@@ -17,7 +17,7 @@ integrations
 ```text
 plugins
 ├── plugin-api             # 插件 SPI
-├── admin-web              # 运维页面和 JSON 接口
+├── admin-http              # 管理 HTTP API
 └── metrics-prometheus     # Prometheus 文本指标
 ```
 
@@ -89,17 +89,36 @@ firefly:
 
 这个入口先保持很薄，避免在核心能力稳定前过早引入复杂运行时。
 
-当前 `server` 模块使用 `FireflyBootstrap` 管理启动流程。默认只启动调度服务，不自动注册 demo 任务，也不加载 Admin Web 或 Prometheus Metrics。
+当前 `server` 模块使用 `FireflyBootstrap` 管理启动流程。在项目根目录启动时会自动加载 `config/firefly-server.properties`，当前默认 profile 为 `pg`，会启用 Admin HTTP、Prometheus Metrics、Netty executor gateway 和 PostgreSQL 持久化。demo 任务默认关闭。
+
+当前节点职责由 `firefly.node.roles` 指定：
+
+```properties
+firefly.node.mode=standalone
+firefly.node.name=firefly-standalone
+firefly.node.roles=api,gateway,scheduler
+```
+
+`standalone` 可以使用 memory、H2 或 PostgreSQL；`cluster` 必须使用 JDBC 共享存储，并且每个节点必须配置唯一的 `firefly.node.name`。
 
 启用 demo：
 
 ```powershell
-.\gradlew.bat :server:run --args="--firefly.demo.enabled=true"
+.\gradlew.bat :server:launcher:run --args="--firefly.demo.enabled=true"
 ```
+
+切换存储 profile：
+
+```powershell
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=h2"
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=memory"
+```
+
+主配置在 `config/firefly-server.properties`，存储差异配置在 `config/profiles/*.properties`。
 
 ## 可选插件
 
-插件由宿主服务显式启用。示例：
+可选能力由宿主服务显式启用。Admin HTTP API 位于 `apis/admin-http`，Prometheus 指标位于 `plugins/metrics-prometheus`。示例：
 
 ```java
 FireflyPluginContext context = FireflyPluginContext.builder()
@@ -108,7 +127,7 @@ FireflyPluginContext context = FireflyPluginContext.builder()
         .build();
 
 try (FireflyPluginManager plugins = new FireflyPluginManager(List.of(
-        new AdminWebPlugin(),
+        new AdminHttpPlugin(),
         new PrometheusMetricsPlugin()
 ))) {
     plugins.start(context);
@@ -127,12 +146,15 @@ try (FireflyPluginManager plugins = new FireflyPluginManager(List.of(
 业务服务执行任务 -> ACK / REPORT_RESULT 返回结果
 ```
 
-传统项目使用 `executors:netty`：
+传统项目使用 `transports:netty`：
 
 ```java
 NettyExecutorClient client = NettyExecutorClient.builder()
-        .schedulerHost("127.0.0.1")
-        .schedulerPort(9700)
+        .gatewayAddresses(List.of(
+                "firefly-1:9700",
+                "firefly-2:9700",
+                "firefly-3:9700"
+        ))
         .executorName("billing-executor")
         .serviceName("billing-service")
         .build()
@@ -151,10 +173,17 @@ firefly:
     netty:
       enabled: true
       auto-start: true
-      scheduler-host: 127.0.0.1
-      scheduler-port: 9700
+      gateway-addresses:
+        - firefly-1:9700
+        - firefly-2:9700
+        - firefly-3:9700
       executor-name: billing-executor
       service-name: billing-service
+      reconnect-initial-delay: 1s
+      reconnect-max-delay: 30s
+      auth-token: ${FIREFLY_EXECUTOR_AUTH_TOKEN:}
+      idempotency-directory: /data/firefly-executor-results
+      idempotency-retention: 24h
 ```
 
 业务代码只声明 handler Bean：
@@ -169,3 +198,27 @@ NettyJobHandlerRegistration billingHandler() {
 ```
 
 业务服务不需要开放监听端口。它只需要能连到调度中心 gateway。
+
+客户端会同时连接所有 `gateway-addresses`，某个 Gateway 暂时不可用时按指数退避自动重连。高可用部署应让每个带 `scheduler` 职责的节点同时带 `gateway` 职责，使任一赢得任务游标 CAS 的 Scheduler 都能通过自己的本地 Gateway 下发任务。
+
+`ALL_SUCCESS`/`ANY_SUCCESS` 广播和分片重试只重新派发失败、超时或缺失目标；`QUORUM` 会把上一 attempt 已成功目标结转为 synthetic carry target，只重新派发未成功目标，并按跨 attempt 成功数判断法定多数。这依赖业务服务正确处理 `rootExecutionId` 和业务幂等键。
+
+执行排障时可以通过 `GET /api/executions/{executionId}` 查看父 execution 和 target 明细，包括 `instanceId`、`gatewayNodeId`、ACK/完成时间、错误信息以及 QUORUM retry 产生的 `carried=true` 结转目标。
+
+Outbox 达到最大重投次数后会进入 `DEAD`。运维侧可以用 `GET /api/outbox/dead` 查看死信，并用 `POST /api/outbox/{outboxId}/requeue` 手动重放；重放需要 `OPERATOR` 或 `ADMIN` Token，只会把仍处于 `DEAD` 的记录改回 `RETRY`。
+
+`idempotency-directory` 启用文件型 `ExecutorResultStore`，用于在容器重启后重放已经完成的目标结果；目录应挂载持久卷。它不覆盖业务完成但结果尚未落盘的崩溃窗口，Handler 仍需业务幂等。也可以声明自定义 `ExecutorResultStore` Bean 接入数据库、Redis 或业务侧幂等存储。
+
+远程任务支持三种分发模式：
+
+```text
+UNICAST    选择一个在线实例，只执行一份
+BROADCAST  对在线实例快照逐个生成子执行
+SHARDING   按 shardCount 生成子执行并分配给实例
+```
+
+`routingStrategy` 支持 `ROUND_ROBIN`、`RANDOM` 和 `CONSISTENT_HASH`。广播和分片子执行具有独立 `executionId`，并保留共同的 `parentExecutionId`。
+
+## 实现进度
+
+当前实现进度统一维护在 [implementation-progress.md](implementation-progress.md)。
