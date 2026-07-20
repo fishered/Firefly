@@ -39,7 +39,7 @@ public final class InMemoryNodeRegistry implements NodeRegistry {
             if (current == null) {
                 return false;
             }
-            nodes.put(nodeId, copyWith(current, heartbeatAt, NodeStatus.ONLINE));
+            nodes.put(nodeId, copyWith(current, heartbeatAt, current.status()));
             return true;
         }
     }
@@ -57,6 +57,16 @@ public final class InMemoryNodeRegistry implements NodeRegistry {
     }
 
     @Override
+    public boolean markDraining(String nodeId) {
+        synchronized (lock) {
+            FireflyNode current = nodes.get(nodeId);
+            if (current == null) return false;
+            nodes.put(nodeId, copyWith(current, current.lastHeartbeatAt(), NodeStatus.DRAINING));
+            return true;
+        }
+    }
+
+    @Override
     public List<FireflyNode> listOnline(Instant now, Duration heartbeatTimeout) {
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(heartbeatTimeout, "heartbeatTimeout");
@@ -67,6 +77,13 @@ public final class InMemoryNodeRegistry implements NodeRegistry {
                     .filter(node -> !node.lastHeartbeatAt().isBefore(oldestAllowedHeartbeat))
                     .sorted(Comparator.comparing(FireflyNode::nodeId))
                     .toList();
+        }
+    }
+
+    @Override
+    public List<FireflyNode> listAll() {
+        synchronized (lock) {
+            return nodes.values().stream().sorted(Comparator.comparing(FireflyNode::nodeId)).toList();
         }
     }
 

@@ -7,8 +7,12 @@ import com.firefly.domain.ExecutionContext;
 import com.firefly.domain.ExecutorCompletionPolicy;
 import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorRoutingStrategy;
+import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.executor.ExecutorRegistry;
 import com.firefly.executor.InMemoryExecutorRegistry;
+import com.firefly.executor.ExecutorInstanceDirectory;
+import com.firefly.executor.ExecutorInstanceLocation;
+import com.firefly.executor.InMemoryExecutorInstanceDirectory;
 import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.executor.RemoteDispatchResult;
 import com.firefly.execution.ExecutionRecord;
@@ -54,7 +58,12 @@ public final class NettyExecutorGateway implements AutoCloseable {
     private final SchedulerMetrics metrics;
     private final NettyExecutorGatewayOptions options;
     private final java.util.concurrent.ThreadPoolExecutor resultPersistenceExecutor;
-    private final io.netty.handler.ssl.SslContext sslContext;
+    private final ReloadingNettyTlsContext tlsContext;
+    private final ExecutorInstanceDirectory instanceDirectory;
+    private final NettyGatewayForwardingTransport forwardingTransport;
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>
+            routingCursors = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile java.util.function.BooleanSupplier registrationAdmission = () -> true;
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -203,6 +212,24 @@ public final class NettyExecutorGateway implements AutoCloseable {
             SchedulerMetrics metrics,
             NettyExecutorGatewayOptions options
     ) {
+        this(port, executorRegistry, connectionRegistry, clock, schedulerCatalog,
+                autoCreateExecutorDefinitions, gatewayNodeId, executionRepository,
+                dispatchAcknowledger, executorAuthToken, retryScheduler, metrics, options,
+                new InMemoryExecutorInstanceDirectory());
+    }
+
+    public NettyExecutorGateway(
+            int port, ExecutorRegistry executorRegistry,
+            NettyExecutorConnectionRegistry connectionRegistry, Clock clock,
+            SchedulerCatalog schedulerCatalog, boolean autoCreateExecutorDefinitions,
+            String gatewayNodeId, ExecutionRepository executionRepository,
+            java.util.function.BiConsumer<String, Instant> dispatchAcknowledger,
+            String executorAuthToken,
+            java.util.function.BiConsumer<String, Boolean> retryScheduler,
+            SchedulerMetrics metrics,
+            NettyExecutorGatewayOptions options,
+            ExecutorInstanceDirectory instanceDirectory
+    ) {
         if (port < 0 || port > 65535) {
             throw new IllegalArgumentException("port must be between 0 and 65535");
         }
@@ -219,7 +246,9 @@ public final class NettyExecutorGateway implements AutoCloseable {
         this.retryScheduler = Objects.requireNonNull(retryScheduler, "retryScheduler");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.options = Objects.requireNonNull(options, "options");
-        this.sslContext = options.tls().serverContext();
+        this.tlsContext = new ReloadingNettyTlsContext(options.tls(), options.tlsReloadInterval());
+        this.instanceDirectory = Objects.requireNonNull(instanceDirectory, "instanceDirectory");
+        this.forwardingTransport = new NettyGatewayForwardingTransport(connectionRegistry, options, metrics);
         this.resultPersistenceExecutor = new java.util.concurrent.ThreadPoolExecutor(
                 1,
                 1,
@@ -236,6 +265,7 @@ public final class NettyExecutorGateway implements AutoCloseable {
     }
 
     public void start() throws InterruptedException {
+        forwardingTransport.start();
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
         ServerBootstrap bootstrap = new ServerBootstrap()
@@ -244,8 +274,9 @@ public final class NettyExecutorGateway implements AutoCloseable {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel channel) {
-                        if (sslContext != null) {
-                            channel.pipeline().addLast("tls", sslContext.newHandler(channel.alloc()));
+                        io.netty.handler.ssl.SslContext currentTls = tlsContext.current();
+                        if (currentTls != null) {
+                            channel.pipeline().addLast("tls", currentTls.newHandler(channel.alloc()));
                         }
                         channel.pipeline()
                                 .addLast(new LineBasedFrameDecoder(options.maxFrameLength()))
@@ -264,7 +295,12 @@ public final class NettyExecutorGateway implements AutoCloseable {
                                         resultPersistenceExecutor,
                                         executorAuthToken,
                                         retryScheduler,
-                                        metrics
+                                        metrics,
+                                        instanceDirectory,
+                                        options.advertisedInternalAddress(),
+                                        options.instanceLocationRefreshInterval(),
+                                        options.instanceLocationLease(),
+                                        () -> registrationAdmission.getAsBoolean()
                                 ));
                     }
                 });
@@ -294,6 +330,10 @@ public final class NettyExecutorGateway implements AutoCloseable {
     }
 
     public RemoteDispatchResult dispatch(RemoteDispatchRequest request) {
+        if (schedulerCatalog.findExecutor(request.executorName())
+                .map(definition -> !definition.enabled()).orElse(false)) {
+            return RemoteDispatchResult.unavailable();
+        }
         return switch (request.dispatchMode()) {
             case UNICAST -> dispatchUnicast(request);
             case BROADCAST -> dispatchBroadcast(request);
@@ -309,7 +349,86 @@ public final class NettyExecutorGateway implements AutoCloseable {
         return connectionRegistry;
     }
 
+    public boolean hasRoute(String executorName) {
+        return !connectionRegistry.list(executorName).isEmpty()
+                || !instanceDirectory.listOnline(executorName, clock.instant()).isEmpty();
+    }
+
+    public void setRegistrationAdmission(java.util.function.BooleanSupplier registrationAdmission) {
+        this.registrationAdmission = Objects.requireNonNull(registrationAdmission, "registrationAdmission");
+    }
+
+    public int connectedExecutorCount() {
+        return connectionRegistry.list().size();
+    }
+
+    public int disconnectAllExecutors() {
+        return connectionRegistry.closeAll();
+    }
+
+    public int cancel(String executionId, String reason) {
+        ExecutionRecord execution = executionRepository.findExecution(executionId).orElse(null);
+        if (execution == null) return 0;
+        int sent = 0;
+        for (ExecutionTargetRecord target : executionRepository.listTargets(executionId)) {
+            var connection = connectionRegistry.findInstance(target.instanceId());
+            Map<String, String> payload = new LinkedHashMap<>();
+            payload.put("executionId", target.targetExecutionId());
+            payload.put("parentExecutionId", executionId);
+            payload.put("instanceId", target.instanceId());
+            payload.put("ownerNodeId", execution.ownerNodeId());
+            payload.put("fencingToken", Long.toString(execution.fencingToken()));
+            payload.put("reason", reason == null || reason.isBlank() ? "cancelled by operator" : reason);
+            String frame = codec.encode(new NettyExecutorMessage(
+                    UUID.randomUUID().toString(), NettyExecutorMessageType.CANCEL_JOB, payload
+            ));
+            if (connection.isPresent()) {
+                if (!connection.get().supports("CANCELLATION")) continue;
+                connection.get().channel().writeAndFlush(frame + "\n");
+                sent++;
+                continue;
+            }
+            var location = instanceDirectory.findOnlineInstance(target.instanceId(), clock.instant());
+            if (location.isPresent() && forwardingTransport.forward(
+                    location.get().gatewayAddress(), location.get().executorName(), target.instanceId(),
+                    location.get().sessionId(), frame
+            )) sent++;
+        }
+        return sent;
+    }
+
+    public int isolate(String executorName) {
+        return isolateDetailed(executorName).disconnectedInstances();
+    }
+
+    public com.firefly.executor.ExecutorIsolationResult isolateDetailed(String executorName) {
+        int closed = connectionRegistry.closeExecutor(executorName);
+        java.util.List<String> addresses = instanceDirectory.listOnline(executorName, clock.instant()).stream()
+                .filter(location -> !location.gatewayNodeId().equals(gatewayNodeId))
+                .map(ExecutorInstanceLocation::gatewayAddress)
+                .filter(address -> !address.isBlank())
+                .distinct()
+                .toList();
+        java.util.List<String> failed = addresses.stream()
+                .filter(address -> !forwardingTransport.isolate(address, executorName))
+                .toList();
+        executorRegistry.listAll().stream()
+                .filter(instance -> instance.executorName().equals(executorName))
+                .forEach(instance -> executorRegistry.markOffline(executorName, instance.instanceId()));
+        return new com.firefly.executor.ExecutorIsolationResult(
+                closed, addresses.size(), failed.size(), failed
+        );
+    }
+
     private RemoteDispatchResult dispatchUnicast(RemoteDispatchRequest request) {
+        var sharedTarget = selectSharedLocation(
+                request.executorName(), request.routingStrategy(), request.routingKey()
+        );
+        if (sharedTarget.isPresent()) {
+            return dispatchDirectoryPlans(request, 1, java.util.List.of(new DirectoryTargetPlan(
+                    sharedTarget.get(), request.context().executionId(), null, null
+            )), java.util.List.of());
+        }
         var target = connectionRegistry.select(
                 request.executorName(),
                 request.routingStrategy(),
@@ -325,6 +444,8 @@ public final class NettyExecutorGateway implements AutoCloseable {
     }
 
     private RemoteDispatchResult dispatchBroadcast(RemoteDispatchRequest request) {
+        java.util.List<ExecutorInstanceLocation> sharedLocations = onlineLocations(request.executorName());
+        if (!sharedLocations.isEmpty()) return dispatchBroadcastShared(request, sharedLocations);
         java.util.List<ExecutionTargetRecord> existingTargets =
                 executionRepository.listTargets(request.context().executionId());
         if (!existingTargets.isEmpty()) {
@@ -340,10 +461,12 @@ public final class NettyExecutorGateway implements AutoCloseable {
         java.util.Optional<java.util.List<ExecutionTargetRecord>> retryTargets = retrySourceTargets(request);
         if (retryTargets.isPresent()) {
             java.util.List<ExecutionTargetRecord> sourceTargets = retryTargets.get();
-            java.util.List<ExecutionTargetRecord> failedTargets = sourceTargets.stream()
-                    .filter(target -> target.status() != ExecutionStatus.SUCCEEDED)
-                    .toList();
-            java.util.List<TargetPlan> plans = failedTargets.stream()
+            java.util.List<ExecutionTargetRecord> requestedTargets = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
+                    ? sourceTargets
+                    : sourceTargets.stream()
+                            .filter(target -> target.status() != ExecutionStatus.SUCCEEDED)
+                            .toList();
+            java.util.List<TargetPlan> plans = requestedTargets.stream()
                     .map(existing -> connectionRegistry.find(request.executorName(), existing.instanceId())
                             .map(target -> new TargetPlan(
                                     target,
@@ -357,7 +480,7 @@ public final class NettyExecutorGateway implements AutoCloseable {
                     .map(ExecutionRecord::expectedTargets)
                     .orElse(sourceTargets.size());
             return dispatchRetryPlans(
-                    request, parentExpectedTargets, failedTargets.size(), plans, sourceTargets
+                    request, parentExpectedTargets, requestedTargets.size(), plans, sourceTargets
             );
         }
         java.util.List<NettyExecutorConnectionRegistry.ConnectionTarget> targets =
@@ -374,8 +497,12 @@ public final class NettyExecutorGateway implements AutoCloseable {
     }
 
     private RemoteDispatchResult dispatchShards(RemoteDispatchRequest request) {
+        java.util.List<ExecutorInstanceLocation> sharedLocations = onlineLocations(request.executorName());
+        if (!sharedLocations.isEmpty()) return dispatchShardsShared(request, sharedLocations);
         java.util.List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(java.util.List.of());
-        java.util.Set<Integer> successfulShards = sourceTargets
+        java.util.Set<Integer> successfulShards = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
+                ? java.util.Set.of()
+                : sourceTargets
                 .stream()
                 .filter(target -> target.status() == ExecutionStatus.SUCCEEDED)
                 .map(ExecutionTargetRecord::shardIndex)
@@ -416,6 +543,196 @@ public final class NettyExecutorGateway implements AutoCloseable {
         return executionRepository.findExecution(sourceExecutionId);
     }
 
+    private RemoteDispatchResult dispatchBroadcastShared(
+            RemoteDispatchRequest request, java.util.List<ExecutorInstanceLocation> locations
+    ) {
+        java.util.List<ExecutionTargetRecord> existingTargets =
+                executionRepository.listTargets(request.context().executionId());
+        if (!existingTargets.isEmpty()) {
+            java.util.List<DirectoryTargetPlan> plans = existingTargets.stream()
+                    .map(existing -> findLocation(locations, existing.instanceId())
+                            .map(location -> new DirectoryTargetPlan(
+                                    location, existing.targetExecutionId(), existing.shardIndex(), null
+                            )))
+                    .flatMap(java.util.Optional::stream)
+                    .toList();
+            return dispatchDirectoryPlans(request, existingTargets.size(), plans, java.util.List.of());
+        }
+        java.util.List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(java.util.List.of());
+        if (!sourceTargets.isEmpty()) {
+            java.util.List<ExecutionTargetRecord> requested = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
+                    ? sourceTargets
+                    : sourceTargets.stream().filter(target -> target.status() != ExecutionStatus.SUCCEEDED).toList();
+            java.util.List<DirectoryTargetPlan> plans = requested.stream()
+                    .map(existing -> findLocation(locations, existing.instanceId())
+                            .map(location -> new DirectoryTargetPlan(
+                                    location,
+                                    request.context().executionId() + "@instance:" + existing.instanceId(),
+                                    existing.shardIndex(), null
+                            )))
+                    .flatMap(java.util.Optional::stream)
+                    .toList();
+            java.util.List<ExecutionTargetRecord> carried = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
+                    ? java.util.List.of()
+                    : sourceTargets.stream().filter(target -> target.status() == ExecutionStatus.SUCCEEDED).toList();
+            int expected = retrySourceExecution(request).map(ExecutionRecord::expectedTargets)
+                    .orElse(sourceTargets.size());
+            return dispatchDirectoryPlans(request, expected, plans, carried, requested.size());
+        }
+        java.util.List<DirectoryTargetPlan> plans = locations.stream()
+                .map(location -> new DirectoryTargetPlan(
+                        location, request.context().executionId() + "@instance:" + location.instanceId(),
+                        null, null
+                ))
+                .toList();
+        return dispatchDirectoryPlans(request, locations.size(), plans, java.util.List.of());
+    }
+
+    private RemoteDispatchResult dispatchShardsShared(
+            RemoteDispatchRequest request, java.util.List<ExecutorInstanceLocation> locations
+    ) {
+        java.util.List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(java.util.List.of());
+        java.util.Set<Integer> successfulShards = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
+                ? java.util.Set.of()
+                : sourceTargets.stream()
+                .filter(target -> target.status() == ExecutionStatus.SUCCEEDED)
+                .map(ExecutionTargetRecord::shardIndex)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        java.util.ArrayList<DirectoryTargetPlan> plans = new java.util.ArrayList<>();
+        for (int shard = 0; shard < request.shardCount(); shard++) {
+            if (successfulShards.contains(shard)) continue;
+            int shardIndex = shard;
+            selectLocation(locations, request.routingStrategy(), request.routingKey() + ":" + shard)
+                    .ifPresent(location -> plans.add(new DirectoryTargetPlan(
+                            location, request.context().executionId() + "@shard:" + shardIndex,
+                            shardIndex, request.shardCount()
+                    )));
+        }
+        java.util.List<ExecutionTargetRecord> carried = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
+                ? java.util.List.of()
+                : sourceTargets.stream().filter(target -> target.status() == ExecutionStatus.SUCCEEDED).toList();
+        int requested = request.shardCount() - successfulShards.size();
+        return dispatchDirectoryPlans(request, request.shardCount(), plans, carried, requested);
+    }
+
+    private RemoteDispatchResult dispatchDirectoryPlans(
+            RemoteDispatchRequest request, int expectedTargets,
+            java.util.List<DirectoryTargetPlan> plans,
+            java.util.List<ExecutionTargetRecord> carriedTargets
+    ) {
+        return dispatchDirectoryPlans(request, expectedTargets, plans, carriedTargets, expectedTargets);
+    }
+
+    private RemoteDispatchResult dispatchDirectoryPlans(
+            RemoteDispatchRequest request, int expectedTargets,
+            java.util.List<DirectoryTargetPlan> plans,
+            java.util.List<ExecutionTargetRecord> carriedTargets,
+            int requestedTargets
+    ) {
+        saveDirectoryDispatch(request, expectedTargets, plans, carriedTargets);
+        int accepted = 0;
+        java.util.ArrayList<String> instances = new java.util.ArrayList<>();
+        for (DirectoryTargetPlan plan : plans) {
+            if (sendDirectory(plan, request)) {
+                accepted++;
+                instances.add(plan.location().instanceId());
+            }
+        }
+        return new RemoteDispatchResult(requestedTargets, accepted, java.util.List.copyOf(instances));
+    }
+
+    private void saveDirectoryDispatch(
+            RemoteDispatchRequest request, int expectedTargets,
+            java.util.List<DirectoryTargetPlan> plans,
+            java.util.List<ExecutionTargetRecord> carriedTargets
+    ) {
+        Instant now = clock.instant();
+        executionRepository.saveExecution(new ExecutionRecord(
+                request.context().executionId(), request.rootExecutionId(), request.runAttempt(),
+                request.context().jobId(), request.context().scheduledFireTime(), request.context().dispatchTime(),
+                request.dispatchMode(), request.completionPolicy(),
+                plans.isEmpty() && carriedTargets.isEmpty() ? ExecutionStatus.FAILED : ExecutionStatus.DISPATCHED,
+                expectedTargets, plans.size() + carriedTargets.size(), request.ownerNodeId(), request.fencingToken(),
+                now, now
+        ));
+        java.util.List<ExecutionTargetRecord> planned = plans.stream().map(plan -> new ExecutionTargetRecord(
+                plan.targetExecutionId(), request.context().executionId(), plan.location().instanceId(),
+                plan.location().gatewayNodeId(), plan.shardIndex(), ExecutionStatus.DISPATCHED,
+                1, null, null, "", now, now
+        )).toList();
+        java.util.List<ExecutionTargetRecord> carried = carriedTargets.stream().map(source ->
+                new ExecutionTargetRecord(
+                        carriedTargetExecutionId(request, source), request.context().executionId(),
+                        source.instanceId(), source.gatewayNodeId(), source.shardIndex(), ExecutionStatus.SUCCEEDED,
+                        source.attempt(), now, now, "", now, now
+                )
+        ).toList();
+        executionRepository.saveTargets(java.util.stream.Stream.concat(planned.stream(), carried.stream()).toList());
+    }
+
+    private boolean sendDirectory(DirectoryTargetPlan plan, RemoteDispatchRequest request) {
+        String frame = codec.encode(triggerMessage(
+                request, plan.targetExecutionId(), plan.location().instanceId(),
+                plan.shardIndex(), plan.shardTotal()
+        ));
+        var local = connectionRegistry.find(request.executorName(), plan.location().instanceId())
+                .filter(target -> target.sessionId().equals(plan.location().sessionId()));
+        if (local.isPresent()) {
+            local.get().channel().writeAndFlush(frame + "\n");
+            return true;
+        }
+        return forwardingTransport.forward(
+                plan.location().gatewayAddress(), request.executorName(), plan.location().instanceId(),
+                plan.location().sessionId(), frame
+        );
+    }
+
+    private java.util.List<ExecutorInstanceLocation> onlineLocations(String executorName) {
+        return instanceDirectory.listOnline(executorName, clock.instant());
+    }
+
+    private java.util.Optional<ExecutorInstanceLocation> selectSharedLocation(
+            String executorName, ExecutorRoutingStrategy strategy, String routingKey
+    ) {
+        return selectLocation(onlineLocations(executorName), strategy, routingKey);
+    }
+
+    private java.util.Optional<ExecutorInstanceLocation> selectLocation(
+            java.util.List<ExecutorInstanceLocation> locations,
+            ExecutorRoutingStrategy strategy,
+            String routingKey
+    ) {
+        if (locations.isEmpty()) return java.util.Optional.empty();
+        if (strategy == ExecutorRoutingStrategy.CONSISTENT_HASH) {
+            return locations.stream().max((left, right) -> Long.compareUnsigned(
+                    rendezvousScore(routingKey, left.instanceId()),
+                    rendezvousScore(routingKey, right.instanceId())
+            ));
+        }
+        int index = strategy == ExecutorRoutingStrategy.RANDOM
+                ? java.util.concurrent.ThreadLocalRandom.current().nextInt(locations.size())
+                : Math.floorMod(routingCursors.computeIfAbsent(routingKey,
+                        ignored -> new java.util.concurrent.atomic.AtomicInteger()).getAndIncrement(), locations.size());
+        return java.util.Optional.of(locations.get(index));
+    }
+
+    private java.util.Optional<ExecutorInstanceLocation> findLocation(
+            java.util.List<ExecutorInstanceLocation> locations, String instanceId
+    ) {
+        return locations.stream().filter(location -> location.instanceId().equals(instanceId)).findFirst();
+    }
+
+    private long rendezvousScore(String routingKey, String instanceId) {
+        long hash = 0xcbf29ce484222325L;
+        String value = routingKey + '\u0000' + instanceId;
+        for (int index = 0; index < value.length(); index++) {
+            hash ^= value.charAt(index);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
+    }
+
     private RemoteDispatchResult dispatchPlans(
             RemoteDispatchRequest request,
             int expectedTargets,
@@ -440,6 +757,7 @@ public final class NettyExecutorGateway implements AutoCloseable {
             java.util.List<ExecutionTargetRecord> sourceTargets
     ) {
         java.util.List<ExecutionTargetRecord> carried = sourceTargets.stream()
+                .filter(target -> request.retryScope() == ExecutorRetryScope.FAILED_TARGETS_ONLY)
                 .filter(target -> target.status() == ExecutionStatus.SUCCEEDED)
                 .toList();
         saveDispatch(request, parentExpectedTargets, plans, carried);
@@ -557,6 +875,8 @@ public final class NettyExecutorGateway implements AutoCloseable {
             bossGroup.shutdownGracefully().syncUninterruptibly();
         }
         resultPersistenceExecutor.shutdown();
+        forwardingTransport.close();
+        tlsContext.close();
         try {
             if (!resultPersistenceExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
                 resultPersistenceExecutor.shutdownNow();
@@ -622,6 +942,14 @@ public final class NettyExecutorGateway implements AutoCloseable {
 
     private record TargetPlan(
             NettyExecutorConnectionRegistry.ConnectionTarget target,
+            String targetExecutionId,
+            Integer shardIndex,
+            Integer shardTotal
+    ) {
+    }
+
+    private record DirectoryTargetPlan(
+            ExecutorInstanceLocation location,
             String targetExecutionId,
             Integer shardIndex,
             Integer shardTotal

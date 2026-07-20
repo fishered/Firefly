@@ -12,7 +12,7 @@ firefly
 │   └── scheduler-core
 ├── integrations
 │   ├── embedded
-│   ├── netty-spring-boot-starter
+│   ├── firefly-spring-boot-starter
 │   ├── spring-boot-starter
 │   └── server-cli
 ├── executors

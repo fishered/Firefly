@@ -76,6 +76,16 @@ public final class InMemoryShardManager implements ShardManager {
         }
     }
 
+    @Override
+    public long countActiveOwnedBy(String nodeId, Instant now) {
+        synchronized (lock) {
+            return leases.values().stream()
+                    .filter(lease -> lease.ownerNodeId().equals(nodeId))
+                    .filter(lease -> lease.leaseUntil().isAfter(now))
+                    .count();
+        }
+    }
+
     private long nextToken(int shardId) {
         long next = lastTokens.getOrDefault(shardId, 0L) + 1;
         lastTokens.put(shardId, next);

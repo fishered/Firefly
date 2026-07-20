@@ -4,13 +4,14 @@ import java.util.Set;
 
 /** Version and capability contract negotiated during executor registration. */
 public final class NettyExecutorProtocol {
-    public static final int CURRENT_VERSION = 1;
+    public static final int CURRENT_VERSION = 2;
     public static final int MIN_SUPPORTED_VERSION = 1;
     public static final Set<String> SERVER_CAPABILITIES = Set.of(
-            "TARGET_ACK", "RESULT_REPORT", "MULTI_GATEWAY", "FENCING_TOKEN"
+            "TARGET_ACK", "RESULT_REPORT", "MULTI_GATEWAY", "FENCING_TOKEN",
+            "CANCELLATION", "GATEWAY_FORWARDING"
     );
     public static final Set<String> CLIENT_CAPABILITIES = Set.of(
-            "TARGET_ACK", "RESULT_REPORT", "COMPLETED_RESULT_REPLAY"
+            "TARGET_ACK", "RESULT_REPORT", "COMPLETED_RESULT_REPLAY", "CANCELLATION"
     );
     public static final Set<String> REQUIRED_CAPABILITIES = Set.of("TARGET_ACK", "RESULT_REPORT");
 

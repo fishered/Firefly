@@ -7,6 +7,7 @@ import com.firefly.domain.FixedRateSchedule;
 import com.firefly.domain.ExecutorCompletionPolicy;
 import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorRoutingStrategy;
+import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.domain.JobDefinition;
 import com.firefly.domain.MisfirePolicy;
 import com.firefly.store.DueJobBatch;
@@ -39,6 +40,7 @@ final class JdbcJobRepositoryTest {
         assertEquals(ExecutorDispatchMode.BROADCAST, record.definition().dispatchMode());
         assertEquals(ExecutorRoutingStrategy.CONSISTENT_HASH, record.definition().routingStrategy());
         assertEquals(ExecutorCompletionPolicy.QUORUM, record.definition().completionPolicy());
+        assertEquals(ExecutorRetryScope.ALL_TARGETS, record.definition().retryScope());
         assertEquals(nextFireTime, record.nextFireTime());
     }
 
@@ -155,6 +157,7 @@ final class JdbcJobRepositoryTest {
                 .routingStrategy(ExecutorRoutingStrategy.CONSISTENT_HASH)
                 .completionPolicy(ExecutorCompletionPolicy.QUORUM)
                 .routingKey("tenant:firefly")
+                .retryScope(ExecutorRetryScope.ALL_TARGETS)
                 .enabled(true)
                 .build();
     }

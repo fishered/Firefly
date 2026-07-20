@@ -126,6 +126,9 @@ firefly_jobs_total
 firefly_jobs_enabled
 firefly_nodes_online
 firefly_next_fire_time_epoch_seconds
+firefly_jobs_due_total
+firefly_jobs_overdue_max_seconds
+firefly_scheduler_shard_due_jobs
 firefly_schedule_delay_seconds
 firefly_outbox_claim_age_seconds
 firefly_executor_ack_delay_seconds
@@ -133,6 +136,10 @@ firefly_execution_duration_seconds
 firefly_dispatch_outbox_oldest_age_seconds
 firefly_shard_lease_renewal_failures_total
 firefly_scheduler_due_backlog_events_total
+firefly_dispatch_outbox_delivery_exhausted_total
+firefly_executor_connections
+firefly_executor_registration_rejections_total
+firefly_executor_disconnects_total
 firefly_scheduler_owned_shards
 firefly_database_clock_offset_milliseconds
 firefly_database_clock_drift_warnings_total
@@ -140,6 +147,8 @@ firefly_database_clock_sync_failures_total
 ```
 
 这些指标由插件根据 `FireflyPluginContext` 快照生成。调度核心不知道 Prometheus 的存在。
+
+仓库内的 `config/prometheus/firefly-alerts.yml` 提供 p99 调度延迟、任务逾期、热点分片、Outbox 停滞、lease 失败、数据库时钟漂移和 Executor 注册异常告警。
 
 ## 环境变量
 

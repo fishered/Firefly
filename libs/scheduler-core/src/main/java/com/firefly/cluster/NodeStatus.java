@@ -5,5 +5,6 @@ package com.firefly.cluster;
  */
 public enum NodeStatus {
     ONLINE,
+    DRAINING,
     OFFLINE
 }

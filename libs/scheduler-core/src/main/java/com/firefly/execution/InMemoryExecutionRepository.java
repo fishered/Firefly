@@ -117,11 +117,52 @@ public final class InMemoryExecutionRepository implements ExecutionRepository {
     }
 
     @Override
+    public List<ExecutionRecord> listByRootExecutionId(String rootExecutionId) {
+        synchronized (lock) {
+            return executions.values().stream()
+                    .filter(execution -> execution.rootExecutionId().equals(rootExecutionId))
+                    .sorted(Comparator.comparingInt(ExecutionRecord::runAttempt))
+                    .toList();
+        }
+    }
+
+    @Override
     public Map<ExecutionStatus, Long> statusCounts() {
         synchronized (lock) {
             return executions.values().stream().collect(java.util.stream.Collectors.groupingBy(
                     ExecutionRecord::status, java.util.stream.Collectors.counting()
             ));
+        }
+    }
+
+    @Override
+    public boolean cancelExecution(String executionId, Instant cancelledAt, String reason) {
+        synchronized (lock) {
+            ExecutionRecord execution = executions.get(executionId);
+            if (execution == null || execution.status().terminal()) return false;
+            executions.put(executionId, new ExecutionRecord(
+                    execution.executionId(), execution.rootExecutionId(), execution.runAttempt(), execution.jobId(),
+                    execution.scheduledFireTime(), execution.dispatchTime(), execution.dispatchMode(),
+                    execution.completionPolicy(), ExecutionStatus.CANCELLED, execution.expectedTargets(),
+                    execution.acceptedTargets(), execution.ownerNodeId(), execution.fencingToken(), execution.timeoutAt(),
+                    execution.createdAt(), cancelledAt
+            ));
+            targets.replaceAll((targetId, target) -> target.executionId().equals(executionId)
+                            && !target.status().terminal()
+                    ? copy(target, ExecutionStatus.CANCELLED, target.acknowledgedAt(), cancelledAt,
+                    reason == null || reason.isBlank() ? "cancelled" : reason, cancelledAt)
+                    : target);
+            return true;
+        }
+    }
+
+    @Override
+    public long countActiveTargetsByGateway(String gatewayNodeId) {
+        synchronized (lock) {
+            return targets.values().stream()
+                    .filter(target -> target.gatewayNodeId().equals(gatewayNodeId))
+                    .filter(target -> !target.status().terminal())
+                    .count();
         }
     }
 

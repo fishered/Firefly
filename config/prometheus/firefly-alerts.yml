@@ -1,0 +1,63 @@
+groups:
+  - name: firefly-scheduler
+    rules:
+      - alert: FireflySchedulerP99DelayHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(firefly_schedule_delay_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly scheduler p99 delay exceeds 1 second
+      - alert: FireflyJobsOverdue
+        expr: firefly_jobs_overdue_max_seconds > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly has jobs overdue by more than 10 seconds
+      - alert: FireflyShardBacklog
+        expr: firefly_scheduler_shard_due_jobs > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly scheduler shard has a sustained due backlog
+      - alert: FireflyOutboxStalled
+        expr: firefly_dispatch_outbox_oldest_age_seconds > 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly dispatch outbox is stalled
+      - alert: FireflyOutboxDeliveryExhausted
+        expr: increase(firefly_dispatch_outbox_delivery_exhausted_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly dispatch exhausted its delivery attempts
+      - alert: FireflyShardLeaseRenewalFailure
+        expr: increase(firefly_shard_lease_renewal_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly failed to renew a scheduler shard lease
+      - alert: FireflyDatabaseClockDrift
+        expr: abs(firefly_database_clock_offset_milliseconds) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly database clock offset exceeds one second
+      - alert: FireflyExecutorRegistrationRejected
+        expr: increase(firefly_executor_registration_rejections_total[10m]) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly is rejecting executor registrations
+      - alert: FireflyGatewayForwardingFailures
+        expr: increase(firefly_gateway_forward_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly Gateway internal forwarding is failing

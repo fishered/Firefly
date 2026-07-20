@@ -1,6 +1,9 @@
 package com.firefly.executor.netty;
 
 import com.firefly.handler.JobHandler;
+import com.firefly.idempotency.BusinessIdempotencyStore;
+import com.firefly.idempotency.IdempotencyKeyStrategy;
+import com.firefly.idempotency.IdempotentJobHandler;
 import com.firefly.registry.InMemoryJobHandlerRegistry;
 import com.firefly.registry.JobHandlerRegistry;
 import io.netty.bootstrap.Bootstrap;
@@ -35,6 +38,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Business-side executor client that connects outward to the Firefly scheduler gateway.
  */
 public final class NettyExecutorClient implements AutoCloseable {
+    private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(
+            NettyExecutorClient.class.getName()
+    );
     private final String schedulerHost;
     private final int schedulerPort;
     private final String executorName;
@@ -127,11 +133,27 @@ public final class NettyExecutorClient implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Registers a handler protected by a business-owned atomic idempotency store.
+     */
+    public NettyExecutorClient registerIdempotentHandler(
+            String handlerName,
+            BusinessIdempotencyStore store,
+            IdempotencyKeyStrategy keyStrategy,
+            JobHandler handler
+    ) {
+        return registerHandler(handlerName, new IdempotentJobHandler(handler, store, keyStrategy));
+    }
+
     public void start() throws InterruptedException {
         if (group != null) {
             return;
         }
         closing.set(false);
+        log.info(() -> "starting Firefly executor client: executor=" + executorName
+                + ", instanceId=" + instanceId
+                + ", service=" + serviceName
+                + ", gateways=" + gatewayEndpoints);
         group = new NioEventLoopGroup(1);
         bootstrap = new Bootstrap()
                 .group(group)
@@ -181,13 +203,28 @@ public final class NettyExecutorClient implements AutoCloseable {
 
     @Override
     public void close() {
-        closing.set(true);
-        channels.values().forEach(Channel::close);
+        if (!closing.compareAndSet(false, true)) {
+            return;
+        }
+        log.info(() -> "stopping Firefly executor client: executor=" + executorName
+                + ", instanceId=" + instanceId);
+        java.util.List<ChannelFuture> closeFutures = channels.values().stream()
+                .map(channel -> {
+                    NettyExecutorClientHandler handler = channel.pipeline().get(NettyExecutorClientHandler.class);
+                    return handler == null ? channel.close() : handler.unregisterAndClose(channel);
+                })
+                .toList();
         channels.clear();
+        closeFutures.stream()
+                .filter(future -> !future.channel().eventLoop().inEventLoop())
+                .forEach(future -> future.awaitUninterruptibly(5, TimeUnit.SECONDS));
         if (group != null) {
-            group.shutdownGracefully();
+            group.shutdownGracefully(0, 5, TimeUnit.SECONDS)
+                    .awaitUninterruptibly(5, TimeUnit.SECONDS);
         }
         workerPool.shutdownNow();
+        log.info(() -> "Firefly executor client stopped: executor=" + executorName
+                + ", instanceId=" + instanceId);
     }
 
     private void connect(GatewayEndpoint endpoint, boolean await) throws InterruptedException {
@@ -200,7 +237,14 @@ public final class NettyExecutorClient implements AutoCloseable {
             if (completed.isSuccess()) {
                 channels.put(endpoint, future.channel());
                 reconnectAttempts.computeIfAbsent(endpoint, ignored -> new AtomicInteger()).set(0);
+                log.info(() -> "connected to Firefly gateway: executor=" + executorName
+                        + ", instanceId=" + instanceId
+                        + ", gateway=" + endpoint);
             } else {
+                Throwable cause = future.cause();
+                log.warning(() -> "failed to connect to Firefly gateway: executor=" + executorName
+                        + ", gateway=" + endpoint
+                        + ", reason=" + (cause == null ? "unknown" : cause.getMessage()));
                 scheduleReconnect(endpoint);
             }
         });
@@ -215,6 +259,9 @@ public final class NettyExecutorClient implements AutoCloseable {
                 .findFirst()
                 .ifPresent(entry -> {
                     if (channels.remove(entry.getKey(), disconnectedChannel)) {
+                        log.warning(() -> "disconnected from Firefly gateway: executor=" + executorName
+                                + ", instanceId=" + instanceId
+                                + ", gateway=" + entry.getKey());
                         scheduleReconnect(entry.getKey());
                     }
                 });
@@ -230,13 +277,18 @@ public final class NettyExecutorClient implements AutoCloseable {
         long exponential = initialMillis * (1L << Math.min(attempt, 20));
         long capped = Math.min(maximumMillis, exponential);
         long jitter = capped == 0 ? 0 : java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(1, capped / 5));
+        long delayMillis = capped + jitter;
+        log.info(() -> "scheduled Firefly gateway reconnect: executor=" + executorName
+                + ", gateway=" + endpoint
+                + ", attempt=" + (attempt + 1)
+                + ", delayMs=" + delayMillis);
         group.next().schedule(() -> {
             try {
                 connect(endpoint, false);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-        }, capped + jitter, TimeUnit.MILLISECONDS);
+        }, delayMillis, TimeUnit.MILLISECONDS);
     }
 
     private static List<GatewayEndpoint> endpoints(List<String> addresses, String fallbackHost, int fallbackPort) {

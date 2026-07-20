@@ -103,7 +103,21 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             if (!validRegistrationResponse(message.payload())) {
                 log.warning("executor registration response has an incompatible protocol contract");
                 context.close();
+            } else {
+                log.info(() -> "registered with Firefly gateway: executor=" + executorName
+                        + ", instanceId=" + instanceId
+                        + ", sessionId=" + sessionId
+                        + ", gateway=" + context.channel().remoteAddress()
+                        + ", protocolVersion=" + message.payload().get("protocolVersion"));
             }
+            return;
+        }
+        if (message.type() == NettyExecutorMessageType.CANCEL_JOB) {
+            String executionId = message.payload().get("executionId");
+            ExecutorExecutionResult result = executionRegistry.cancel(
+                    executionId, message.payload().getOrDefault("reason", "cancelled by scheduler")
+            );
+            write(context, resultMessage(message, result.status(), result.errorMessage()));
             return;
         }
         if (message.type() != NettyExecutorMessageType.TRIGGER_JOB) {
@@ -119,7 +133,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             return;
         }
         try {
-            workerPool.submit(() -> {
+            java.util.concurrent.Future<?> task = workerPool.submit(() -> {
                 ExecutorExecutionResult result = execute(message);
                 executionRegistry.complete(executionId, claim.execution(), result);
                 write(context, resultMessage(message, result.status(), result.errorMessage()));
@@ -127,6 +141,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
                         () -> executionRegistry.remove(executionId, claim.execution()), 1, TimeUnit.HOURS
                 );
             });
+            executionRegistry.attachTask(executionId, task);
         } catch (RuntimeException e) {
             ExecutorExecutionResult result = new ExecutorExecutionResult(
                     "FAILED", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()
@@ -142,6 +157,25 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             heartbeatTask.cancel(false);
         }
         disconnectListener.accept(context.channel());
+    }
+
+    io.netty.channel.ChannelFuture unregisterAndClose(io.netty.channel.Channel channel) {
+        if (!channel.isActive()) {
+            channel.close();
+            return channel.closeFuture();
+        }
+        NettyExecutorMessage unregister = new NettyExecutorMessage(
+                UUID.randomUUID().toString(),
+                NettyExecutorMessageType.UNREGISTER_EXECUTOR,
+                Map.of(
+                        "executorName", executorName,
+                        "instanceId", instanceId,
+                        "sessionId", sessionId
+                )
+        );
+        channel.writeAndFlush(codec.encode(unregister) + "\n")
+                .addListener(io.netty.channel.ChannelFutureListener.CLOSE);
+        return channel.closeFuture();
     }
 
     private ExecutorExecutionResult execute(NettyExecutorMessage message) {
@@ -165,6 +199,9 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             handler.handle(executionContext);
             return new ExecutorExecutionResult("SUCCEEDED", "");
         } catch (Exception e) {
+            if (executionRegistry.isCancelled(message.payload().get("executionId"))) {
+                return new ExecutorExecutionResult("CANCELLED", "cancelled by scheduler");
+            }
             return new ExecutorExecutionResult(
                     "FAILED", e.getMessage() == null ? "" : e.getMessage()
             );

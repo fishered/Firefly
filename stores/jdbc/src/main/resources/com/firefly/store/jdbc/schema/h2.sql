@@ -73,6 +73,7 @@ create table if not exists firefly_job (
     completion_policy varchar(32) not null default 'ALL_SUCCESS',
     shard_count integer not null default 1,
     routing_key varchar(512) not null default '',
+    retry_scope varchar(32) not null default 'FAILED_TARGETS_ONLY',
     enabled boolean not null,
     next_fire_time timestamp not null,
     version bigint not null
@@ -155,6 +156,52 @@ create index if not exists idx_firefly_outbox_claim
 create index if not exists idx_firefly_outbox_role_claim
     on firefly_dispatch_outbox (dispatch_type, status, available_at, ack_deadline, claim_until, outbox_id);
 
+create table if not exists firefly_executor_instance_location (
+    executor_name varchar(128) not null,
+    instance_id varchar(256) not null,
+    gateway_node_id varchar(128) not null,
+    gateway_address varchar(512) not null,
+    session_id varchar(256) not null,
+    status varchar(32) not null,
+    last_seen_at timestamp not null,
+    lease_until timestamp not null,
+    metadata clob not null,
+    primary key (executor_name, instance_id)
+);
+
+create index if not exists idx_firefly_executor_location_lease
+    on firefly_executor_instance_location (executor_name, status, lease_until, gateway_node_id);
+
+create table if not exists firefly_audit_log (
+    audit_id varchar(64) primary key,
+    occurred_at timestamp not null,
+    actor varchar(256) not null,
+    role_name varchar(64) not null,
+    action_name varchar(128) not null,
+    resource_type varchar(128) not null,
+    resource_id varchar(256) not null,
+    outcome varchar(64) not null,
+    before_payload clob not null,
+    after_payload clob not null,
+    detail varchar(4096) not null
+);
+
+create index if not exists idx_firefly_audit_time on firefly_audit_log (occurred_at, audit_id);
+
+create table if not exists firefly_job_history (
+    history_id varchar(64) primary key,
+    job_id varchar(128) not null,
+    job_version bigint not null,
+    action_name varchar(64) not null,
+    actor varchar(256) not null,
+    before_payload clob not null,
+    after_payload clob not null,
+    occurred_at timestamp not null
+);
+
+create index if not exists idx_firefly_job_history_job
+    on firefly_job_history (job_id, occurred_at, history_id);
+
 insert into firefly_schema_version (version, installed_at)
 select 2, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 2);
@@ -182,3 +229,7 @@ where not exists (select 1 from firefly_schema_version where version = 7);
 insert into firefly_schema_version (version, installed_at)
 select 8, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 8);
+
+insert into firefly_schema_version (version, installed_at)
+select 9, current_timestamp
+where not exists (select 1 from firefly_schema_version where version = 9);

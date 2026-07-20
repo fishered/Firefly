@@ -33,10 +33,6 @@ public final class SchedulerEngine {
      * <p>This protects the timer thread from unbounded backlog while allowing
      * many different fire-time groups to progress in the same tick.
      */
-    private static final int MAX_DUE_RECORDS_PER_TICK = 10_000;
-
-    private static final long MAX_IDLE_WAKEUP_MILLIS = 500;
-
     private final JobRepository repository;
     private final JobDispatcher dispatcher;
     private final Clock clock;
@@ -46,6 +42,7 @@ public final class SchedulerEngine {
     private final int shardCount;
     private final boolean transactionalOutbox;
     private final SchedulerMetrics metrics;
+    private final SchedulerEngineOptions options;
     private final SchedulerTimingIndex timingIndex = new SchedulerTimingIndex();
     private long loadedConfigurationVersion = Long.MIN_VALUE;
     private Set<Integer> loadedShards = Set.of();
@@ -73,7 +70,7 @@ public final class SchedulerEngine {
             boolean transactionalOutbox
     ) {
         this(repository, dispatcher, clock, shardOwnership, shardCount, transactionalOutbox,
-                new SchedulerMetrics());
+                new SchedulerMetrics(), SchedulerEngineOptions.defaults());
     }
 
     public SchedulerEngine(
@@ -85,6 +82,20 @@ public final class SchedulerEngine {
             boolean transactionalOutbox,
             SchedulerMetrics metrics
     ) {
+        this(repository, dispatcher, clock, shardOwnership, shardCount, transactionalOutbox,
+                metrics, SchedulerEngineOptions.defaults());
+    }
+
+    public SchedulerEngine(
+            JobRepository repository,
+            JobDispatcher dispatcher,
+            Clock clock,
+            ShardOwnership shardOwnership,
+            int shardCount,
+            boolean transactionalOutbox,
+            SchedulerMetrics metrics,
+            SchedulerEngineOptions options
+    ) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -92,6 +103,7 @@ public final class SchedulerEngine {
         this.shardCount = shardCount;
         this.transactionalOutbox = transactionalOutbox;
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.options = Objects.requireNonNull(options, "options");
         this.timer = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "firefly-timer");
             thread.setDaemon(false);
@@ -135,9 +147,9 @@ public final class SchedulerEngine {
 
     private synchronized long nextDelayMillis() {
         Instant nextFireTime = timingIndex.nextFireTime();
-        if (nextFireTime == null) return MAX_IDLE_WAKEUP_MILLIS;
+        if (nextFireTime == null) return options.maxIdleWakeup().toMillis();
         long delay = Duration.between(clock.instant(), nextFireTime).toMillis();
-        return Math.max(1, Math.min(MAX_IDLE_WAKEUP_MILLIS, delay));
+        return Math.max(1, Math.min(options.maxIdleWakeup().toMillis(), delay));
     }
 
     public synchronized void tick() {
@@ -149,7 +161,7 @@ public final class SchedulerEngine {
             return;
         }
         refreshTimingIndex(leases.keySet());
-        List<ScheduledJobRecord> dueRecords = timingIndex.pollDue(now, MAX_DUE_RECORDS_PER_TICK);
+        List<ScheduledJobRecord> dueRecords = timingIndex.pollDue(now, options.maxDueRecordsPerTick());
         for (ScheduledJobRecord record : dueRecords) {
             int shardId = ShardHasher.shardFor(record.definition().id(), shardCount);
             ShardLease lease = leases.get(shardId);
@@ -183,9 +195,9 @@ public final class SchedulerEngine {
             if (!transactionalOutbox) commands.forEach(dispatcher::dispatch);
         }
         Instant remainingDue = timingIndex.nextFireTime();
-        if (dueRecords.size() == MAX_DUE_RECORDS_PER_TICK
+        if (dueRecords.size() == options.maxDueRecordsPerTick()
                 && remainingDue != null && !remainingDue.isAfter(now)) {
-            log.warning("scheduler due backlog reached per-tick limit=" + MAX_DUE_RECORDS_PER_TICK);
+            log.warning("scheduler due backlog reached per-tick limit=" + options.maxDueRecordsPerTick());
             metrics.recordDueBacklog();
         }
     }

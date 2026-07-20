@@ -549,6 +549,39 @@ td.code {
 .status-tag.run { background: #d1fae5; color: #10b981; }
 .status-tag.mis { background: #f3e8ff; color: #a855f7; }
 .status-tag.timeout { background: #fef3c7; color: #d97706; }
+.status-tag.cancelled { background: #e2e8f0; color: #475569; }
+
+.link-button {
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--primary);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.link-button.danger { color: #dc2626; }
+
+.danger-button {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+}
+
+.count-badge {
+  min-width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: 10px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #dc2626;
+  font-size: 12px;
+}
+
+.compact-table { min-width: 900px; }
+.empty-cell { height: 96px; text-align: center; color: var(--muted); }
 
 .action-icons {
   display: inline-flex;
@@ -556,6 +589,50 @@ td.code {
   gap: 12px;
   color: #64748b;
   font-weight: 700;
+}
+
+.table-toolbar {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.table-toolbar strong { color: var(--ink); font-size: 15px; }
+.table-count { margin-left: 10px; color: var(--muted); font-size: 13px; }
+
+.job-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-button {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.icon-button:hover { border-color: var(--line-strong); background: #f8fafc; color: var(--ink); }
+.icon-button.primary { color: var(--primary); }
+.icon-button.danger { color: #dc2626; }
+.icon-button[disabled] { opacity: .5; cursor: wait; }
+
+@media (max-width: 760px) {
+  .table-toolbar { align-items: flex-start; flex-direction: column; justify-content: center; padding: 12px 16px; }
+  .job-actions { gap: 3px; }
 }
 
 .summary-strip {
@@ -616,6 +693,60 @@ td.code {
   overflow: hidden;
 }
 
+.execution-modal { width: min(1120px, 100%); }
+.executor-instances-modal { width: min(1040px, 100%); }
+.executor-instance-modal { width: min(900px, 100%); }
+.compact-modal { width: min(520px, 100%); }
+.modal-subtitle { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.execution-body { display: grid; gap: 20px; }
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--line);
+}
+
+.detail-item { min-width: 0; padding: 14px; background: #fff; }
+.detail-item span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+.detail-item strong { color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+.executor-detail-grid .detail-item:last-child { grid-column: 1 / -1; }
+
+.attempt-track {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.attempt-node {
+  min-width: 150px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+}
+
+.attempt-node.active { border-bottom-color: var(--primary); color: var(--ink); font-weight: 700; }
+.detail-section-title { color: var(--ink); font-weight: 750; }
+.target-table { border: 1px solid var(--line); border-radius: 6px; }
+.target-table table { min-width: 980px; }
+
+.operation-warning {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border-left: 3px solid #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 .modal-header,
 .modal-footer {
   min-height: 62px;
@@ -650,6 +781,9 @@ td.code {
   width: 100%;
 }
 
+.modal-body.execution-body,
+.compact-modal .modal-body { grid-template-columns: 1fr; }
+
 @media (max-width: 1180px) {
   .system-grid,
   .stats-grid,
@@ -659,6 +793,7 @@ td.code {
 
 @media (max-width: 760px) {
   :root { --sidebar: 0px; }
+  .detail-grid { grid-template-columns: 1fr; }
   .sidebar {
     position: static;
     width: 100%;

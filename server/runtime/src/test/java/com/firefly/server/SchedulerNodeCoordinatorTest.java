@@ -74,6 +74,28 @@ class SchedulerNodeCoordinatorTest {
         second.close();
     }
 
+    @Test
+    void drainingNodeReleasesOwnedShardsAndDoesNotReacquireThem() {
+        Instant now = Instant.parse("2026-07-14T10:00:00Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        InMemoryNodeRegistry nodes = new InMemoryNodeRegistry();
+        InMemoryShardManager shards = new InMemoryShardManager();
+        nodes.register(FireflyNode.builder().nodeId("node-a").roles(Set.of(NodeRole.SCHEDULER))
+                .registeredAt(now).lastHeartbeatAt(now).build());
+        SchedulerNodeCoordinator coordinator = new SchedulerNodeCoordinator(
+                "node-a", true, nodes, shards, clock, 8
+        );
+        coordinator.reconcile();
+        assertEquals(8, coordinator.ownedShards().size());
+
+        nodes.markDraining("node-a");
+        coordinator.reconcile();
+
+        assertTrue(coordinator.ownedShards().isEmpty());
+        assertEquals(com.firefly.cluster.NodeStatus.DRAINING, nodes.find("node-a").orElseThrow().status());
+        coordinator.close();
+    }
+
     private static final class MutableClock extends Clock {
         private volatile Instant instant;
 

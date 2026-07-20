@@ -27,6 +27,8 @@ public final class DispatchOutboxWorker implements AutoCloseable {
     private final Set<DispatchType> dispatchTypes;
     private final SchedulerMetrics metrics;
     private final DispatchOutboxOptions options;
+    private final java.util.function.Predicate<com.firefly.engine.ExecutionCommand> dispatchEligibility;
+    private volatile java.util.function.BooleanSupplier claimAdmission = () -> true;
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "firefly-dispatch-outbox");
         thread.setDaemon(false);
@@ -63,6 +65,19 @@ public final class DispatchOutboxWorker implements AutoCloseable {
             SchedulerMetrics metrics,
             DispatchOutboxOptions options
     ) {
+        this(nodeId, repository, dispatcher, clock, dispatchTypes, metrics, options, ignored -> true);
+    }
+
+    public DispatchOutboxWorker(
+            String nodeId,
+            JobRepository repository,
+            JobDispatcher dispatcher,
+            Clock clock,
+            Set<DispatchType> dispatchTypes,
+            SchedulerMetrics metrics,
+            DispatchOutboxOptions options,
+            java.util.function.Predicate<com.firefly.engine.ExecutionCommand> dispatchEligibility
+    ) {
         this.nodeId = nodeId;
         this.repository = repository;
         this.dispatcher = dispatcher;
@@ -70,6 +85,7 @@ public final class DispatchOutboxWorker implements AutoCloseable {
         this.dispatchTypes = Set.copyOf(dispatchTypes);
         this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
         this.options = java.util.Objects.requireNonNull(options, "options");
+        this.dispatchEligibility = java.util.Objects.requireNonNull(dispatchEligibility, "dispatchEligibility");
         if (this.dispatchTypes.isEmpty()) {
             throw new IllegalArgumentException("dispatchTypes must not be empty");
         }
@@ -81,12 +97,32 @@ public final class DispatchOutboxWorker implements AutoCloseable {
         );
     }
 
+    public void setClaimAdmission(java.util.function.BooleanSupplier claimAdmission) {
+        this.claimAdmission = java.util.Objects.requireNonNull(claimAdmission, "claimAdmission");
+    }
+
     void drain() {
+        if (!claimAdmission.getAsBoolean()) return;
         Instant now = clock.instant();
         for (DispatchOutboxRecord record : repository.claimDispatches(
                 nodeId, now, options.claimBatchSize(), options.claimDuration(), dispatchTypes
         )) {
             metrics.observeOutboxAge(Duration.between(record.command().dispatchTime(), now));
+            if (record.attempt() > options.maxAttempts()) {
+                boolean dead = repository.retryClaimedDispatchAfter(
+                        record.outboxId(), nodeId, record.attempt(), Duration.ZERO,
+                        "maximum delivery attempts exceeded", options.maxAttempts()
+                );
+                if (dead) metrics.recordOutboxDeliveryExhaustion();
+                continue;
+            }
+            if (!dispatchEligibility.test(record.command())) {
+                repository.deferClaimedDispatch(
+                        record.outboxId(), nodeId, record.attempt(), options.pollInterval(),
+                        "no local executor route on gateway " + nodeId
+                );
+                continue;
+            }
             try {
                 DispatchSubmission submission = dispatcher.submit(record.command());
                 if (!submission.accepted()) {

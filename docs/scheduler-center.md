@@ -114,20 +114,20 @@ same nextFireTime -> same DueJobBatch -> same scheduledFireTime
 
 实现上，内存 repository 的锁只保护本地 map 和 `nextFireTime` 索引。锁内只做快照读取或索引更新，不执行任务、不做网络调用、不等待下游服务。调度线程拿到 due batch 后释放锁，再推进状态和分发命令。
 
-如果 1000 个任务的 fire time 都不同，调度线程不会只处理固定 10 组就停。当前策略是按 tick 记录数预算推进：
+如果 1000 个任务的 fire time 都不同，调度线程不会只处理固定数量的时间组就停。当前 `SchedulerTimingIndex` 按 `nextFireTime + jobId` 排序，每个 tick 最多推进 10000 条到期记录：
 
 ```text
 MAX_DUE_RECORDS_PER_TICK = 10000
-MAX_DUE_FIRE_TIME_GROUPS_PER_TICK = 10000
+MAX_IDLE_WAKEUP_MILLIS = 500
 ```
 
-同一 fire time 的任务不会被 soft limit 拆开；不同 fire time 的任务会在同一 tick 内继续 drain，直到没有 due job 或达到预算上限。
+不同 fire time 的任务会在同一 tick 内继续 drain，直到没有 due job 或达到记录预算上限。如果达到上限后仍有到期记录，下一次 tick 会以约 1ms 的最小延迟继续处理，并累加 due backlog 指标。
 
 ## 4. 服务在线检查
 
 ### 执行重试
 
-业务重试使用稳定的 `rootExecutionId` 和递增 `runAttempt`。`maxAttempts` 包含初始执行；失败和 timeout 可分别启停，并支持有上限的指数退避。当前广播和分片会重试整个逻辑运行，不只重试失败目标，因此业务 Handler 应以 `rootExecutionId` 实现幂等。
+业务重试使用稳定的 `rootExecutionId` 和递增 `runAttempt`。`maxAttempts` 包含初始执行；失败和 timeout 可分别启停，并支持有上限的指数退避。`ALL_SUCCESS`、`ANY_SUCCESS` 广播和分片只重试失败、超时或缺失目标；`QUORUM` 会把上一 attempt 的成功目标结转到下一 attempt，只重派未成功目标。业务 Handler 仍应以 `rootExecutionId` 或业务键实现幂等，覆盖业务副作用完成但结果尚未持久化时的崩溃窗口。
 
 执行器实例在线状态通过 `ExecutorRegistry` 表达：
 

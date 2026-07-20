@@ -7,6 +7,8 @@ import com.firefly.execution.ExecutionRepository;
 import com.firefly.registry.JobHandlerRegistry;
 import com.firefly.store.JobRepository;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.audit.AuditRepository;
+import com.firefly.store.JobHistoryRepository;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -24,7 +26,13 @@ public final class FireflyPluginContext {
     private final SchedulerCatalog schedulerCatalog;
     private final ExecutionRepository executionRepository;
     private final RemoteExecutorDispatcher remoteExecutorDispatcher;
+    private final ExecutionCancellationDispatcher executionCancellationDispatcher;
     private final SchedulerMetrics schedulerMetrics;
+    private final int schedulerShardCount;
+    private final AuditRepository auditRepository;
+    private final JobHistoryRepository jobHistoryRepository;
+    private final ExecutorIsolationDispatcher executorIsolationDispatcher;
+    private final NodeDrainStatusProvider nodeDrainStatusProvider;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -35,7 +43,13 @@ public final class FireflyPluginContext {
         this.schedulerCatalog = builder.schedulerCatalog;
         this.executionRepository = builder.executionRepository;
         this.remoteExecutorDispatcher = builder.remoteExecutorDispatcher;
+        this.executionCancellationDispatcher = builder.executionCancellationDispatcher;
         this.schedulerMetrics = builder.schedulerMetrics;
+        this.schedulerShardCount = builder.schedulerShardCount;
+        this.auditRepository = builder.auditRepository;
+        this.jobHistoryRepository = builder.jobHistoryRepository;
+        this.executorIsolationDispatcher = builder.executorIsolationDispatcher;
+        this.nodeDrainStatusProvider = builder.nodeDrainStatusProvider;
     }
 
     public static Builder builder() {
@@ -74,8 +88,32 @@ public final class FireflyPluginContext {
         return Optional.ofNullable(remoteExecutorDispatcher);
     }
 
+    public Optional<ExecutionCancellationDispatcher> executionCancellationDispatcher() {
+        return Optional.ofNullable(executionCancellationDispatcher);
+    }
+
     public Optional<SchedulerMetrics> schedulerMetrics() {
         return Optional.ofNullable(schedulerMetrics);
+    }
+
+    public int schedulerShardCount() {
+        return schedulerShardCount;
+    }
+
+    public Optional<AuditRepository> auditRepository() {
+        return Optional.ofNullable(auditRepository);
+    }
+
+    public Optional<JobHistoryRepository> jobHistoryRepository() {
+        return Optional.ofNullable(jobHistoryRepository);
+    }
+
+    public Optional<ExecutorIsolationDispatcher> executorIsolationDispatcher() {
+        return Optional.ofNullable(executorIsolationDispatcher);
+    }
+
+    public Optional<NodeDrainStatusProvider> nodeDrainStatusProvider() {
+        return Optional.ofNullable(nodeDrainStatusProvider);
     }
 
     public static final class Builder {
@@ -87,7 +125,13 @@ public final class FireflyPluginContext {
         private SchedulerCatalog schedulerCatalog;
         private ExecutionRepository executionRepository;
         private RemoteExecutorDispatcher remoteExecutorDispatcher;
+        private ExecutionCancellationDispatcher executionCancellationDispatcher;
         private SchedulerMetrics schedulerMetrics;
+        private int schedulerShardCount = 1;
+        private AuditRepository auditRepository;
+        private JobHistoryRepository jobHistoryRepository;
+        private ExecutorIsolationDispatcher executorIsolationDispatcher;
+        private NodeDrainStatusProvider nodeDrainStatusProvider;
 
         private Builder() {
         }
@@ -132,8 +176,43 @@ public final class FireflyPluginContext {
             return this;
         }
 
+        public Builder executionCancellationDispatcher(
+                ExecutionCancellationDispatcher executionCancellationDispatcher
+        ) {
+            this.executionCancellationDispatcher = Objects.requireNonNull(
+                    executionCancellationDispatcher, "executionCancellationDispatcher"
+            );
+            return this;
+        }
+
         public Builder schedulerMetrics(SchedulerMetrics schedulerMetrics) {
             this.schedulerMetrics = Objects.requireNonNull(schedulerMetrics, "schedulerMetrics");
+            return this;
+        }
+
+        public Builder schedulerShardCount(int schedulerShardCount) {
+            if (schedulerShardCount < 1) throw new IllegalArgumentException("schedulerShardCount must be positive");
+            this.schedulerShardCount = schedulerShardCount;
+            return this;
+        }
+
+        public Builder auditRepository(AuditRepository auditRepository) {
+            this.auditRepository = Objects.requireNonNull(auditRepository, "auditRepository");
+            return this;
+        }
+
+        public Builder jobHistoryRepository(JobHistoryRepository jobHistoryRepository) {
+            this.jobHistoryRepository = Objects.requireNonNull(jobHistoryRepository, "jobHistoryRepository");
+            return this;
+        }
+
+        public Builder executorIsolationDispatcher(ExecutorIsolationDispatcher dispatcher) {
+            this.executorIsolationDispatcher = Objects.requireNonNull(dispatcher, "executorIsolationDispatcher");
+            return this;
+        }
+
+        public Builder nodeDrainStatusProvider(NodeDrainStatusProvider provider) {
+            this.nodeDrainStatusProvider = Objects.requireNonNull(provider, "nodeDrainStatusProvider");
             return this;
         }
 

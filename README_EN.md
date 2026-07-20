@@ -45,7 +45,7 @@ firefly
 ├── server                 # app entry point and Guice wiring
 ├── integrations
 │   ├── embedded           # traditional Java / non-Spring integration
-│   ├── netty-spring-boot-starter
+│   ├── firefly-spring-boot-starter
 │   ├── spring-boot-starter
 │   └── server-cli
 ├── executors

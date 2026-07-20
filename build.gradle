@@ -36,3 +36,56 @@ subprojects {
     }
 }
 
+def publishedProjects = [
+        ":libs:scheduler-core",
+        ":transports:netty",
+        ":clients:executor-netty",
+        ":integrations:firefly-spring-boot-autoconfigure",
+        ":integrations:firefly-spring-boot-starter"
+]
+
+def configuredMavenLocalRepo = providers.gradleProperty("firefly.maven.local.repo")
+        .orElse(providers.environmentVariable("FIREFLY_MAVEN_LOCAL_REPO"))
+        .orElse(providers.systemProperty("maven.repo.local"))
+        .orNull
+def fireflyLocalRepo = configuredMavenLocalRepo
+        ?: new File(System.getProperty("user.home"), ".m2/repository").absolutePath
+
+configure(publishedProjects.collect { project(it) }) {
+    apply plugin: "maven-publish"
+
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                from components.java
+            }
+        }
+        repositories {
+            maven {
+                name = "fireflyLocal"
+                url = uri(fireflyLocalRepo)
+            }
+        }
+    }
+}
+
+tasks.register("publishToMavenLocal") {
+    group = "publishing"
+    description = "Publishes the Firefly public starter and its local dependency chain."
+    if (configuredMavenLocalRepo == null) {
+        dependsOn(publishedProjects.collect { "${it}:publishToMavenLocal" })
+    } else {
+        dependsOn(publishedProjects.collect {
+            "${it}:publishMavenJavaPublicationToFireflyLocalRepository"
+        })
+    }
+}
+
+tasks.register("publishToFireflyMavenLocal") {
+    group = "publishing"
+    description = "Publishes Firefly artifacts to -Pfirefly.maven.local.repo or FIREFLY_MAVEN_LOCAL_REPO."
+    dependsOn(publishedProjects.collect {
+        "${it}:publishMavenJavaPublicationToFireflyLocalRepository"
+    })
+}
+

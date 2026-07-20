@@ -43,6 +43,13 @@ public interface ExecutionRepository {
 
     List<ExecutionRecord> listRecent(int limit);
 
+    default List<ExecutionRecord> listByRootExecutionId(String rootExecutionId) {
+        return listRecent(Integer.MAX_VALUE).stream()
+                .filter(execution -> execution.rootExecutionId().equals(rootExecutionId))
+                .sorted(java.util.Comparator.comparingInt(ExecutionRecord::runAttempt))
+                .toList();
+    }
+
     default int expireTimedOut(Instant now, int limit) {
         return expireTimedOutExecutions(now, limit).size();
     }
@@ -57,5 +64,13 @@ public interface ExecutionRepository {
 
     default java.util.Map<ExecutionStatus, Long> statusCounts() {
         return java.util.Map.of();
+    }
+
+    default boolean cancelExecution(String executionId, Instant cancelledAt, String reason) {
+        return false;
+    }
+
+    default long countActiveTargetsByGateway(String gatewayNodeId) {
+        return 0L;
     }
 }

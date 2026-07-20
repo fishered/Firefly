@@ -31,6 +31,7 @@ public record JobDefinition(
         ExecutorCompletionPolicy completionPolicy,
         int shardCount,
         String routingKey,
+        ExecutorRetryScope retryScope,
         boolean enabled
 ) {
     /**
@@ -54,6 +55,7 @@ public record JobDefinition(
         Objects.requireNonNull(routingStrategy, "routingStrategy");
         Objects.requireNonNull(completionPolicy, "completionPolicy");
         Objects.requireNonNull(routingKey, "routingKey");
+        retryScope = retryScope == null ? ExecutorRetryScope.FAILED_TARGETS_ONLY : retryScope;
         if (id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
         }
@@ -97,6 +99,7 @@ public record JobDefinition(
                 .completionPolicy(ExecutorCompletionPolicy.ALL_SUCCESS)
                 .shardCount(1)
                 .routingKey("")
+                .retryScope(ExecutorRetryScope.FAILED_TARGETS_ONLY)
                 .enabled(true);
     }
 
@@ -105,7 +108,7 @@ public record JobDefinition(
                 id, groupId, name, handlerName, schedule, zoneId, misfirePolicy, misfireGrace,
                 concurrencyPolicy, maxCatchUpCount, timeout, parameters, destination, retryPolicy,
                 dispatchMode, routingStrategy,
-                completionPolicy, shardCount, routingKey, value
+                completionPolicy, shardCount, routingKey, retryScope, value
         );
     }
 

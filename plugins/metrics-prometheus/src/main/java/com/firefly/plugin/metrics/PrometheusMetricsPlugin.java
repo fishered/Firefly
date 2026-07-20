@@ -106,6 +106,9 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .flatMap(repository -> repository.oldestActiveDispatchTime())
                 .map(oldest -> Math.max(0, Duration.between(oldest, context.clock().instant()).toMillis()) / 1000.0)
                 .orElse(0.0);
+        java.util.Map<Integer, Long> dueByShard = context.jobRepository()
+                .map(repository -> repository.dueCountsByShard(now, context.schedulerShardCount()))
+                .orElse(java.util.Map.of());
 
         /**
          * Metrics are derived from plugin context snapshots. The scheduler core does
@@ -149,6 +152,12 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                         outboxPending, outboxDead, executionsRunning, executionsFailed,
                         Double.toString(oldestOutboxAgeSeconds)));
         context.schedulerMetrics().ifPresent(metrics -> appendRuntimeMetrics(body, metrics.snapshot()));
+        body.append("# HELP firefly_scheduler_shard_due_jobs Due jobs grouped by scheduler shard.\n")
+                .append("# TYPE firefly_scheduler_shard_due_jobs gauge\n");
+        java.util.stream.IntStream.range(0, context.schedulerShardCount()).forEach(shard ->
+                body.append("firefly_scheduler_shard_due_jobs{shard=\"")
+                        .append(shard).append("\"} ").append(dueByShard.getOrDefault(shard, 0L)).append('\n')
+        );
         return body.toString();
     }
 
@@ -161,12 +170,34 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 "Delay from dispatch creation to executor acknowledgement.", snapshot.acknowledgementDelay());
         appendHistogram(body, "firefly_execution_duration_seconds",
                 "Observed local and remote execution duration.", snapshot.executionDuration());
+        appendHistogram(body, "firefly_gateway_forward_duration_seconds",
+                "Latency of Gateway-to-Gateway forwarding attempts.", snapshot.gatewayForwardDuration());
         body.append("# HELP firefly_shard_lease_renewal_failures_total Failed shard lease renewals.\n")
                 .append("# TYPE firefly_shard_lease_renewal_failures_total counter\n")
                 .append("firefly_shard_lease_renewal_failures_total ").append(snapshot.leaseRenewalFailures()).append('\n')
                 .append("# HELP firefly_scheduler_due_backlog_events_total Scheduler ticks that reached the due limit.\n")
                 .append("# TYPE firefly_scheduler_due_backlog_events_total counter\n")
                 .append("firefly_scheduler_due_backlog_events_total ").append(snapshot.dueBacklogEvents()).append('\n')
+                .append("# HELP firefly_dispatch_outbox_delivery_exhausted_total Dispatches that exhausted delivery attempts.\n")
+                .append("# TYPE firefly_dispatch_outbox_delivery_exhausted_total counter\n")
+                .append("firefly_dispatch_outbox_delivery_exhausted_total ")
+                .append(snapshot.outboxDeliveryExhaustions()).append('\n')
+                .append("# HELP firefly_executor_connections Active executor connections on this Gateway.\n")
+                .append("# TYPE firefly_executor_connections gauge\n")
+                .append("firefly_executor_connections ").append(snapshot.executorConnections()).append('\n')
+                .append("# HELP firefly_executor_registration_rejections_total Rejected executor registrations.\n")
+                .append("# TYPE firefly_executor_registration_rejections_total counter\n")
+                .append("firefly_executor_registration_rejections_total ")
+                .append(snapshot.executorRegistrationRejections()).append('\n')
+                .append("# HELP firefly_executor_disconnects_total Executor connection disconnects.\n")
+                .append("# TYPE firefly_executor_disconnects_total counter\n")
+                .append("firefly_executor_disconnects_total ").append(snapshot.executorDisconnects()).append('\n')
+                .append("# TYPE firefly_gateway_forward_attempts_total counter\n")
+                .append("firefly_gateway_forward_attempts_total ").append(snapshot.gatewayForwardAttempts()).append('\n')
+                .append("# TYPE firefly_gateway_forward_successes_total counter\n")
+                .append("firefly_gateway_forward_successes_total ").append(snapshot.gatewayForwardSuccesses()).append('\n')
+                .append("# TYPE firefly_gateway_forward_failures_total counter\n")
+                .append("firefly_gateway_forward_failures_total ").append(snapshot.gatewayForwardFailures()).append('\n')
                 .append("# HELP firefly_scheduler_owned_shards Shards currently owned by this node.\n")
                 .append("# TYPE firefly_scheduler_owned_shards gauge\n")
                 .append("firefly_scheduler_owned_shards ").append(snapshot.ownedShards()).append('\n')

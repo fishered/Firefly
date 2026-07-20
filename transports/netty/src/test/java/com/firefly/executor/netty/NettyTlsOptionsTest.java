@@ -18,4 +18,21 @@ class NettyTlsOptionsTest {
         assertNull(NettyTlsOptions.disabled().serverContext());
         assertNull(NettyTlsOptions.disabled().clientContext());
     }
+
+    @Test
+    void disabledReloadingContextDoesNotStartTls() {
+        try (ReloadingNettyTlsContext context = new ReloadingNettyTlsContext(
+                NettyTlsOptions.disabled(), java.time.Duration.ofSeconds(1)
+        )) {
+            assertNull(context.current());
+            context.reloadIfChanged();
+        }
+    }
+
+    @Test
+    void gatewayOptionsRejectNonPositiveReloadInterval() {
+        assertThrows(IllegalArgumentException.class, () -> new NettyExecutorGatewayOptions(
+                10, 1024, NettyTlsOptions.disabled(), java.time.Duration.ZERO
+        ));
+    }
 }

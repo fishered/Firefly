@@ -10,6 +10,8 @@ final class NettyExecutorExecutionRegistry {
             NettyExecutorExecutionRegistry.class.getName()
     );
     private final ConcurrentMap<String, CompletableFuture<ExecutorExecutionResult>> executions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, java.util.concurrent.Future<?>> runningTasks = new ConcurrentHashMap<>();
+    private final java.util.Set<String> cancelled = ConcurrentHashMap.newKeySet();
     private final ExecutorResultStore resultStore;
 
     NettyExecutorExecutionRegistry() {
@@ -51,6 +53,30 @@ final class NettyExecutorExecutionRegistry {
                     "failed to persist executor idempotency result for " + executionId, storeFailure);
         }
         execution.complete(result);
+        runningTasks.remove(executionId);
+    }
+
+    void attachTask(String executionId, java.util.concurrent.Future<?> task) {
+        runningTasks.put(executionId, task);
+        if (cancelled.contains(executionId)) task.cancel(true);
+    }
+
+    ExecutorExecutionResult cancel(String executionId, String reason) {
+        cancelled.add(executionId);
+        java.util.concurrent.Future<?> task = runningTasks.remove(executionId);
+        if (task != null) task.cancel(true);
+        ExecutorExecutionResult result = new ExecutorExecutionResult(
+                "CANCELLED", reason == null || reason.isBlank() ? "cancelled" : reason
+        );
+        CompletableFuture<ExecutorExecutionResult> execution = executions.computeIfAbsent(
+                executionId, ignored -> new CompletableFuture<>()
+        );
+        complete(executionId, execution, result);
+        return result;
+    }
+
+    boolean isCancelled(String executionId) {
+        return cancelled.contains(executionId);
     }
 
     private java.util.Optional<ExecutorExecutionResult> findCompleted(String executionId) {
@@ -65,6 +91,8 @@ final class NettyExecutorExecutionRegistry {
 
     void remove(String executionId, CompletableFuture<ExecutorExecutionResult> execution) {
         executions.remove(executionId, execution);
+        runningTasks.remove(executionId);
+        cancelled.remove(executionId);
     }
 
     record ExecutionClaim(CompletableFuture<ExecutorExecutionResult> execution, boolean owner) {

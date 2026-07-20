@@ -35,8 +35,11 @@ const state = {
   overview: null,
   jobs: sampleJobs,
   executions: [],
+  deadDispatches: [],
   executors: [],
   executorDefinitions: [],
+  executorHeartbeatTimeoutSeconds: 30,
+  executorServerTime: null,
   nodes: sampleNodes
 };
 
@@ -92,7 +95,9 @@ function renderActions(view) {
 }
 
 async function loadAllData() {
-  await Promise.allSettled([loadOverview(), loadJobs(), loadExecutions(), loadExecutors(), loadNodes()]);
+  await Promise.allSettled([
+    loadOverview(), loadJobs(), loadExecutions(), loadDeadDispatches(), loadExecutors(), loadNodes()
+  ]);
 }
 
 async function loadUiConfig() {
@@ -127,6 +132,8 @@ async function loadExecutors() {
     state.executorDefinitions = normalizeList(data, 'definitions');
     state.executors = normalizeList(data, 'instances');
     if (!state.executors.length) state.executors = normalizeList(data, 'executors');
+    state.executorHeartbeatTimeoutSeconds = Number(data.heartbeatTimeoutSeconds ?? 30);
+    state.executorServerTime = data.serverTime ?? null;
   } catch {
     state.executors = [];
     state.executorDefinitions = [];
@@ -137,9 +144,20 @@ async function loadExecutions() {
   try {
     const data = await api('/api/executions');
     const executions = normalizeList(data, 'executions');
-    state.executions = executions.length ? executions : sampleExecutionObjects();
+    state.executions = state.executionFilterJobId
+      ? executions.filter(item => item.jobId === state.executionFilterJobId)
+      : executions;
   } catch {
     state.executions = sampleExecutionObjects();
+  }
+}
+
+async function loadDeadDispatches() {
+  try {
+    const data = await api('/api/outbox/dead');
+    state.deadDispatches = normalizeList(data, 'deadDispatches');
+  } catch {
+    state.deadDispatches = [];
   }
 }
 
@@ -162,6 +180,32 @@ function renderView(view) {
   if (view === 'nodes') root.innerHTML = nodesPage();
   if (view === 'plugins') root.innerHTML = placeholderPage('插件管理页面正在接入 Admin API');
   if (view === 'settings') root.innerHTML = placeholderPage('配置页面正在接入 Admin API');
+  bindViewActions(view);
+}
+
+function legacyBindViewActions(view) {
+  if (view === 'executions') {
+    document.querySelectorAll('[data-execution-detail]').forEach(button => {
+      button.addEventListener('click', () => openExecutionDetail(button.dataset.executionDetail));
+    });
+    document.querySelectorAll('[data-outbox-requeue]').forEach(button => {
+      button.addEventListener('click', () => requeueOutbox(button.dataset.outboxRequeue));
+    });
+  }
+  if (view === 'executors') {
+    document.querySelectorAll('[data-isolate-executor]').forEach(button => {
+      button.addEventListener('click', () => isolateExecutor(button.dataset.isolateExecutor));
+    });
+    document.querySelectorAll('[data-executor-instances]').forEach(button => {
+      button.addEventListener('click', () => openExecutorInstancesDialog(button.dataset.executorInstances));
+    });
+    bindExecutorInstanceDetailActions();
+  }
+  if (view === 'nodes') {
+    document.querySelectorAll('[data-node-operation]').forEach(button => {
+      button.addEventListener('click', () => updateNode(button.dataset.nodeId, button.dataset.nodeOperation));
+    });
+  }
 }
 
 function overviewPage() {
@@ -229,7 +273,7 @@ function overviewPage() {
   `;
 }
 
-function jobsPage() {
+function legacyJobsPage() {
   const rows = state.jobs.slice(0, 4).map(job => tableRow([
     code(job.id),
     text(job.name ?? job.id),
@@ -265,33 +309,45 @@ function jobsPage() {
 }
 
 function executorsPage() {
-  const executors = state.executors.length ? state.executors : [
-    { executorName: 'order-executor', instanceId: 'instance-1', serviceName: 'order-service', host: '10.0.1.11', port: 9700, protocol: 'NETTY', lastHeartbeatAt: new Date().toISOString(), status: 'ONLINE' },
-    { executorName: 'user-executor', instanceId: 'instance-2', serviceName: 'user-service', host: '10.0.1.12', port: 9700, protocol: 'NETTY', lastHeartbeatAt: new Date().toISOString(), status: 'ONLINE' },
-    { executorName: 'notification-executor', instanceId: 'instance-1', serviceName: 'notification-service', host: '10.0.1.13', port: 9700, protocol: 'NETTY', lastHeartbeatAt: new Date().toISOString(), status: 'ONLINE' }
-  ];
+  const executors = state.executors;
+  const online = executors.filter(item => item.status === 'ONLINE');
+  const offline = executors.filter(item => item.status !== 'ONLINE');
+  const averageHeartbeatAge = online.length
+    ? Math.round(online.reduce((sum, item) => sum + Number(item.heartbeatAgeSeconds ?? 0), 0) / online.length)
+    : 0;
+  const definitions = state.executorDefinitions.length
+    ? state.executorDefinitions
+    : [...new Set(executors.map(item => item.executorName))].map(name => ({
+        name, description: '-', protocols: ['TCP'], enabled: true
+      }));
   return `
     <section class="summary-strip">
-      ${statCard('在线执行器', executors.length, '/ 12', '全部在线', '▤', 'primary')}
-      ${statCard('注册实例', 18, '个', '3 个离线', '●', 'yellow', 'warning')}
-      ${statCard('平均心跳', 8, 's', '连接稳定', '◔', 'gray')}
-      ${statCard('派发失败', 0, '次/24h', '无需处理', '▲', 'red', 'success')}
+      ${statCard('逻辑执行器', definitions.length, '个', '已注册定义', '▤', 'primary')}
+      ${statCard('在线实例', online.length, '个', `${offline.length} 个离线记录`, '●', 'yellow', offline.length ? 'warning' : 'success')}
+      ${statCard('平均心跳年龄', averageHeartbeatAge, 's', `离线阈值 ${state.executorHeartbeatTimeoutSeconds}s`, '◔', 'gray')}
+      ${statCard('实例记录', executors.length, '个', '在线与离线状态', '▦', 'red', 'success')}
     </section>
     <section class="table-card">
       <div class="table-title">执行器定义</div>
       <div class="table-scroll">
         <table>
-          <thead><tr>${headers(['执行器名称', '说明', '协议', '状态', '已绑定实例'])}</tr></thead>
-          <tbody>${(state.executorDefinitions.length ? state.executorDefinitions : executors.map(item => ({ name: item.executorName, description: '-', protocols: [item.protocol], enabled: true }))).map(definition => {
-            const count = executors.filter(item => item.executorName === definition.name).length;
+          <thead><tr>${headers(['执行器名称', '说明', '协议', '状态', '已绑定实例', '操作'])}</tr></thead>
+          <tbody>${definitions.map(definition => {
+            const bound = executors.filter(item => item.executorName === definition.name);
+            const onlineCount = bound.filter(item => item.status === 'ONLINE').length;
+            const offlineCount = bound.length - onlineCount;
             return tableRow([
               code(definition.name),
               text(definition.description || '-'),
               text(Array.isArray(definition.protocols) ? definition.protocols.join(', ') : definition.protocols || '-'),
               statusText(definition.enabled === false ? 'DISABLED' : 'ENABLED', definition.enabled === false ? 'muted' : 'success'),
-              text(`${count} 个实例`)
+              `<button class="link-button" type="button" data-executor-instances="${escapeHtml(definition.name)}">${onlineCount} 在线${offlineCount ? ` / ${offlineCount} 离线` : ''}</button>`,
+              `<div class="job-actions">
+                <button class="link-button" type="button" data-executor-instances="${escapeHtml(definition.name)}">查看实例</button>
+                ${definition.enabled === false ? '' : `<button class="link-button danger" type="button" data-isolate-executor="${escapeHtml(definition.name)}">隔离</button>`}
+              </div>`
             ]);
-          }).join('')}</tbody>
+          }).join('') || emptyRow(6, '暂无执行器定义')}</tbody>
         </table>
       </div>
     </section>
@@ -299,20 +355,104 @@ function executorsPage() {
       <div class="table-title">执行器实例</div>
       <div class="table-scroll">
         <table>
-          <thead><tr>${headers(['执行器','实例','服务','地址','协议','心跳','状态'])}</tr></thead>
+          <thead><tr>${headers(['执行器','实例','服务','Gateway','地址','心跳年龄','状态','操作'])}</tr></thead>
           <tbody>${executors.map(item => tableRow([
             text(item.executorName),
-            text(item.instanceId),
+            code(item.instanceId),
             text(item.serviceName),
+            text(item.gatewayNodeId || '-'),
             text(`${item.host ?? '-'}:${item.port ?? '-'}`),
-            text(item.protocol ?? 'NETTY'),
-            text(formatDate(item.lastHeartbeatAt)),
-            statusText(item.status ?? 'ONLINE', 'success')
-          ])).join('')}</tbody>
+            text(`${Number(item.heartbeatAgeSeconds ?? 0)}s`),
+            statusText(item.status ?? 'OFFLINE', item.status === 'ONLINE' ? 'success' : 'muted'),
+            `<button class="link-button" type="button" data-executor-instance-detail="${escapeHtml(item.instanceId)}" data-executor-name="${escapeHtml(item.executorName)}">查看</button>`
+          ])).join('') || emptyRow(8, '暂无执行器实例')}</tbody>
         </table>
       </div>
     </section>
   `;
+}
+
+function openExecutorInstancesDialog(executorName) {
+  const instances = state.executors.filter(item => item.executorName === executorName);
+  const rows = instances.map(item => tableRow([
+    code(item.instanceId),
+    text(item.serviceName),
+    text(item.gatewayNodeId || '-'),
+    text(`${item.host ?? '-'}:${item.port ?? '-'}`),
+    text(formatDate(item.lastHeartbeatAt)),
+    text(`${Number(item.heartbeatAgeSeconds ?? 0)}s`),
+    statusText(item.status ?? 'OFFLINE', item.status === 'ONLINE' ? 'success' : 'muted'),
+    `<button class="link-button" type="button" data-executor-instance-detail="${escapeHtml(item.instanceId)}" data-executor-name="${escapeHtml(item.executorName)}">详情</button>`
+  ])).join('');
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="executor-instances-title">
+      <section class="modal executor-instances-modal">
+        <div class="modal-header">
+          <div><h2 id="executor-instances-title">已绑定实例</h2><div class="modal-subtitle code">${escapeHtml(executorName)}</div></div>
+          <button class="btn icon" type="button" data-close aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body execution-body">
+          <div class="table-scroll target-table"><table>
+            <thead><tr>${headers(['实例','服务','Gateway','地址','最后心跳','心跳年龄','状态','操作'])}</tr></thead>
+            <tbody>${rows || emptyRow(8, '当前没有实例记录')}</tbody>
+          </table></div>
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>关闭</button></div>
+      </section>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  bindExecutorInstanceDetailActions(root);
+}
+
+function openExecutorInstanceDetail(executorName, instanceId) {
+  const instance = state.executors.find(item =>
+    item.executorName === executorName && item.instanceId === instanceId
+  );
+  if (!instance) {
+    toast('实例记录不存在或已经清理');
+    return;
+  }
+  const metadata = Object.entries(instance.metadata ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ') || '-';
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="executor-instance-title">
+      <section class="modal executor-instance-modal">
+        <div class="modal-header">
+          <div><h2 id="executor-instance-title">执行器实例详情</h2><div class="modal-subtitle code">${escapeHtml(instance.instanceId)}</div></div>
+          <button class="btn icon" type="button" data-close aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body execution-body">
+          <div class="detail-grid executor-detail-grid">
+            ${detailItem('执行器', instance.executorName)}
+            ${detailItem('状态', statusText(instance.status ?? 'OFFLINE', instance.status === 'ONLINE' ? 'success' : 'muted'), true)}
+            ${detailItem('服务', instance.serviceName)}
+            ${detailItem('实例 ID', instance.instanceId)}
+            ${detailItem('会话 ID', instance.sessionId)}
+            ${detailItem('Gateway 节点', instance.gatewayNodeId)}
+            ${detailItem('远端地址', `${instance.host ?? '-'}:${instance.port ?? '-'}`)}
+            ${detailItem('协议', instance.protocol)}
+            ${detailItem('注册时间', formatDate(instance.registeredAt))}
+            ${detailItem('最后心跳', formatDate(instance.lastHeartbeatAt))}
+            ${detailItem('心跳年龄', `${Number(instance.heartbeatAgeSeconds ?? 0)}s`)}
+            ${detailItem('离线阈值', `${state.executorHeartbeatTimeoutSeconds}s`)}
+            ${detailItem('元数据', metadata)}
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>关闭</button></div>
+      </section>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+}
+
+function bindExecutorInstanceDetailActions(root = document) {
+  root.querySelectorAll('[data-executor-instance-detail]').forEach(button => {
+    button.addEventListener('click', () => openExecutorInstanceDetail(
+      button.dataset.executorName, button.dataset.executorInstanceDetail
+    ));
+  });
 }
 
 function executionsPage() {
@@ -326,7 +466,16 @@ function executionsPage() {
     text(item.duration ?? '-'),
     text(item.executorInstance ?? '-'),
     executionTag(item.status ?? 'SCHEDULED'),
-    '<span class="primary-text">◉ 详情</span>'
+    `<button class="link-button" type="button" data-execution-detail="${escapeHtml(item.executionId)}">查看</button>`
+  ])).join('');
+  const deadRows = state.deadDispatches.map(item => tableRow([
+    code(item.outboxId),
+    code(item.jobId),
+    text(item.dispatchType),
+    text(item.attempt),
+    text(formatDate(item.availableAt)),
+    text(item.lastError || '-'),
+    `<button class="link-button danger" type="button" data-outbox-requeue="${escapeHtml(item.outboxId)}">重新入队</button>`
   ])).join('');
   return `
     <section class="toolbar">
@@ -347,12 +496,165 @@ function executionsPage() {
       <div class="table-scroll">
         <table>
           <thead><tr>${headers(['执行ID','任务ID','调度时间','分发时间','开始时间','结束时间','耗时','执行器实例','状态','操作'])}</tr></thead>
-          <tbody>${rows}</tbody>
+          <tbody>${rows || emptyRow(10, '暂无执行记录')}</tbody>
         </table>
       </div>
       ${tableFooter(`显示 1-${Math.min(state.executions.length, 8)} 条，共 ${state.executions.length} 条记录`, Math.max(1, Math.ceil(state.executions.length / 8)))}
     </section>
+    <section class="table-card">
+      <div class="table-title">派发死信 <span class="count-badge">${state.deadDispatches.length}</span></div>
+      <div class="table-scroll">
+        <table class="compact-table">
+          <thead><tr>${headers(['Outbox ID','任务ID','类型','尝试次数','可用时间','最后错误','操作'])}</tr></thead>
+          <tbody>${deadRows || emptyRow(7, '当前没有派发死信')}</tbody>
+        </table>
+      </div>
+    </section>
   `;
+}
+
+async function openExecutionDetail(executionId) {
+  try {
+    const detail = await api(`/api/executions/${encodeURIComponent(executionId)}`);
+    const execution = detail.execution ?? detail;
+    const targets = normalizeList(detail, 'targets');
+    const relatedAttempts = state.executions
+      .filter(item => item.rootExecutionId && item.rootExecutionId === execution.rootExecutionId)
+      .sort((left, right) => Number(left.runAttempt ?? 0) - Number(right.runAttempt ?? 0));
+    const targetRows = targets.map(target => tableRow([
+      code(target.targetExecutionId),
+      text(target.instanceId || '-'),
+      text(target.gatewayNodeId || '-'),
+      text(target.shardIndex ?? '-'),
+      executionTag(target.status),
+      text(formatDate(target.acknowledgedAt)),
+      text(formatDate(target.completedAt)),
+      text(target.errorMessage || '-')
+    ])).join('');
+    const root = document.getElementById('modal-root');
+    root.innerHTML = `
+      <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="execution-dialog-title">
+        <section class="modal execution-modal">
+          <div class="modal-header">
+            <div><h2 id="execution-dialog-title">执行详情</h2><div class="modal-subtitle code">${escapeHtml(execution.executionId)}</div></div>
+            <button class="btn icon" type="button" data-close>×</button>
+          </div>
+          <div class="modal-body execution-body">
+            <div class="detail-grid">
+              ${detailItem('任务', execution.jobId)}
+              ${detailItem('状态', executionTag(execution.status), true)}
+              ${detailItem('分发模式', execution.dispatchMode)}
+              ${detailItem('完成策略', execution.completionPolicy)}
+              ${detailItem('计划时间', formatDate(execution.scheduledFireTime))}
+              ${detailItem('超时截止', formatDate(execution.timeoutAt))}
+            </div>
+            <div class="attempt-track">
+              ${(relatedAttempts.length ? relatedAttempts : [execution]).map(item => `
+                <div class="attempt-node ${item.executionId === execution.executionId ? 'active' : ''}">
+                  <span>Attempt ${Number(item.runAttempt ?? 0) + 1}</span>${executionTag(item.status)}
+                </div>`).join('')}
+            </div>
+            <div class="detail-section-title">目标执行</div>
+            <div class="table-scroll target-table"><table>
+              <thead><tr>${headers(['目标ID','实例','Gateway','分片','状态','ACK','完成','错误'])}</tr></thead>
+              <tbody>${targetRows || emptyRow(8, '尚未生成目标')}</tbody>
+            </table></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn" type="button" data-close>关闭</button>
+            ${isActiveExecution(execution.status) ? `<button class="btn danger-button" type="button" data-cancel-execution="${escapeHtml(execution.executionId)}">终止执行</button>` : ''}
+          </div>
+        </section>
+      </div>`;
+    root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+    root.querySelector('[data-cancel-execution]')?.addEventListener('click', () => openCancelDialog(execution.executionId));
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function openCancelDialog(executionId) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title">
+      <form id="cancel-dialog" class="modal compact-modal">
+        <div class="modal-header"><h2 id="cancel-dialog-title">终止执行</h2><button class="btn icon" type="button" data-close>×</button></div>
+        <div class="modal-body">
+          <div class="operation-warning">终止会停止后续重投，并向仍在线的 Executor 发送协作式取消请求。</div>
+          ${dialogField('原因', 'reason', 'operator requested cancellation', true)}
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>返回</button><button class="btn danger-button" type="submit">确认终止</button></div>
+      </form>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  root.querySelector('form').addEventListener('submit', event => cancelExecution(event, executionId));
+}
+
+async function cancelExecution(event, executionId) {
+  event.preventDefault();
+  const reason = new FormData(event.currentTarget).get('reason');
+  try {
+    await api(`/api/executions/${encodeURIComponent(executionId)}/cancel`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason })
+    });
+    closeDialog();
+    await refreshView(false);
+    toast(`执行已终止：${executionId}`);
+  } catch (error) { toast(error.message); }
+}
+
+async function requeueOutbox(outboxId) {
+  try {
+    await api(`/api/outbox/${encodeURIComponent(outboxId)}/requeue`, { method: 'POST' });
+    await refreshView(false);
+    toast(`死信已重新入队：${outboxId}`);
+  } catch (error) { toast(error.message); }
+}
+
+async function isolateExecutor(executorName) {
+  try {
+    await api(`/api/executor-definitions/${encodeURIComponent(executorName)}/isolate`, { method: 'POST' });
+    await refreshView(false);
+    toast(`执行器已隔离：${executorName}`);
+  } catch (error) { toast(error.message); }
+}
+
+async function updateNode(nodeId, operation) {
+  try {
+    await api(`/api/nodes/${encodeURIComponent(nodeId)}/${operation}`, { method: 'POST' });
+    await refreshView(false);
+    toast(`节点操作已提交：${nodeId}`);
+    if (operation === 'drain') void pollNodeDrain(nodeId);
+  } catch (error) { toast(error.message); }
+}
+
+async function pollNodeDrain(nodeId) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      const status = await api(`/api/nodes/${encodeURIComponent(nodeId)}/drain-status`);
+      await loadNodes();
+      if (state.currentView === 'nodes') renderView('nodes');
+      if (status.status === 'OFFLINE') {
+        toast(`节点排空完成：${nodeId}`);
+        return;
+      }
+    } catch (error) {
+      return;
+    }
+  }
+}
+
+function isActiveExecution(status) {
+  return ['DISPATCHING', 'DISPATCHED', 'RUNNING'].includes(status);
+}
+
+function detailItem(label, value, html = false) {
+  return `<div class="detail-item"><span>${escapeHtml(label)}</span><strong>${html ? value : escapeHtml(value ?? '-')}</strong></div>`;
+}
+
+function emptyRow(columns, label) {
+  return `<tr><td class="empty-cell" colspan="${columns}">${escapeHtml(label)}</td></tr>`;
 }
 
 function nodesPage() {
@@ -367,7 +669,7 @@ function nodesPage() {
       <div class="table-title">节点列表</div>
       <div class="table-scroll">
         <table>
-          <thead><tr>${headers(['节点ID','角色','模式','最后心跳','所属分片','租约到期','隔离令牌','状态'])}</tr></thead>
+          <thead><tr>${headers(['节点ID','角色','模式','最后心跳','所属分片','租约到期','隔离令牌','状态','操作'])}</tr></thead>
           <tbody>${state.nodes.map(node => tableRow([
             text(node.nodeId),
             normalizeRoles(node.roles).split(', ').map(role => tag(role, role === 'SCHEDULER' ? 'primary' : '')).join(' '),
@@ -376,7 +678,8 @@ function nodesPage() {
             (node.shards ?? ['shard-0']).map(shard => `<span class="shard-tag">${escapeHtml(shard)}</span>`).join(' '),
             text(node.leaseUntil ?? formatDate(new Date(Date.now() + 60000).toISOString())),
             text(node.fencingToken ?? '7a2f9d3e...'),
-            statusText(node.status ?? '在线', 'success')
+            statusText(node.status ?? '在线', node.status === 'DRAINING' ? 'warning' : 'success'),
+            `<button class="link-button" type="button" data-node-operation="drain" data-node-id="${escapeHtml(node.nodeId)}">排空</button> <button class="link-button danger" type="button" data-node-operation="offline" data-node-id="${escapeHtml(node.nodeId)}">下线</button>`
           ])).join('')}</tbody>
         </table>
       </div>
@@ -451,7 +754,7 @@ function statusText(label, tone) {
 }
 
 function executionTag(status) {
-  const tone = { SUCCEEDED: 'ok', SCHEDULED: 'run', DISABLED: 'mis', FAILED: 'bad', RUNNING: 'run', MISFIRED: 'mis', TIMEOUT: 'timeout' }[status] ?? 'ok';
+  const tone = { SUCCEEDED: 'ok', SCHEDULED: 'run', DISPATCHING: 'run', DISPATCHED: 'run', DISABLED: 'mis', FAILED: 'bad', RUNNING: 'run', MISFIRED: 'mis', TIMEOUT: 'timeout', CANCELLED: 'cancelled' }[status] ?? 'ok';
   return `<span class="status-tag ${tone}">${escapeHtml(status)}</span>`;
 }
 
@@ -472,6 +775,7 @@ function openJobDialog() {
           ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'])}
           ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'])}
           ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'])}
+          ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'])}
           ${dialogField('分片数', 'shardCount', '1', true, 'number')}
           ${dialogField('路由键', 'routingKey', '', false)}
           ${dialogField('Cron', 'cron', '*/5 * * * * *', true)}
@@ -700,4 +1004,212 @@ function escapeHtml(value) {
     '"': '&quot;',
     "'": '&#39;'
   }[char]));
+}
+
+// Job operations are kept in one render path so every action has a real API
+// contract and the table never falls back to placeholder glyphs.
+function jobsPage() {
+  const jobs = state.jobs;
+  const executorOptions = [...new Set(jobs.map(job => job.executorName).filter(Boolean))];
+  const rows = jobs.map(job => tableRow([
+    code(job.id),
+    text(job.name ?? job.id),
+    text(job.groupName ?? job.groupId ?? 'default'),
+    code(job.schedule ?? '-'),
+    text(job.zoneId ?? 'UTC'),
+    text(formatDate(job.nextFireTime)),
+    text(job.executorName ?? '-'),
+    text(job.dispatchMode ?? 'UNICAST'),
+    text(job.businessHandlerName ?? job.handlerName ?? '-'),
+    statusText(job.enabled === false ? 'DISABLED' : 'ENABLED', job.enabled === false ? 'muted' : 'success'),
+    statusText(job.lastResult ?? '-', job.lastResult === 'FAILED' ? 'danger' : 'success'),
+    jobActions(job)
+  ])).join('');
+  return `
+    <section class="toolbar jobs-toolbar">
+      <label class="inline-field">任务名称 <input id="job-filter-text" placeholder="搜索任务名称"></label>
+      <label class="inline-field">执行器 <select id="job-filter-executor"><option value="">全部执行器</option>${executorOptions.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('')}</select></label>
+      <label class="inline-field">状态 <select id="job-filter-status"><option value="">全部状态</option><option value="enabled">启用</option><option value="disabled">暂停</option></select></label>
+      <button class="btn" type="button" data-job-filter="apply">查询</button>
+      <button class="btn" type="button" data-job-filter="reset">重置</button>
+    </section>
+    <section class="table-card">
+      <div class="table-toolbar">
+        <div><strong>任务列表</strong><span class="table-count">共 ${jobs.length} 条</span></div>
+        <span class="muted">操作将立即生效</span>
+      </div>
+      <div class="table-scroll">
+        <table class="jobs-table">
+          <thead><tr>${headers(['Job ID', 'Name', 'Group', 'Schedule', 'Time zone', 'Next fire', 'Executor', 'Dispatch', 'Handler', 'Status', 'Last result', 'Actions'])}</tr></thead>
+          <tbody>${rows || emptyRow(12, 'No jobs found')}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function jobActions(job) {
+  const id = escapeHtml(job.id);
+  const toggleLabel = job.enabled === false ? 'Enable job' : 'Pause job';
+  const toggleIcon = job.enabled === false ? '&#9654;' : '&#10074;&#10074;';
+  return `<div class="job-actions">
+    <button class="icon-button primary" type="button" title="立即触发" aria-label="立即触发" data-job-operation="trigger" data-job-id="${id}">&#9654;</button>
+    <button class="icon-button" type="button" title="${toggleLabel}" aria-label="${toggleLabel}" data-job-operation="toggle" data-job-id="${id}">${toggleIcon}</button>
+    <button class="icon-button" type="button" title="编辑任务" aria-label="编辑任务" data-job-operation="edit" data-job-id="${id}">&#9998;</button>
+    <button class="icon-button" type="button" title="查看执行记录" aria-label="查看执行记录" data-job-operation="view" data-job-id="${id}">&#128065;</button>
+    <button class="icon-button danger" type="button" title="删除任务" aria-label="删除任务" data-job-operation="delete" data-job-id="${id}">&#10005;</button>
+  </div>`;
+}
+
+function bindViewActions(view) {
+  if (view === 'jobs') {
+    document.querySelectorAll('[data-job-operation]').forEach(button => {
+      button.addEventListener('click', () => operateJob(button.dataset.jobId, button.dataset.jobOperation));
+    });
+    document.querySelector('[data-job-filter="apply"]')?.addEventListener('click', filterJobs);
+    document.querySelector('[data-job-filter="reset"]')?.addEventListener('click', () => {
+      document.getElementById('job-filter-text').value = '';
+      document.getElementById('job-filter-executor').value = '';
+      document.getElementById('job-filter-status').value = '';
+      renderView('jobs');
+    });
+  }
+  if (view === 'executions') {
+    document.querySelectorAll('[data-execution-detail]').forEach(button => {
+      button.addEventListener('click', () => openExecutionDetail(button.dataset.executionDetail));
+    });
+    document.querySelectorAll('[data-outbox-requeue]').forEach(button => {
+      button.addEventListener('click', () => requeueOutbox(button.dataset.outboxRequeue));
+    });
+  }
+  if (view === 'executors') {
+    document.querySelectorAll('[data-isolate-executor]').forEach(button => {
+      button.addEventListener('click', () => isolateExecutor(button.dataset.isolateExecutor));
+    });
+    document.querySelectorAll('[data-executor-instances]').forEach(button => {
+      button.addEventListener('click', () => openExecutorInstancesDialog(button.dataset.executorInstances));
+    });
+    bindExecutorInstanceDetailActions();
+  }
+  if (view === 'nodes') {
+    document.querySelectorAll('[data-node-operation]').forEach(button => {
+      button.addEventListener('click', () => updateNode(button.dataset.nodeId, button.dataset.nodeOperation));
+    });
+  }
+}
+
+function filterJobs() {
+  const query = document.getElementById('job-filter-text').value.trim().toLowerCase();
+  const executor = document.getElementById('job-filter-executor').value;
+  const status = document.getElementById('job-filter-status').value;
+  const filtered = state.jobs.filter(job => {
+    const haystack = [job.id, job.name, job.executorName, job.businessHandlerName, job.handlerName].join(' ').toLowerCase();
+    return (!query || haystack.includes(query))
+      && (!executor || job.executorName === executor)
+      && (!status || (status === 'enabled' ? job.enabled !== false : job.enabled === false));
+  });
+  const original = state.jobs;
+  state.jobs = filtered;
+  renderView('jobs');
+  state.jobs = original;
+}
+
+async function operateJob(jobId, operation) {
+  const job = state.jobs.find(item => item.id === jobId);
+  if (!job) return;
+  if (operation === 'view') {
+    state.executionFilterJobId = jobId;
+    await setView('executions');
+    return;
+  }
+  if (operation === 'edit') {
+    openJobEditDialog(job);
+    return;
+  }
+  if (operation === 'delete' && !window.confirm(`确认删除任务“${jobId}”？`)) return;
+  if (operation === 'trigger' && !window.confirm(`确认立即触发任务“${jobId}”？`)) return;
+  try {
+    if (operation === 'trigger') {
+      await api(`/api/jobs/${encodeURIComponent(jobId)}/trigger`, { method: 'POST' });
+      toast(`任务已触发：${jobId}`);
+    } else if (operation === 'toggle') {
+      const enabled = job.enabled === false;
+      await api(`/api/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      toast(enabled ? `任务已启用：${jobId}` : `任务已暂停：${jobId}`);
+    } else if (operation === 'delete') {
+      await api(`/api/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+      toast(`任务已删除：${jobId}`);
+    }
+    await refreshView(false);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function openJobEditDialog(job) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="job-edit-title">
+      <form id="job-edit-dialog" class="modal">
+        <div class="modal-header"><h2 id="job-edit-title">编辑任务</h2><button class="btn icon" type="button" data-close aria-label="关闭">&#10005;</button></div>
+        <div class="modal-body">
+          ${dialogField('任务 ID', 'id', job.id, true)}
+          ${dialogField('任务名称', 'name', job.name ?? job.id, true)}
+          ${dialogField('执行器', 'executorName', job.executorName ?? '', true)}
+          ${dialogField('处理器', 'handlerName', job.businessHandlerName ?? job.handlerName ?? '', true)}
+          ${dialogField('Cron 表达式', 'cron', job.schedule ?? '*/5 * * * * *', true)}
+          ${dialogField('时区', 'zoneId', job.zoneId ?? 'UTC', true)}
+          ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'])}
+          ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'])}
+          ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'])}
+          ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'])}
+          ${dialogField('分片数量', 'shardCount', job.shardCount ?? '1', true, 'number')}
+          ${dialogField('路由键', 'routingKey', job.routingKey ?? '', false)}
+          ${dialogField('最大重试次数', 'retryMaxAttempts', job.retryMaxAttempts ?? '1', true, 'number')}
+          ${dialogSelect('状态', 'enabled', ['true', 'false'])}
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">保存修改</button></div>
+      </form>
+    </div>`;
+  root.querySelector('[name="enabled"]').value = job.enabled === false ? 'false' : 'true';
+  const selectedValues = {
+    dispatchMode: job.dispatchMode ?? 'UNICAST',
+    routingStrategy: job.routingStrategy ?? 'ROUND_ROBIN',
+    completionPolicy: job.completionPolicy ?? 'ALL_SUCCESS',
+    retryScope: job.retryScope ?? 'FAILED_TARGETS_ONLY'
+  };
+  Object.entries(selectedValues).forEach(([name, value]) => {
+    const field = root.querySelector(`[name="${name}"]`);
+    if (field) field.value = value;
+  });
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  root.querySelector('#job-edit-dialog').addEventListener('submit', submitJobEdit);
+}
+
+async function submitJobEdit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const body = Object.fromEntries(new FormData(form).entries());
+  const jobId = body.id;
+  delete body.id;
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    closeDialog();
+    await refreshView(false);
+    toast(`任务已更新：${jobId}`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    submit.disabled = false;
+  }
 }

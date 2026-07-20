@@ -23,8 +23,18 @@ public final class NettyExecutorConnectionRegistry {
     }
 
     public void register(String executorName, String instanceId, String sessionId, Channel channel) {
+        register(executorName, instanceId, sessionId, NettyExecutorProtocol.CURRENT_VERSION,
+                NettyExecutorProtocol.SERVER_CAPABILITIES, channel);
+    }
+
+    public void register(
+            String executorName, String instanceId, String sessionId,
+            int protocolVersion, java.util.Set<String> capabilities, Channel channel
+    ) {
         InstanceKey key = new InstanceKey(executorName, instanceId);
-        ConnectionTarget replacement = new ConnectionTarget(executorName, instanceId, sessionId, channel);
+        ConnectionTarget replacement = new ConnectionTarget(
+                executorName, instanceId, sessionId, protocolVersion, java.util.Set.copyOf(capabilities), channel
+        );
         ConnectionTarget previous = channels.put(key, replacement);
         if (previous != null && previous.channel() != channel && previous.channel().isOpen()) {
             previous.channel().close();
@@ -66,7 +76,10 @@ public final class NettyExecutorConnectionRegistry {
     }
 
     public List<ConnectionKey> list() {
-        return channels.values().stream().map(ConnectionTarget::key).toList();
+        return channels.values().stream()
+                .filter(target -> target.channel().isActive())
+                .map(ConnectionTarget::key)
+                .toList();
     }
 
     public List<ConnectionTarget> list(String executorName) {
@@ -82,9 +95,30 @@ public final class NettyExecutorConnectionRegistry {
         return target != null && target.channel().isActive() ? Optional.of(target) : Optional.empty();
     }
 
+    public Optional<ConnectionTarget> findInstance(String instanceId) {
+        return channels.values().stream()
+                .filter(target -> target.instanceId().equals(instanceId))
+                .filter(target -> target.channel().isActive())
+                .findFirst();
+    }
+
     public boolean isCurrent(Channel channel, String instanceId, String sessionId) {
         return channels.values().stream().anyMatch(target -> target.channel().equals(channel)
                 && target.instanceId().equals(instanceId) && target.sessionId().equals(sessionId));
+    }
+
+    public int closeExecutor(String executorName) {
+        List<ConnectionTarget> targets = channels.values().stream()
+                .filter(target -> target.executorName().equals(executorName))
+                .toList();
+        targets.forEach(target -> target.channel().close());
+        return targets.size();
+    }
+
+    public int closeAll() {
+        List<ConnectionTarget> targets = java.util.List.copyOf(channels.values());
+        targets.forEach(target -> target.channel().close());
+        return targets.size();
     }
 
     private long rendezvousScore(String routingKey, String instanceId) {
@@ -103,9 +137,16 @@ public final class NettyExecutorConnectionRegistry {
     public record ConnectionKey(String executorName, String instanceId, String sessionId) {
     }
 
-    public record ConnectionTarget(String executorName, String instanceId, String sessionId, Channel channel) {
+    public record ConnectionTarget(
+            String executorName, String instanceId, String sessionId,
+            int protocolVersion, java.util.Set<String> capabilities, Channel channel
+    ) {
         ConnectionKey key() {
             return new ConnectionKey(executorName, instanceId, sessionId);
+        }
+
+        public boolean supports(String capability) {
+            return capabilities.contains(capability);
         }
     }
 }

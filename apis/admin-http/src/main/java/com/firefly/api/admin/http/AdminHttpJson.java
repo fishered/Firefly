@@ -46,6 +46,7 @@ final class AdminHttpJson {
                     .append("\",\"completionPolicy\":\"").append(job.definition().completionPolicy().name())
                     .append("\",\"shardCount\":").append(job.definition().shardCount())
                     .append(",\"routingKey\":\"").append(escape(job.definition().routingKey()))
+                    .append("\",\"retryScope\":\"").append(job.definition().retryScope().name())
                     .append("\",\"retryMaxAttempts\":").append(job.definition().retryPolicy().maxAttempts())
                     .append(",\"retryInitialDelay\":\"").append(job.definition().retryPolicy().initialDelay())
                     .append("\",\"retryMultiplier\":").append(job.definition().retryPolicy().multiplier())
@@ -91,6 +92,57 @@ final class AdminHttpJson {
                     .append("\"}");
         }
         return json.append("]}").toString();
+    }
+
+    static String jobPayload(ScheduledJobRecord job) {
+        return jobs(List.of(job));
+    }
+
+    static String jobHistory(List<com.firefly.store.JobHistoryRecord> records) {
+        StringBuilder json = new StringBuilder("{\"items\":[");
+        for (int index = 0; index < records.size(); index++) {
+            if (index > 0) json.append(',');
+            var record = records.get(index);
+            json.append("{\"historyId\":\"").append(escape(record.historyId()))
+                    .append("\",\"jobId\":\"").append(escape(record.jobId()))
+                    .append("\",\"version\":").append(record.version())
+                    .append(",\"action\":\"").append(escape(record.action()))
+                    .append("\",\"actor\":\"").append(escape(record.actor()))
+                    .append("\",\"beforePayload\":\"").append(escape(record.beforePayload()))
+                    .append("\",\"afterPayload\":\"").append(escape(record.afterPayload()))
+                    .append("\",\"occurredAt\":\"").append(record.occurredAt()).append("\"}");
+        }
+        return json.append("]}").toString();
+    }
+
+    static String audit(List<com.firefly.audit.AuditRecord> records) {
+        StringBuilder json = new StringBuilder("{\"items\":[");
+        for (int index = 0; index < records.size(); index++) {
+            if (index > 0) json.append(',');
+            var record = records.get(index);
+            json.append("{\"auditId\":\"").append(escape(record.auditId()))
+                    .append("\",\"occurredAt\":\"").append(record.occurredAt())
+                    .append("\",\"actor\":\"").append(escape(record.actor()))
+                    .append("\",\"role\":\"").append(escape(record.role()))
+                    .append("\",\"action\":\"").append(escape(record.action()))
+                    .append("\",\"resourceType\":\"").append(escape(record.resourceType()))
+                    .append("\",\"resourceId\":\"").append(escape(record.resourceId()))
+                    .append("\",\"outcome\":\"").append(escape(record.outcome()))
+                    .append("\",\"beforePayload\":\"").append(escape(record.beforePayload()))
+                    .append("\",\"afterPayload\":\"").append(escape(record.afterPayload()))
+                    .append("\",\"detail\":\"").append(escape(record.detail())).append("\"}");
+        }
+        return json.append("]}").toString();
+    }
+
+    static String nodeDrainStatus(com.firefly.plugin.NodeDrainStatus status) {
+        return "{\"nodeId\":\"" + escape(status.nodeId())
+                + "\",\"status\":\"" + status.status().name()
+                + "\",\"ownedShards\":" + status.ownedShards()
+                + ",\"activeDispatches\":" + status.activeDispatches()
+                + ",\"activeExecutionTargets\":" + status.activeExecutionTargets()
+                + ",\"connectedExecutors\":" + status.connectedExecutors()
+                + ",\"readyForOffline\":" + status.readyForOffline() + "}";
     }
 
     static String executions(List<ScheduledJobRecord> jobs, Instant now) {
@@ -246,7 +298,9 @@ final class AdminHttpJson {
         appendExecutorInstances(json, instances, now, heartbeatTimeout);
         json.append("],\"executors\":[");
         appendExecutorInstances(json, instances, now, heartbeatTimeout);
-        return json.append("]}").toString();
+        return json.append("],\"serverTime\":\"").append(escape(now.toString()))
+                .append("\",\"heartbeatTimeoutSeconds\":").append(heartbeatTimeout.toSeconds())
+                .append('}').toString();
     }
 
     static String executorDefinitions(List<ExecutorDefinition> definitions) {
@@ -306,9 +360,20 @@ final class AdminHttpJson {
                     .append("\",\"port\":").append(instance.port())
                     .append(",\"protocol\":\"").append(instance.protocol().name())
                     .append("\",\"status\":\"").append(online ? "ONLINE" : "OFFLINE")
+                    .append("\",\"registeredAt\":\"").append(escape(instance.registeredAt().toString()))
                     .append("\",\"lastHeartbeatAt\":\"").append(escape(instance.lastHeartbeatAt().toString()))
                     .append("\",\"heartbeatAgeSeconds\":").append(Math.max(0, Duration.between(instance.lastHeartbeatAt(), now).toSeconds()))
-                    .append('}');
+                    .append(",\"metadata\":{");
+            int metadataIndex = 0;
+            for (var entry : instance.metadata().entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey()).toList()) {
+                if (metadataIndex++ > 0) {
+                    json.append(',');
+                }
+                json.append('"').append(escape(entry.getKey())).append("\":\"")
+                        .append(escape(entry.getValue())).append('"');
+            }
+            json.append("}}");
         }
     }
 

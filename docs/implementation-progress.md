@@ -66,6 +66,10 @@ examples/*                   Embedded 与 Netty executor 示例
 - schema v8 为 execution 增加不可变 `timeout_at` 和超时索引。deadline 在 attempt 实际开始派发时按数据库时间固化，任务修改、删除和 retry backoff 不再改变执行超时语义。
 - execution/target 已改为事务内单向状态机；ACK、结果、父级聚合和 timeout 按父行锁串行化，迟到 ACK、冲突结果和 LOCAL 完成不能覆盖终态。
 - Outbox worker 支持跨节点认领、ACK 超时重投、指数退避和最大尝试次数。`LOCAL` 记录只由 Scheduler 角色领取，`REMOTE` 记录只由 Gateway 角色领取；PostgreSQL/MySQL 使用 `FOR UPDATE SKIP LOCKED`，避免多个 worker 争抢同一候选集。
+- Outbox claim 已使用 `claim_owner + attempt` 作为回写 fencing token。旧 Gateway 的 claim 过期并被其他节点接管后，迟到的 SENT/RETRY 回写会被 CAS 拒绝；普通重试只允许 `CLAIMED -> RETRY/DEAD`，不能把已 ACK 的 `DONE` 或超时 `DEAD` 重新激活。
+- `firefly.dispatch.outbox.max-attempts` 同时约束发送拒绝和 ACK 超时重投。最多只会发生配置次数的真实发送；最后一次发送仍未 ACK 时，下一次 fenced 认领只负责把记录转为 `DEAD`，不会再次下发。
+- 传输层暂时拒绝派发时，逻辑 execution 保持非终态并交由 Outbox 重投，不再提前写成 `FAILED` 导致后续 ACK/结果无法推进；真正的业务失败和执行超时仍由 execution 状态机与业务重试策略处理。
+- Gateway 在本地没有目标 Executor 路由时会 fenced 延后并释放 Outbox claim，不消耗真实投递 attempt，使持有连接的 Gateway 可以重新竞争；广播和分片跨 Gateway 聚合仍采用 all-connected 拓扑约束。
 - JDBC 模式使用数据库校准 Clock，按配置周期采样数据库时间，调度、节点、Outbox、维护和 Gateway 共享同一时钟；时钟偏移、漂移告警和同步失败会进入 Prometheus。
 - 广播和分片使用目标级 ACK；父 Outbox 只有在目标数达到预期且所有目标都已 ACK 后才完成。重投不会覆盖已 ACK 或已完成的目标，广播重投沿用首次实例快照。
 - Executor 客户端在实例级共享 `executionId` 幂等注册表，多 Gateway 同时或重复下发时，同一进程只执行业务 Handler 一次并复用结果。
@@ -77,6 +81,7 @@ examples/*                   Embedded 与 Netty executor 示例
 - 执行维护线程只由 shard 0 owner 运行，会按任务 timeout 标记超时，并按可配置保留期批量清理完成历史；timeout 候选不再被长超时记录提前截断。
 - Admin API 已改用 Jackson 解析请求，增加统一错误响应、任务启停、删除、手动触发和分级 RBAC Token；旧 API Token 兼容为 `ADMIN`，新增 `READER`、`OPERATOR`、`ADMIN` 三档权限。Prometheus 增加 outbox 与执行状态指标。
 - ACK 与结果状态机可区分首次迁移、幂等重放和拒绝。重复 ACK/结果不会重复计入延迟指标，也不会重复进入业务重试调度；重投后的 ACK 延迟从本次目标投递时间计算。
+- execution 增加 `CANCELLED` 终态。Admin 可终止运行中 execution，事务内停止未完成 target 和 Outbox；Gateway 发送 `CANCEL_JOB`，Executor 中断本地 Future 并幂等回报，迟到结果不能覆盖取消终态。
 
 ### Server 启动与配置
 
@@ -84,6 +89,7 @@ examples/*                   Embedded 与 Netty executor 示例
 - `firefly.node.roles` 已成为节点职责配置入口，支持 `api`、`gateway`、`scheduler`。
 - `firefly.node.mode=cluster` 已要求 JDBC 共享存储，并要求每个节点配置唯一的 `firefly.node.name`。
 - `firefly.scheduler.shard-count` 支持 CLI、环境变量 `FIREFLY_SCHEDULER_SHARD_COUNT` 和 properties 配置；该值是集群级不可变契约，不提供在线静默重分片。
+- Scheduler 每 tick 处理预算和最大空闲唤醒间隔已通过 `firefly.scheduler.max-due-records-per-tick`、`firefly.scheduler.max-idle-wakeup` 配置化。
 - `SchemaTool` 已提供显式停机式 reshard 操作：需要 `firefly.schema.action=reshard` 和 `firefly.schema.reshard.confirm=true`，并会拒绝在线节点、活跃 execution 与未完成 Outbox，随后重算 job shard、清理旧 lease、更新集群元数据。
 - 配置已收敛为主配置加 profile 覆盖：
 
@@ -113,14 +119,26 @@ config/
 /api/jobs
 /api/executions
 /api/executions/{executionId}
+/api/executions/{executionId}/cancel
+/api/executions/batch-cancel
+/api/executions/root/{rootExecutionId}
 /api/outbox/dead
 /api/outbox/{outboxId}/requeue
+/api/outbox/batch-requeue
 /api/executors
+/api/executor-definitions/{executorName}/isolate
 /api/nodes
+/api/nodes/{nodeId}/drain
+/api/nodes/{nodeId}/drain-status
+/api/nodes/{nodeId}/offline
+/api/jobs/{jobId}/history
+/api/audit
 ```
 
 - `GET /api/executions/{executionId}` 已返回父 execution、target 明细、instance/gateway、ACK/完成时间和 QUORUM carry target 标识，供 UI 与运维脚本定位跨 Gateway 重投、部分成功和结转成功目标。
 - `GET /api/outbox/dead` 与 `POST /api/outbox/{outboxId}/requeue` 已支持死信查看和手动重放；重放仅允许 `DEAD -> RETRY`，会清理 claim/ACK 状态并重置 attempt，由对应角色 worker 重新领取。
+- `POST /api/executions/{executionId}/cancel` 支持 OPERATOR/ADMIN 协作式终止；Admin UI 已接入 execution 详情、attempt 轨迹、target 明细、终止和死信重放。
+- Admin 所有非只读请求会写入结构化 `com.firefly.audit.admin` 日志，包含 method、path、RBAC role、HTTP status 和 remote address，不记录 Token 或请求密文。
 - 独立 Admin UI 已放在 `ui/admin`，Node 服务默认监听 `127.0.0.1:9720`，并将浏览器侧 `/api/*` 代理到 Java Admin HTTP API。
 - 当前 UI 路由包括：
 
@@ -135,7 +153,7 @@ config/
 
 - `plugins/plugin-api` 已提供 `FireflyPlugin`、`FireflyPluginContext` 和 `FireflyPluginManager`。
 - `plugins/metrics-prometheus` 已提供 Prometheus 文本指标插件。
-- 当前指标除 plugin up、任务数、在线节点数和 next fire time 外，还包括调度延迟、Outbox claim age、Executor ACK 延迟、执行耗时、最老活动 Outbox age、lease 续租失败、due backlog 事件、当前持有 shard 数和数据库时钟偏移/同步失败。
+- 当前指标还包括 per-shard due backlog、Executor 活跃连接、注册拒绝、断线、投递次数耗尽、调度/ACK/执行延迟、lease 续租失败和数据库时钟状态；`config/prometheus/firefly-alerts.yml` 提供可直接加载的告警规则。
 
 ### 远程执行器
 
@@ -157,12 +175,14 @@ REGISTERED
 REGISTER_REJECTED
 HEARTBEAT
 TRIGGER_JOB
+CANCEL_JOB
 ACK_JOB
 REPORT_RESULT
 UNREGISTER_EXECUTOR
 ```
 
-- `integrations/netty-spring-boot-starter` 已提供业务侧 Spring Boot 自动装配。
+- `integrations/firefly-spring-boot-starter` 已提供业务侧唯一 Spring Boot 入口；`firefly-spring-boot-autoconfigure` 仅作为内部自动配置依赖。
+- Starter 已提供 `firefly.executor.*` 默认值配置元数据，并输出自动配置激活、Gateway TCP 连接、注册成功、断线和重连日志。
 - Executor 注册已携带协议版本和能力集合。Gateway 会拒绝不支持的版本或缺失 `TARGET_ACK`、`RESULT_REPORT` 的客户端；客户端也会校验 Gateway 返回的协商结果。
 - `ExecutorResultStore` 提供内存与文件实现。文件实现使用原子替换、版本化格式、保留期和损坏文件清理，可挂载持久卷，在 Executor 进程重启后重放已完成结果。
 - `examples/netty-executor-basic` 已能模拟业务 executor 连接 server，并可自动创建远程任务。
@@ -175,20 +195,32 @@ UNREGISTER_EXECUTOR
 - `examples/embedded-basic` 用于验证进程内调度。
 - `examples/netty-executor-basic` 用于验证远程 executor 链路。
 
-## 3. 部分完成
+## 3. 本轮完成
 
-- `clients/executor-netty` 已进入模块边界，但当前主要实现仍在 `transports/netty`，后续需要决定是否把业务侧 SDK 门面下沉到 client 模块。
-- Admin API 当前已经具备任务启停、手动触发、执行列表、单条 execution target 明细、Outbox 死信查看和手动重放；Admin UI 仍需补齐 execution 详情页、attempt 链、死信操作入口和终止操作。
-- JDBC 已具备任务、节点、执行器定义、可靠派发、执行历史和 shard lease 闭环。
-- Netty 已打通长连接、会话隔离、多 Gateway 重连、协议能力协商、目标级 ACK、可插拔 Executor 结果幂等、TLS/mTLS 配置和分发路由；结果持久化使用 10,000 上限的有界队列、channel 高低水位背压和优雅排空。证书热轮换与专用 Gateway 内部转发仍未补齐。
+- 业务幂等 SDK：`BusinessIdempotencyStore`、三种 key strategy、`IdempotentJobHandler`、非 Spring 注册 API、Spring `NamedJobHandler` 自动发现和 idempotent registration factory。
+- Gateway HA：schema v9 增加 `firefly_executor_instance_location`；注册、心跳、断连维护短租约位置目录；单播、广播、分片按共享目录选址；Gateway 之间使用带令牌和 session fencing 的内部转发。
+- 重试范围：任务定义、Admin API、JDBC 参数、Outbox 不可变快照贯通 `FAILED_TARGETS_ONLY` 和 `ALL_TARGETS`，默认仅重试失败目标。
+- 协议兼容：协议升级到 v2、最低兼容 v1，`CANCELLATION` 变为可选协商能力，已有新旧客户端混合与能力降级测试。
+- 持久化审计：schema v9 增加 `firefly_audit_log` 与 `firefly_job_history`，Admin mutation 保存 actor、role、resource、outcome、before/after 和时间。
+- 运维 API：批量取消、批量死信重放、按 `rootExecutionId` 查询 attempt 链、节点排空/下线、Executor 隔离、任务变更历史；Admin UI 已增加重试范围、隔离和节点操作入口。
+- Executor 隔离会禁用逻辑定义、阻止新派发，并通知各 Gateway 关闭已有连接。
+- 完整排空生命周期已接通：`DRAINING` 节点停止新 Outbox claim、拒绝新 Executor 注册，等待持久化投递和活动 target 归零后断开空闲连接并自动转为 `OFFLINE`；进度 API 返回逐项计数。
+- Gateway 内部请求使用 HMAC 时间戳和 nonce 防重放，限制请求体大小，并输出转发延迟、attempt、success、failure 指标和告警。
+- `clients:executor-netty` 提供带数据库行锁、过期接管和 claim token fencing 的 `JdbcBusinessIdempotencyStore` 及三种方言 SQL；Firefly Spring Boot Starter 可从业务 `DataSource` 自动装配。
+- 批量取消、批量死信重放返回逐项状态；Executor 隔离返回联系 Gateway 数量和失败地址。
+- `firefly-spring-boot-starter` 支持可重复的 `@FireflyJob` 方法注解：统一扫描业务 Bean、注册 Handler，
+  再启动 Gateway 连接；应用就绪后通过 Admin API 按 `jobId` 幂等创建任务。编程式
+  `FireflyJobRegistration` 保留为动态声明入口，默认保留控制台修改，可显式开启 `update-existing`。
+- Admin Job API 支持 `GET /api/jobs/{jobId}` 单任务查询，重复创建返回 `409`，用于多业务实例并发启动时收敛到唯一任务定义。
+- Executor 优雅停机发送 `UNREGISTER_EXECUTOR` 并等待 Channel/事件线程组关闭；强制终止由 30 秒心跳
+  判定、共享位置租约和 Outbox ACK 重投兜底。Admin UI 区分在线绑定与离线记录，并提供完整实例详情。
 
-## 4. 下一步建议
+## 4. 仍需上线前验证
 
-1. 为失败目标级重试增加显式策略开关，并补充 Admin UI 上的 attempt 链、目标详情和终止操作。
-2. 基于现有延迟直方图建立 p99 调度延迟 SLO、告警规则和容量基线，并补充 per-shard backlog 观测。
-3. 增加 Netty 证书热轮换和更细的注册拒绝原因、连接状态观测。
-4. 继续扩展故障注入测试：网络分区、Gateway 宕机、长事务阻塞、数据库主从切换。
-5. 评估专用 Gateway 间内部转发或统一 LB/VIP 部署模式，明确跨机房场景的推荐拓扑。
+1. 在 Docker/预发环境运行 PostgreSQL、MySQL Testcontainers 与三节点故障注入；当前本机无 Docker 时真实数据库测试会跳过。
+2. 对 Gateway 内部转发做网络分区、延迟、节点重启和 10k+ Executor 位置目录压测，并按结果校准位置租约和 HTTP 超时。
+3. 关键副作用可使用内置 JDBC fenced store 快速接入，但仍需用业务唯一键/事务覆盖“副作用提交后进程崩溃、完成标记未提交”的窗口。
+4. 上线前完成容量基线、TLS/内部网络访问控制、备份恢复演练和告警阈值校准。
 
 ## 5. 常用验证入口
 

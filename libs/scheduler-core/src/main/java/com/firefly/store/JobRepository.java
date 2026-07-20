@@ -125,6 +125,16 @@ public interface JobRepository {
         return retryDispatchAfter(outboxId, delay, error, maxAttempts);
     }
 
+    default boolean deferClaimedDispatch(
+            String outboxId,
+            String claimant,
+            int claimAttempt,
+            java.time.Duration delay,
+            String reason
+    ) {
+        return retryClaimedDispatchAfter(outboxId, claimant, claimAttempt, delay, reason, Integer.MAX_VALUE);
+    }
+
     default boolean completeDispatch(String outboxId, Instant now) {
         return false;
     }
@@ -167,8 +177,34 @@ public interface JobRepository {
         return false;
     }
 
+    default int requeueDeadDispatches(List<String> outboxIds, Instant now) {
+        int requeued = 0;
+        for (String outboxId : outboxIds) {
+            if (requeueDeadDispatch(outboxId, now)) requeued++;
+        }
+        return requeued;
+    }
+
+    default boolean cancelDispatch(String executionId, Instant now, String reason) {
+        return false;
+    }
+
     default java.util.Optional<Instant> oldestActiveDispatchTime() {
         return java.util.Optional.empty();
+    }
+
+    default long countActiveDispatchesOwnedBy(String nodeId) {
+        return 0L;
+    }
+
+    default java.util.Map<Integer, Long> dueCountsByShard(Instant now, int shardCount) {
+        return list().stream()
+                .filter(record -> record.definition().enabled())
+                .filter(record -> !record.nextFireTime().isAfter(now))
+                .collect(java.util.stream.Collectors.groupingBy(
+                        record -> com.firefly.cluster.ShardHasher.shardFor(record.definition().id(), shardCount),
+                        java.util.stream.Collectors.counting()
+                ));
     }
 }
 

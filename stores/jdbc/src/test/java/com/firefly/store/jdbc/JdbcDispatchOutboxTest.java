@@ -4,6 +4,7 @@ import com.firefly.cluster.ShardHasher;
 import com.firefly.domain.CronSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.engine.ExecutionCommand;
+import com.firefly.store.DispatchOutboxStatus;
 import com.firefly.store.DispatchType;
 import org.junit.jupiter.api.Test;
 
@@ -49,12 +50,16 @@ class JdbcDispatchOutboxTest {
         var claimed = jobs.claimDispatches("node-a", now, 10, Duration.ofSeconds(15));
         assertEquals(1, claimed.size());
         assertTrue(jobs.markDispatchSent(command.executionId(), now.plusSeconds(10)));
+        assertEquals(1L, jobs.countActiveDispatchesOwnedBy("node-a"));
         databaseNow.set(now.plusSeconds(5));
         assertTrue(jobs.claimDispatches("node-b", now.plusSeconds(5), 10, Duration.ofSeconds(15)).isEmpty());
         databaseNow.set(now.plusSeconds(11));
         assertEquals(1, jobs.claimDispatches("node-b", now.plusSeconds(11), 10, Duration.ofSeconds(15)).size());
         assertTrue(jobs.markDispatchSent(command.executionId(), now.plusSeconds(20)));
+        assertEquals(0L, jobs.countActiveDispatchesOwnedBy("node-a"));
+        assertEquals(1L, jobs.countActiveDispatchesOwnedBy("node-b"));
         assertTrue(jobs.acknowledgeDispatch(command.executionId(), now.plusSeconds(12)));
+        assertEquals(0L, jobs.countActiveDispatchesOwnedBy("node-b"));
         assertTrue(jobs.claimDispatches("node-a", now.plusSeconds(30), 10, Duration.ofSeconds(15)).isEmpty());
 
         Instant third = next.plusSeconds(60);
@@ -142,6 +147,7 @@ class JdbcDispatchOutboxTest {
         ExecutionCommand command = new ExecutionCommand("dead-exec", job, now, now, "node-a", 1L);
 
         assertTrue(jobs.enqueueManual(command));
+        assertEquals(1, jobs.claimDispatches("gateway-a", now, 10, Duration.ofSeconds(15)).size());
         assertTrue(jobs.retryDispatch("dead-exec", now.plusSeconds(30), "gateway unavailable", 0));
 
         var dead = jobs.listDeadDispatches(10);
@@ -155,5 +161,40 @@ class JdbcDispatchOutboxTest {
         assertFalse(jobs.requeueDeadDispatch("dead-exec", now));
         assertTrue(jobs.listDeadDispatches(10).isEmpty());
         assertEquals(1, jobs.claimDispatches("gateway-a", now, 10, Duration.ofSeconds(15)).size());
+    }
+
+    @Test
+    void fencesLateOutboxWritesAfterAnotherGatewayReclaimsTheDispatch() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        AtomicReference<Instant> databaseNow = new AtomicReference<>(now);
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> databaseNow.get());
+        JobDefinition job = JobDefinition.builder()
+                .id("claim-fence-job").name("Claim fence job").handlerName("remote:orders:run")
+                .schedule(new CronSchedule("0 * * * * *")).build();
+        ExecutionCommand command = new ExecutionCommand("claim-fence-exec", job, now, now, "node-a", 1L);
+        assertTrue(jobs.enqueueManual(command));
+
+        var first = jobs.claimDispatches("gateway-a", now, 1, Duration.ofSeconds(5)).getFirst();
+        databaseNow.set(now.plusSeconds(6));
+        var second = jobs.claimDispatches("gateway-b", now, 1, Duration.ofSeconds(5)).getFirst();
+        assertEquals(first.attempt() + 1, second.attempt());
+        assertEquals("gateway-b", second.claimOwner());
+
+        assertFalse(jobs.markClaimedDispatchSentFor(
+                command.executionId(), "gateway-a", first.attempt(), Duration.ofSeconds(10)
+        ));
+        assertFalse(jobs.retryClaimedDispatchAfter(
+                command.executionId(), "gateway-a", first.attempt(), Duration.ofSeconds(1),
+                "late failure", 5
+        ));
+
+        assertTrue(jobs.acknowledgeDispatch(command.executionId(), now.plusSeconds(6)));
+        assertFalse(jobs.retryClaimedDispatchAfter(
+                command.executionId(), "gateway-b", second.attempt(), Duration.ofSeconds(1),
+                "late failure after ack", 5
+        ));
+        assertEquals(1L, jobs.outboxCounts().get(DispatchOutboxStatus.DONE));
+        assertTrue(jobs.claimDispatches("gateway-c", now.plusSeconds(30), 1, Duration.ofSeconds(5)).isEmpty());
     }
 }

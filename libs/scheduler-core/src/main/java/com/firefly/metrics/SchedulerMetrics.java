@@ -25,8 +25,16 @@ public final class SchedulerMetrics {
     private final DurationHistogram outboxAge = new DurationHistogram();
     private final DurationHistogram acknowledgementDelay = new DurationHistogram();
     private final DurationHistogram executionDuration = new DurationHistogram();
+    private final DurationHistogram gatewayForwardDuration = new DurationHistogram();
     private final LongAdder leaseRenewalFailures = new LongAdder();
     private final LongAdder dueBacklogEvents = new LongAdder();
+    private final LongAdder outboxDeliveryExhaustions = new LongAdder();
+    private final AtomicInteger executorConnections = new AtomicInteger();
+    private final LongAdder executorRegistrationRejections = new LongAdder();
+    private final LongAdder executorDisconnects = new LongAdder();
+    private final LongAdder gatewayForwardAttempts = new LongAdder();
+    private final LongAdder gatewayForwardSuccesses = new LongAdder();
+    private final LongAdder gatewayForwardFailures = new LongAdder();
     private final AtomicInteger ownedShards = new AtomicInteger();
     private final AtomicLong clockOffsetMillis = new AtomicLong();
     private final LongAdder clockDriftWarnings = new LongAdder();
@@ -56,6 +64,29 @@ public final class SchedulerMetrics {
         dueBacklogEvents.increment();
     }
 
+    public void recordOutboxDeliveryExhaustion() {
+        outboxDeliveryExhaustions.increment();
+    }
+
+    public void executorConnections(int value) {
+        executorConnections.set(Math.max(0, value));
+    }
+
+    public void recordExecutorRegistrationRejection() {
+        executorRegistrationRejections.increment();
+    }
+
+    public void recordExecutorDisconnect() {
+        executorDisconnects.increment();
+    }
+
+    public void recordGatewayForward(Duration duration, boolean success) {
+        gatewayForwardAttempts.increment();
+        gatewayForwardDuration.observe(duration);
+        if (success) gatewayForwardSuccesses.increment();
+        else gatewayForwardFailures.increment();
+    }
+
     public void ownedShards(int value) {
         ownedShards.set(Math.max(0, value));
     }
@@ -75,8 +106,13 @@ public final class SchedulerMetrics {
     public Snapshot snapshot() {
         return new Snapshot(
                 scheduleDelay.snapshot(), outboxAge.snapshot(), acknowledgementDelay.snapshot(),
-                executionDuration.snapshot(), leaseRenewalFailures.sum(), dueBacklogEvents.sum(), ownedShards.get(),
-                clockOffsetMillis.get(), clockDriftWarnings.sum(), clockSyncFailures.sum()
+                executionDuration.snapshot(), gatewayForwardDuration.snapshot(),
+                leaseRenewalFailures.sum(), dueBacklogEvents.sum(),
+                outboxDeliveryExhaustions.sum(), executorConnections.get(),
+                executorRegistrationRejections.sum(), executorDisconnects.sum(),
+                gatewayForwardAttempts.sum(), gatewayForwardSuccesses.sum(), gatewayForwardFailures.sum(),
+                ownedShards.get(), clockOffsetMillis.get(),
+                clockDriftWarnings.sum(), clockSyncFailures.sum()
         );
     }
 
@@ -85,8 +121,16 @@ public final class SchedulerMetrics {
             DurationHistogramSnapshot outboxAge,
             DurationHistogramSnapshot acknowledgementDelay,
             DurationHistogramSnapshot executionDuration,
+            DurationHistogramSnapshot gatewayForwardDuration,
             long leaseRenewalFailures,
             long dueBacklogEvents,
+            long outboxDeliveryExhaustions,
+            int executorConnections,
+            long executorRegistrationRejections,
+            long executorDisconnects,
+            long gatewayForwardAttempts,
+            long gatewayForwardSuccesses,
+            long gatewayForwardFailures,
             int ownedShards,
             long clockOffsetMillis,
             long clockDriftWarnings,

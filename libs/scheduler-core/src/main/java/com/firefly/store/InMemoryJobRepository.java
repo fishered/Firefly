@@ -4,6 +4,7 @@ import com.firefly.domain.JobDefinition;
 import com.firefly.cluster.ShardHasher;
 import com.firefly.engine.ExecutionCommand;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,6 +26,7 @@ import java.util.TreeSet;
  */
 public final class InMemoryJobRepository implements JobRepository {
     private final Object lock = new Object();
+    private final Clock clock;
     private final Map<String, ScheduledJobRecord> jobs = new HashMap<>();
     private final Map<String, DispatchOutboxRecord> outbox = new HashMap<>();
     private final Set<String> retryScheduled = new java.util.HashSet<>();
@@ -33,6 +35,14 @@ public final class InMemoryJobRepository implements JobRepository {
             Comparator.comparing(ScheduledJobRecord::nextFireTime)
                     .thenComparing(record -> record.definition().id())
     );
+
+    public InMemoryJobRepository() {
+        this(Clock.systemUTC());
+    }
+
+    public InMemoryJobRepository(Clock clock) {
+        this.clock = Objects.requireNonNull(clock, "clock");
+    }
 
     @Override
     public void save(JobDefinition definition, Instant initialNextFireTime) {
@@ -250,7 +260,7 @@ public final class InMemoryJobRepository implements JobRepository {
             DispatchOutboxRecord current = outbox.get(outboxId);
             if (current == null || current.status() != DispatchOutboxStatus.CLAIMED) return false;
             outbox.put(outboxId, copy(current, DispatchOutboxStatus.SENT, current.attempt(),
-                    current.availableAt(), "", null, ackDeadline, current.lastError()));
+                    current.availableAt(), current.claimOwner(), null, ackDeadline, current.lastError()));
             return true;
         }
     }
@@ -266,7 +276,7 @@ public final class InMemoryJobRepository implements JobRepository {
             DispatchOutboxRecord current = outbox.get(outboxId);
             if (!ownsClaim(current, claimant, claimAttempt)) return false;
             outbox.put(outboxId, copy(current, DispatchOutboxStatus.SENT, current.attempt(),
-                    current.availableAt(), "", null, current.availableAt().plus(ackTimeout), current.lastError()));
+                    current.availableAt(), claimant, null, clock.instant().plus(ackTimeout), current.lastError()));
             return true;
         }
     }
@@ -309,7 +319,26 @@ public final class InMemoryJobRepository implements JobRepository {
             if (!ownsClaim(current, claimant, claimAttempt)) return false;
             outbox.put(outboxId, copy(current,
                     current.attempt() >= maxAttempts ? DispatchOutboxStatus.DEAD : DispatchOutboxStatus.RETRY,
-                    current.attempt(), current.availableAt().plus(delay), "", null, null, error));
+                    current.attempt(), clock.instant().plus(delay), "", null, null, error));
+            return true;
+        }
+    }
+
+    @Override
+    public boolean deferClaimedDispatch(
+            String outboxId,
+            String claimant,
+            int claimAttempt,
+            java.time.Duration delay,
+            String reason
+    ) {
+        synchronized (lock) {
+            DispatchOutboxRecord current = outbox.get(outboxId);
+            if (!ownsClaim(current, claimant, claimAttempt)) return false;
+            outbox.put(outboxId, copy(
+                    current, DispatchOutboxStatus.RETRY, Math.max(0, current.attempt() - 1),
+                    clock.instant().plus(delay), "", null, null, reason
+            ));
             return true;
         }
     }
@@ -431,6 +460,20 @@ public final class InMemoryJobRepository implements JobRepository {
     }
 
     @Override
+    public boolean cancelDispatch(String executionId, Instant now, String reason) {
+        synchronized (lock) {
+            DispatchOutboxRecord current = outbox.get(executionId);
+            if (current == null || current.status() == DispatchOutboxStatus.DONE
+                    || current.status() == DispatchOutboxStatus.DEAD) return false;
+            outbox.put(executionId, copy(
+                    current, DispatchOutboxStatus.DEAD, current.attempt(), current.availableAt(),
+                    "", null, null, reason == null || reason.isBlank() ? "cancelled" : reason
+            ));
+            return true;
+        }
+    }
+
+    @Override
     public Optional<Instant> oldestActiveDispatchTime() {
         synchronized (lock) {
             return outbox.values().stream()
@@ -438,6 +481,17 @@ public final class InMemoryJobRepository implements JobRepository {
                             && record.status() != DispatchOutboxStatus.DEAD)
                     .map(record -> record.command().dispatchTime())
                     .min(Instant::compareTo);
+        }
+    }
+
+    @Override
+    public long countActiveDispatchesOwnedBy(String nodeId) {
+        synchronized (lock) {
+            return outbox.values().stream()
+                    .filter(record -> record.claimOwner().equals(nodeId))
+                    .filter(record -> record.status() == DispatchOutboxStatus.CLAIMED
+                            || record.status() == DispatchOutboxStatus.SENT)
+                    .count();
         }
     }
 

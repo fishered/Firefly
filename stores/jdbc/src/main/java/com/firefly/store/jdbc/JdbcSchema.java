@@ -22,32 +22,44 @@ import java.util.Set;
  * Initializes and validates JDBC schema by selecting a dialect-specific SQL resource.
  */
 public final class JdbcSchema {
-    public static final int CURRENT_VERSION = 8;
+    public static final int CURRENT_VERSION = 9;
 
-    private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.of(
-            "firefly_schema_version", Set.of("version", "installed_at"),
-            "firefly_node", Set.of("node_id", "roles", "registered_at", "last_heartbeat_at", "status", "metadata"),
-            "firefly_shard_lease", Set.of("shard_id", "owner_node_id", "lease_until", "fencing_token"),
-            "firefly_executor", Set.of("executor_name", "description", "protocols", "metadata", "enabled"),
-            "firefly_job_group", Set.of("group_id", "group_name", "executor_name", "metadata", "enabled"),
-            "firefly_execution", Set.of(
+    private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.ofEntries(
+            Map.entry("firefly_schema_version", Set.of("version", "installed_at")),
+            Map.entry("firefly_node", Set.of("node_id", "roles", "registered_at", "last_heartbeat_at", "status", "metadata")),
+            Map.entry("firefly_shard_lease", Set.of("shard_id", "owner_node_id", "lease_until", "fencing_token")),
+            Map.entry("firefly_executor", Set.of("executor_name", "description", "protocols", "metadata", "enabled")),
+            Map.entry("firefly_job_group", Set.of("group_id", "group_name", "executor_name", "metadata", "enabled")),
+            Map.entry("firefly_execution", Set.of(
                     "execution_id", "job_id", "scheduled_fire_time", "dispatch_time", "dispatch_mode",
                     "completion_policy", "status", "expected_targets", "accepted_targets", "owner_node_id",
                     "fencing_token", "root_execution_id", "run_attempt", "retry_scheduled", "timeout_at",
                     "created_at", "updated_at"
-            ),
-            "firefly_execution_target", Set.of(
+            )),
+            Map.entry("firefly_execution_target", Set.of(
                     "target_execution_id", "execution_id", "instance_id", "gateway_node_id", "shard_index",
                     "status", "attempt", "acknowledged_at", "completed_at", "error_message", "created_at", "updated_at"
-            ),
-            "firefly_dispatch_outbox", Set.of(
+            )),
+            Map.entry("firefly_dispatch_outbox", Set.of(
                     "outbox_id", "execution_id", "job_id", "scheduled_fire_time", "dispatch_time", "status",
                     "attempt", "available_at", "claim_owner", "claim_until", "ack_deadline", "owner_node_id",
                     "fencing_token", "dispatch_type", "snapshot_payload", "root_execution_id", "run_attempt",
                     "last_error", "created_at", "updated_at"
-            ),
-            "firefly_cluster_metadata", Set.of("metadata_key", "metadata_value", "updated_at"),
-            "firefly_job", Set.of(
+            )),
+            Map.entry("firefly_cluster_metadata", Set.of("metadata_key", "metadata_value", "updated_at")),
+            Map.entry("firefly_executor_instance_location", Set.of(
+                    "executor_name", "instance_id", "gateway_node_id", "gateway_address", "session_id",
+                    "status", "last_seen_at", "lease_until", "metadata"
+            )),
+            Map.entry("firefly_audit_log", Set.of(
+                    "audit_id", "occurred_at", "actor", "role_name", "action_name", "resource_type",
+                    "resource_id", "outcome", "before_payload", "after_payload", "detail"
+            )),
+            Map.entry("firefly_job_history", Set.of(
+                    "history_id", "job_id", "job_version", "action_name", "actor", "before_payload",
+                    "after_payload", "occurred_at"
+            )),
+            Map.entry("firefly_job", Set.of(
                     "job_id",
                     "group_id",
                     "job_name",
@@ -67,10 +79,11 @@ public final class JdbcSchema {
                     "completion_policy",
                     "shard_count",
                     "routing_key",
+                    "retry_scope",
                     "enabled",
                     "next_fire_time",
                     "version"
-            )
+            ))
     );
 
     private JdbcSchema() {
@@ -302,6 +315,7 @@ public final class JdbcSchema {
                 new ColumnMigration("completion_policy", "varchar(32) not null default 'ALL_SUCCESS'"),
                 new ColumnMigration("shard_count", "integer not null default 1"),
                 new ColumnMigration("routing_key", "varchar(512) not null default ''"),
+                new ColumnMigration("retry_scope", "varchar(32) not null default 'FAILED_TARGETS_ONLY'"),
                 new ColumnMigration("shard_id", "integer not null default 0")
         );
         try (Statement statement = connection.createStatement()) {

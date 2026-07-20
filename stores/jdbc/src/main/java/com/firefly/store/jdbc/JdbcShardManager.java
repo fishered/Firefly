@@ -153,6 +153,23 @@ public final class JdbcShardManager implements ShardManager {
         }
     }
 
+    @Override
+    public long countActiveOwnedBy(String nodeId, Instant now) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select count(*) from firefly_shard_lease
+                     where owner_node_id=? and lease_until>?
+                     """)) {
+            statement.setString(1, nodeId);
+            statement.setTimestamp(2, Timestamp.from(timeSource.now(connection)));
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getLong(1) : 0L;
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to count active shard leases by owner", e);
+        }
+    }
+
     private Optional<ShardLease> selectForUpdate(Connection connection, int shardId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 select shard_id, owner_node_id, lease_until, fencing_token

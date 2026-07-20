@@ -85,7 +85,7 @@ async function serveStatic(url, res) {
     const content = await readFile(file);
     res.writeHead(200, {
       'Content-Type': contentTypes.get(extname(file)) ?? 'application/octet-stream',
-      'Cache-Control': extname(file) === '.html' ? 'no-store' : 'public, max-age=300'
+      'Cache-Control': extname(file) === '.html' ? 'no-store' : 'no-cache'
     });
     res.end(content);
   } catch {

@@ -315,7 +315,32 @@ public record ServerOptions(
                                 gateway.resultQueueCapacity()),
                         intOption(flags, env, config, "firefly.executor.gateway.netty.max-frame-length",
                                 "FIREFLY_EXECUTOR_GATEWAY_NETTY_MAX_FRAME_LENGTH", gateway.maxFrameLength()),
-                        gatewayTls
+                        gatewayTls,
+                        durationOption(flags, env, config,
+                                "firefly.executor.gateway.netty.tls.reload-interval",
+                                "FIREFLY_EXECUTOR_GATEWAY_NETTY_TLS_RELOAD_INTERVAL",
+                                gateway.tlsReloadInterval()),
+                        stringOption(flags, env, config,
+                                "firefly.executor.gateway.internal.host",
+                                "FIREFLY_EXECUTOR_GATEWAY_INTERNAL_HOST", gateway.internalForwardHost()),
+                        intOption(flags, env, config,
+                                "firefly.executor.gateway.internal.port",
+                                "FIREFLY_EXECUTOR_GATEWAY_INTERNAL_PORT", gateway.internalForwardPort()),
+                        stringOption(flags, env, config,
+                                "firefly.executor.gateway.internal.advertised-address",
+                                "FIREFLY_EXECUTOR_GATEWAY_INTERNAL_ADVERTISED_ADDRESS",
+                                gateway.advertisedInternalAddress()),
+                        stringOption(flags, env, config,
+                                "firefly.executor.gateway.internal.auth-token",
+                                "FIREFLY_EXECUTOR_GATEWAY_INTERNAL_AUTH_TOKEN", gateway.internalAuthToken()),
+                        durationOption(flags, env, config,
+                                "firefly.executor.gateway.instance-location-refresh-interval",
+                                "FIREFLY_EXECUTOR_GATEWAY_INSTANCE_LOCATION_REFRESH_INTERVAL",
+                                gateway.instanceLocationRefreshInterval()),
+                        durationOption(flags, env, config,
+                                "firefly.executor.gateway.instance-location-lease",
+                                "FIREFLY_EXECUTOR_GATEWAY_INSTANCE_LOCATION_LEASE",
+                                gateway.instanceLocationLease())
                 ),
                 new AdminAuthorizationOptions(
                         stringOption(flags, env, config, "firefly.admin-http.reader-token",
@@ -324,6 +349,12 @@ public record ServerOptions(
                                 "FIREFLY_ADMIN_HTTP_OPERATOR_TOKEN", ""),
                         stringOption(flags, env, config, "firefly.admin-http.admin-token",
                                 "FIREFLY_ADMIN_HTTP_ADMIN_TOKEN", "")
+                ),
+                new com.firefly.engine.SchedulerEngineOptions(
+                        intOption(flags, env, config, "firefly.scheduler.max-due-records-per-tick",
+                                "FIREFLY_SCHEDULER_MAX_DUE_RECORDS_PER_TICK", 10_000),
+                        durationOption(flags, env, config, "firefly.scheduler.max-idle-wakeup",
+                                "FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", Duration.ofMillis(500))
                 )
         );
     }

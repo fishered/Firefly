@@ -47,7 +47,7 @@ firefly
 ├── server                 # 启动入口和 Guice 装配
 ├── integrations
 │   ├── embedded           # 传统 Java / 非 Spring 集成
-│   ├── netty-spring-boot-starter
+│   ├── firefly-spring-boot-starter
 │   ├── spring-boot-starter
 │   └── server-cli
 ├── executors

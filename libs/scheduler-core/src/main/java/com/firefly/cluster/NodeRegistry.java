@@ -17,5 +17,13 @@ public interface NodeRegistry {
 
     boolean markOffline(String nodeId);
 
+    default boolean markDraining(String nodeId) {
+        return false;
+    }
+
     List<FireflyNode> listOnline(Instant now, Duration heartbeatTimeout);
+
+    default List<FireflyNode> listAll() {
+        return List.of();
+    }
 }

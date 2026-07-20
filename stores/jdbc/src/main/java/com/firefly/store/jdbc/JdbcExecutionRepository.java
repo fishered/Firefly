@@ -221,6 +221,25 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
     }
 
     @Override
+    public List<ExecutionRecord> listByRootExecutionId(String rootExecutionId) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select * from firefly_execution
+                     where root_execution_id=?
+                     order by run_attempt, created_at, execution_id
+                     """)) {
+            statement.setString(1, rootExecutionId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<ExecutionRecord> records = new ArrayList<>();
+                while (resultSet.next()) records.add(mapExecution(resultSet));
+                return List.copyOf(records);
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to list execution attempts", e);
+        }
+    }
+
+    @Override
     public List<String> expireTimedOutExecutions(Instant now, int limit) {
         if (limit <= 0) return List.of();
         try (Connection connection = dataSource.getConnection()) {
@@ -298,7 +317,7 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
             List<String> ids = new ArrayList<>();
             try (PreparedStatement select = connection.prepareStatement("""
                     select execution_id from firefly_execution
-                    where updated_at < ? and status in ('SUCCEEDED','FAILED','PARTIAL','TIMEOUT')
+                    where updated_at < ? and status in ('SUCCEEDED','FAILED','PARTIAL','TIMEOUT','CANCELLED')
                     order by updated_at
                     """)) {
                 select.setTimestamp(1, Timestamp.from(cutoff)); select.setMaxRows(limit);
@@ -340,6 +359,65 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
         }
     }
 
+    @Override
+    public boolean cancelExecution(String executionId, Instant cancelledAt, String reason) {
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                Instant databaseNow = timeSource.now(connection);
+                ExecutionRecord current = lockExecution(connection, executionId).orElse(null);
+                if (current == null || current.status().terminal()) {
+                    connection.rollback();
+                    return false;
+                }
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        update firefly_execution set status='CANCELLED', updated_at=?
+                        where execution_id=? and status in ('DISPATCHING','DISPATCHED','RUNNING')
+                        """)) {
+                    statement.setTimestamp(1, Timestamp.from(databaseNow));
+                    statement.setString(2, executionId);
+                    if (statement.executeUpdate() == 0) {
+                        connection.rollback();
+                        return false;
+                    }
+                }
+                String message = reason == null || reason.isBlank() ? "cancelled" : reason;
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        update firefly_execution_target
+                        set status='CANCELLED', completed_at=?, error_message=?, updated_at=?
+                        where execution_id=? and status in ('DISPATCHING','DISPATCHED','RUNNING')
+                          and completed_at is null
+                        """)) {
+                    statement.setTimestamp(1, Timestamp.from(databaseNow));
+                    statement.setString(2, message);
+                    statement.setTimestamp(3, Timestamp.from(databaseNow));
+                    statement.setString(4, executionId);
+                    statement.executeUpdate();
+                }
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        update firefly_dispatch_outbox
+                        set status='DEAD', claim_owner=null, claim_until=null, ack_deadline=null,
+                            last_error=?, updated_at=?
+                        where execution_id=? and status not in ('DONE','DEAD')
+                        """)) {
+                    statement.setString(1, message);
+                    statement.setTimestamp(2, Timestamp.from(databaseNow));
+                    statement.setString(3, executionId);
+                    statement.executeUpdate();
+                }
+                connection.commit();
+                return true;
+            } catch (SQLException | RuntimeException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to cancel execution", e);
+        }
+    }
+
     private void saveExecution(Connection connection, ExecutionRecord execution) throws SQLException {
         int updated = updateExecution(connection, execution);
         if (updated == 0 && !executionExists(connection, execution.executionId())) {
@@ -376,7 +454,7 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
             case DISPATCHING -> List.of(ExecutionStatus.DISPATCHING);
             case DISPATCHED -> List.of(ExecutionStatus.DISPATCHING, ExecutionStatus.DISPATCHED);
             case RUNNING -> List.of(ExecutionStatus.DISPATCHING, ExecutionStatus.DISPATCHED, ExecutionStatus.RUNNING);
-            case SUCCEEDED, PARTIAL, FAILED, TIMEOUT -> List.of(
+            case SUCCEEDED, PARTIAL, FAILED, TIMEOUT, CANCELLED -> List.of(
                     ExecutionStatus.DISPATCHING, ExecutionStatus.DISPATCHED, ExecutionStatus.RUNNING, next
             );
         };
@@ -576,5 +654,21 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
     private void bindNullable(PreparedStatement statement, int index, Instant value) throws SQLException {
         if (value == null) statement.setNull(index, java.sql.Types.TIMESTAMP);
         else statement.setTimestamp(index, Timestamp.from(value));
+    }
+
+    @Override
+    public long countActiveTargetsByGateway(String gatewayNodeId) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select count(*) from firefly_execution_target
+                     where gateway_node_id=? and status not in ('SUCCEEDED','FAILED','TIMEOUT','PARTIAL','CANCELLED')
+                     """)) {
+            statement.setString(1, gatewayNodeId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getLong(1) : 0L;
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to count active execution targets by Gateway", e);
+        }
     }
 }

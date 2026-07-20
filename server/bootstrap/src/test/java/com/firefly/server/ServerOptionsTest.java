@@ -356,7 +356,10 @@ final class ServerOptionsTest {
                 Map.entry("FIREFLY_JDBC_CLOCK_SYNC_INTERVAL", "PT20S"),
                 Map.entry("FIREFLY_JDBC_CLOCK_DRIFT_WARNING_THRESHOLD", "PT0.5S"),
                 Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_RESULT_QUEUE_CAPACITY", "2048"),
-                Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_MAX_FRAME_LENGTH", "131072")
+                Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_MAX_FRAME_LENGTH", "131072"),
+                Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_TLS_RELOAD_INTERVAL", "PT15S"),
+                Map.entry("FIREFLY_SCHEDULER_MAX_DUE_RECORDS_PER_TICK", "2500"),
+                Map.entry("FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", "PT0.25S")
         ));
 
         assertEquals(Duration.ofMillis(50), options.runtimeOptions().dispatchOutbox().pollInterval());
@@ -367,6 +370,9 @@ final class ServerOptionsTest {
         assertEquals(Duration.ofMillis(500), options.runtimeOptions().jdbcClock().driftWarningThreshold());
         assertEquals(2048, options.runtimeOptions().nettyGateway().resultQueueCapacity());
         assertEquals(131072, options.runtimeOptions().nettyGateway().maxFrameLength());
+        assertEquals(Duration.ofSeconds(15), options.runtimeOptions().nettyGateway().tlsReloadInterval());
+        assertEquals(2500, options.runtimeOptions().schedulerEngine().maxDueRecordsPerTick());
+        assertEquals(Duration.ofMillis(250), options.runtimeOptions().schedulerEngine().maxIdleWakeup());
     }
 
     @Test

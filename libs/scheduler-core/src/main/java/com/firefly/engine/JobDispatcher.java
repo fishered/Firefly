@@ -186,7 +186,8 @@ public final class JobDispatcher {
                     command.ownerNodeId(),
                     command.fencingToken(),
                     command.rootExecutionId(),
-                    command.runAttempt()
+                    command.runAttempt(),
+                    definition.retryScope()
             ));
             if (!result.accepted()) {
                 throw new IllegalStateException("no online executor instance for " + executorName);

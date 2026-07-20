@@ -1,0 +1,113 @@
+{
+  "properties": [
+    {
+      "name": "firefly.executor.auto-start",
+      "defaultValue": true,
+      "description": "Whether the executor client starts automatically with the Spring context."
+    },
+    {
+      "name": "firefly.executor.scheduler-host",
+      "defaultValue": "127.0.0.1",
+      "description": "Fallback Firefly gateway host when gateway-addresses is empty."
+    },
+    {
+      "name": "firefly.executor.scheduler-port",
+      "defaultValue": 9700,
+      "description": "Fallback Firefly gateway port when gateway-addresses is empty."
+    },
+    {
+      "name": "firefly.executor.gateway-addresses",
+      "defaultValue": [],
+      "description": "Firefly gateway addresses in host:port form. The client connects to every configured gateway."
+    },
+    {
+      "name": "firefly.executor.instance-id",
+      "description": "Stable identity of this service replica. Configure a value unique per replica to replace an old session immediately after restart."
+    },
+    {
+      "name": "firefly.executor.heartbeat-interval",
+      "defaultValue": "10s",
+      "description": "Interval between executor heartbeats."
+    },
+    {
+      "name": "firefly.executor.reconnect-initial-delay",
+      "defaultValue": "1s",
+      "description": "Initial reconnect delay after a gateway connection failure."
+    },
+    {
+      "name": "firefly.executor.reconnect-max-delay",
+      "defaultValue": "30s",
+      "description": "Maximum reconnect delay after repeated gateway connection failures."
+    },
+    {
+      "name": "firefly.executor.idempotency-retention",
+      "defaultValue": "24h",
+      "description": "Retention of persisted executor results used for delivery deduplication."
+    },
+    {
+      "name": "firefly.executor.tls-enabled",
+      "defaultValue": false,
+      "description": "Whether TLS is enabled for gateway connections."
+    },
+    {
+      "name": "firefly.executor.tls-verify-hostname",
+      "defaultValue": true,
+      "description": "Whether the gateway TLS certificate hostname is verified."
+    },
+    {
+      "name": "firefly.executor.business-idempotency.enabled",
+      "defaultValue": false,
+      "description": "Whether a JDBC business idempotency store is auto-configured from the application DataSource."
+    },
+    {
+      "name": "firefly.executor.business-idempotency.abandoned-claim-timeout",
+      "defaultValue": "30m",
+      "description": "Time after which an unfinished business idempotency claim may be taken over."
+    },
+    {
+      "name": "firefly.executor.business-idempotency.table-name",
+      "defaultValue": "firefly_executor_idempotency",
+      "description": "Business idempotency table name."
+    },
+    {
+      "name": "firefly.executor.job-registration.enabled",
+      "defaultValue": true,
+      "description": "Whether @FireflyJob declarations and programmatic FireflyJobRegistration beans are synchronized after the Spring application is ready."
+    },
+    {
+      "name": "firefly.executor.job-registration.admin-url",
+      "defaultValue": "http://127.0.0.1:9710",
+      "description": "Base URL of the Firefly Admin API used for startup job registration."
+    },
+    {
+      "name": "firefly.executor.job-registration.admin-token",
+      "defaultValue": "",
+      "description": "Admin API token used for startup job registration. Creating a job requires an ADMIN role token."
+    },
+    {
+      "name": "firefly.executor.job-registration.update-existing",
+      "defaultValue": false,
+      "description": "Whether an existing job is updated from its Spring declaration. Disabled by default to preserve console changes."
+    },
+    {
+      "name": "firefly.executor.job-registration.fail-fast",
+      "defaultValue": false,
+      "description": "Whether startup fails when one or more declared jobs cannot be synchronized."
+    },
+    {
+      "name": "firefly.executor.job-registration.max-attempts",
+      "defaultValue": 3,
+      "description": "Maximum synchronization attempts per declared job."
+    },
+    {
+      "name": "firefly.executor.job-registration.retry-delay",
+      "defaultValue": "1s",
+      "description": "Delay between startup job synchronization attempts."
+    },
+    {
+      "name": "firefly.executor.job-registration.request-timeout",
+      "defaultValue": "5s",
+      "description": "Timeout for each Firefly Admin API request."
+    }
+  ]
+}

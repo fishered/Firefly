@@ -414,7 +414,7 @@ public final class JdbcJobRepository implements JobRepository {
     ) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                      update firefly_dispatch_outbox set status='SENT', ack_deadline=?, claim_until=null,
-                         claim_owner=null, last_error='', updated_at=? where outbox_id=? and status='CLAIMED'
+                         last_error='', updated_at=? where outbox_id=? and status='CLAIMED'
                      """)) {
             statement.setTimestamp(1, Timestamp.from(ackDeadline));
             statement.setTimestamp(2, Timestamp.from(updatedAt));
@@ -444,7 +444,7 @@ public final class JdbcJobRepository implements JobRepository {
             Instant databaseNow = timeSource.now(connection);
             try (PreparedStatement statement = connection.prepareStatement("""
                     update firefly_dispatch_outbox
-                    set status='SENT', ack_deadline=?, claim_owner=null, claim_until=null,
+                    set status='SENT', ack_deadline=?, claim_until=null,
                         last_error='', updated_at=?
                     where outbox_id=? and status='CLAIMED' and claim_owner=? and attempt=?
                     """)) {
@@ -546,6 +546,36 @@ public final class JdbcJobRepository implements JobRepository {
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to retry claimed dispatch outbox", e);
+        }
+    }
+
+    @Override
+    public boolean deferClaimedDispatch(
+            String outboxId,
+            String claimant,
+            int claimAttempt,
+            Duration delay,
+            String reason
+    ) {
+        try (Connection connection = dataSource.getConnection()) {
+            Instant databaseNow = timeSource.now(connection);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    update firefly_dispatch_outbox
+                    set status='RETRY', attempt=case when attempt > 0 then attempt - 1 else 0 end,
+                        available_at=?, claim_owner=null, claim_until=null, ack_deadline=null,
+                        last_error=?, updated_at=?
+                    where outbox_id=? and status='CLAIMED' and claim_owner=? and attempt=?
+                    """)) {
+                statement.setTimestamp(1, Timestamp.from(databaseNow.plus(delay)));
+                statement.setString(2, reason == null ? "" : reason);
+                statement.setTimestamp(3, Timestamp.from(databaseNow));
+                statement.setString(4, outboxId);
+                statement.setString(5, claimant);
+                statement.setInt(6, claimAttempt);
+                return statement.executeUpdate() > 0;
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to defer claimed dispatch outbox", e);
         }
     }
 
@@ -738,6 +768,7 @@ public final class JdbcJobRepository implements JobRepository {
                 java.util.Map.entry("completionPolicy", definition.completionPolicy().name()),
                 java.util.Map.entry("shardCount", Integer.toString(definition.shardCount())),
                 java.util.Map.entry("routingKey", definition.routingKey()),
+                java.util.Map.entry("retryScope", definition.retryScope().name()),
                 java.util.Map.entry("enabled", Boolean.toString(definition.enabled()))
         ));
     }
@@ -782,6 +813,8 @@ public final class JdbcJobRepository implements JobRepository {
                 .completionPolicy(ExecutorCompletionPolicy.valueOf(snapshot.get("completionPolicy")))
                 .shardCount(Integer.parseInt(snapshot.get("shardCount")))
                 .routingKey(snapshot.get("routingKey"))
+                .retryScope(com.firefly.domain.ExecutorRetryScope.valueOf(
+                        snapshot.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")))
                 .enabled(Boolean.parseBoolean(snapshot.get("enabled")));
         String destinationType = snapshot.get("destinationType");
         if (destinationType != null) {
@@ -1005,6 +1038,26 @@ public final class JdbcJobRepository implements JobRepository {
     }
 
     @Override
+    public boolean cancelDispatch(String executionId, Instant now, String reason) {
+        Objects.requireNonNull(executionId, "executionId");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update firefly_dispatch_outbox
+                     set status='DEAD', claim_owner=null, claim_until=null, ack_deadline=null,
+                         last_error=?, updated_at=?
+                     where execution_id=? and status not in ('DONE','DEAD')
+                     """)) {
+            Instant databaseNow = timeSource.now(connection);
+            statement.setString(1, reason == null || reason.isBlank() ? "cancelled" : reason);
+            statement.setTimestamp(2, Timestamp.from(databaseNow));
+            statement.setString(3, executionId);
+            return statement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new JdbcException("failed to cancel dispatch outbox", e);
+        }
+    }
+
+    @Override
     public Optional<Instant> oldestActiveDispatchTime() {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
@@ -1016,6 +1069,41 @@ public final class JdbcJobRepository implements JobRepository {
             return value == null ? Optional.empty() : Optional.of(value.toInstant());
         } catch (SQLException e) {
             throw new JdbcException("failed to read oldest active dispatch", e);
+        }
+    }
+
+    @Override
+    public long countActiveDispatchesOwnedBy(String nodeId) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select count(*) from firefly_dispatch_outbox
+                     where claim_owner=? and status in ('CLAIMED','SENT')
+                     """)) {
+            statement.setString(1, nodeId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getLong(1) : 0L;
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to count active dispatches by owner", e);
+        }
+    }
+
+    @Override
+    public java.util.Map<Integer, Long> dueCountsByShard(Instant now, int shardCount) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select shard_id, count(*) from firefly_job
+                     where enabled=true and next_fire_time <= ?
+                     group by shard_id order by shard_id
+                     """)) {
+            statement.setTimestamp(1, Timestamp.from(timeSource.now(connection)));
+            try (ResultSet resultSet = statement.executeQuery()) {
+                java.util.Map<Integer, Long> counts = new java.util.LinkedHashMap<>();
+                while (resultSet.next()) counts.put(resultSet.getInt(1), resultSet.getLong(2));
+                return java.util.Map.copyOf(counts);
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to count due jobs by shard", e);
         }
     }
 
@@ -1094,13 +1182,14 @@ public final class JdbcJobRepository implements JobRepository {
                     completion_policy = ?,
                     shard_count = ?,
                     routing_key = ?,
+                    retry_scope = ?,
                     enabled = ?,
                     next_fire_time = ?,
                     version = version + 1
                 where job_id = ?
                 """)) {
             bindJob(statement, definition, nextFireTime);
-            statement.setString(21, definition.id());
+            statement.setString(22, definition.id());
             return statement.executeUpdate();
         }
     }
@@ -1111,11 +1200,11 @@ public final class JdbcJobRepository implements JobRepository {
                 (group_id, job_name, handler_name, schedule_type, schedule_value, zone_id,
                  misfire_policy, misfire_grace, concurrency_policy, max_catch_up_count,
                  timeout_value, parameters, shard_id, dispatch_mode, routing_strategy, completion_policy,
-                 shard_count, routing_key, enabled, next_fire_time, version, job_id)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                 shard_count, routing_key, retry_scope, enabled, next_fire_time, version, job_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """)) {
             bindJob(statement, definition, nextFireTime);
-            statement.setString(21, definition.id());
+            statement.setString(22, definition.id());
             statement.executeUpdate();
         }
     }
@@ -1140,8 +1229,9 @@ public final class JdbcJobRepository implements JobRepository {
         statement.setString(16, definition.completionPolicy().name());
         statement.setInt(17, definition.shardCount());
         statement.setString(18, definition.routingKey());
-        statement.setBoolean(19, definition.enabled());
-        statement.setTimestamp(20, Timestamp.from(nextFireTime));
+        statement.setString(19, definition.retryScope().name());
+        statement.setBoolean(20, definition.enabled());
+        statement.setTimestamp(21, Timestamp.from(nextFireTime));
     }
 
     private static java.util.Map<String, String> persistedParameters(JobDefinition definition) {
@@ -1180,6 +1270,7 @@ public final class JdbcJobRepository implements JobRepository {
                 .completionPolicy(ExecutorCompletionPolicy.valueOf(resultSet.getString("completion_policy")))
                 .shardCount(resultSet.getInt("shard_count"))
                 .routingKey(resultSet.getString("routing_key"))
+                .retryScope(com.firefly.domain.ExecutorRetryScope.valueOf(resultSet.getString("retry_scope")))
                 .enabled(resultSet.getBoolean("enabled"))
                 .build();
         return new ScheduledJobRecord(definition, resultSet.getTimestamp("next_fire_time").toInstant());

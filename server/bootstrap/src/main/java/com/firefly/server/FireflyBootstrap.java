@@ -54,6 +54,7 @@ public final class FireflyBootstrap implements AutoCloseable {
     private final SchedulerNodeCoordinator nodeCoordinator;
     private final DispatchOutboxWorker outboxWorker;
     private final ExecutionMaintenanceWorker executionMaintenanceWorker;
+    private final NodeDrainMonitor nodeDrainMonitor;
     private final AutoCloseable runtimeClock;
 
     private FireflyBootstrap(
@@ -63,6 +64,7 @@ public final class FireflyBootstrap implements AutoCloseable {
             SchedulerNodeCoordinator nodeCoordinator,
             DispatchOutboxWorker outboxWorker,
             ExecutionMaintenanceWorker executionMaintenanceWorker,
+            NodeDrainMonitor nodeDrainMonitor,
             AutoCloseable runtimeClock
     ) {
         this.engine = engine;
@@ -71,6 +73,7 @@ public final class FireflyBootstrap implements AutoCloseable {
         this.nodeCoordinator = nodeCoordinator;
         this.outboxWorker = outboxWorker;
         this.executionMaintenanceWorker = executionMaintenanceWorker;
+        this.nodeDrainMonitor = nodeDrainMonitor;
         this.runtimeClock = runtimeClock;
     }
 
@@ -88,6 +91,9 @@ public final class FireflyBootstrap implements AutoCloseable {
         JobDispatcher jobDispatcher = injector.getInstance(JobDispatcher.class);
         SchedulerMetrics metrics = injector.getInstance(SchedulerMetrics.class);
         java.time.Clock runtimeClock = injector.getInstance(java.time.Clock.class);
+        java.util.function.BooleanSupplier acceptingNewWork = () -> nodeRegistry.find(options.nodeName())
+                .map(node -> node.status() == NodeStatus.ONLINE)
+                .orElse(false);
 
         registerNode(nodeRegistry, options, runtimeClock);
         SchedulerNodeCoordinator nodeCoordinator = new SchedulerNodeCoordinator(
@@ -121,7 +127,8 @@ public final class FireflyBootstrap implements AutoCloseable {
         }
 
         NettyExecutorGateway executorGateway = startExecutorGateway(
-                options, schedulerCatalog, executionRepository, repository, metrics, runtimeClock
+                options, schedulerCatalog, executionRepository, repository, metrics, runtimeClock,
+                injector.getInstance(com.firefly.executor.ExecutorInstanceDirectory.class), acceptingNewWork
         );
         if (executorGateway != null) {
             remoteExecutionGateway.install(executorGateway::dispatch);
@@ -139,8 +146,13 @@ public final class FireflyBootstrap implements AutoCloseable {
         if (!dispatchTypes.isEmpty()) {
             outboxWorker = new DispatchOutboxWorker(
                     options.nodeName(), repository, jobDispatcher, runtimeClock, dispatchTypes,
-                    metrics, options.runtimeOptions().dispatchOutbox()
+                    metrics, options.runtimeOptions().dispatchOutbox(), command ->
+                    !command.definition().remote()
+                            || executorGateway != null && executorGateway.hasRoute(
+                            command.definition().destination().executorName()
+                    )
             );
+            outboxWorker.setClaimAdmission(acceptingNewWork);
             outboxWorker.start();
             log.info("Dispatch outbox worker enabled: types=" + dispatchTypes);
         }
@@ -152,6 +164,12 @@ public final class FireflyBootstrap implements AutoCloseable {
             log.info("Scheduler role disabled");
         }
 
+        NodeDrainMonitor nodeDrainMonitor = new NodeDrainMonitor(
+                options.nodeName(), nodeRegistry, shardManager, repository,
+                executionRepository, executorGateway, runtimeClock
+        );
+        nodeDrainMonitor.start();
+
         FireflyPluginManager plugins = new FireflyPluginManager(configuredPlugins(options));
         FireflyPluginContext.Builder pluginContext = FireflyPluginContext.builder()
                 .jobRepository(repository)
@@ -159,9 +177,15 @@ public final class FireflyBootstrap implements AutoCloseable {
                 .nodeRegistry(nodeRegistry)
                 .schedulerCatalog(schedulerCatalog)
                 .executionRepository(executionRepository)
-                .schedulerMetrics(metrics);
+                .schedulerShardCount(options.schedulerShards().shardCount())
+                .schedulerMetrics(metrics)
+                .auditRepository(injector.getInstance(com.firefly.audit.AuditRepository.class))
+                .jobHistoryRepository(injector.getInstance(com.firefly.store.JobHistoryRepository.class))
+                .nodeDrainStatusProvider(nodeDrainMonitor);
         if (executorGateway != null) {
             pluginContext.remoteExecutorDispatcher(executorGateway::dispatch);
+            pluginContext.executionCancellationDispatcher(executorGateway::cancel);
+            pluginContext.executorIsolationDispatcher(executorGateway::isolateDetailed);
             pluginContext.executorRegistry(executorGateway.executorRegistry());
         }
         plugins.start(pluginContext.build());
@@ -169,7 +193,7 @@ public final class FireflyBootstrap implements AutoCloseable {
         log.info("Firefly server started");
         return new FireflyBootstrap(
                 engine, plugins, executorGateway, nodeCoordinator, outboxWorker, executionMaintenanceWorker,
-                assembly.closeable()
+                nodeDrainMonitor, assembly.closeable()
         );
     }
 
@@ -180,6 +204,7 @@ public final class FireflyBootstrap implements AutoCloseable {
     @Override
     public void close() {
         plugins.close();
+        nodeDrainMonitor.close();
         if (engine != null) {
             engine.stop();
         }
@@ -205,7 +230,9 @@ public final class FireflyBootstrap implements AutoCloseable {
         int shardCount = options.schedulerShards().shardCount();
         if (!store.jdbcEnabled()) {
             log.info("Storage: memory");
-            return new RuntimeAssembly(new SchedulerModule(shardCount), () -> { });
+            return new RuntimeAssembly(new SchedulerModule(
+                    shardCount, options.runtimeOptions().schedulerEngine()
+            ), () -> { });
         }
         DataSource dataSource = new DriverManagerDataSource(store.jdbcUrl(), store.jdbcUsername(), store.jdbcPassword());
         JdbcSchemaOptions schemaOptions = JdbcSchemaOptions.of(store.jdbcDialect())
@@ -239,7 +266,11 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new JdbcNodeRegistry(dataSource),
                 new JdbcSchedulerCatalog(dataSource, shardCount),
                 new JdbcShardManager(dataSource),
-                new JdbcExecutionRepository(dataSource), shardCount, clock, metrics
+                new JdbcExecutionRepository(dataSource), shardCount, clock, metrics,
+                options.runtimeOptions().schedulerEngine(),
+                new com.firefly.store.jdbc.JdbcAuditRepository(dataSource),
+                new com.firefly.store.jdbc.JdbcJobHistoryRepository(dataSource),
+                new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource)
         );
         return new RuntimeAssembly(module, clock);
     }
@@ -326,7 +357,9 @@ public final class FireflyBootstrap implements AutoCloseable {
             ExecutionRepository executionRepository,
             JobRepository jobRepository,
             SchedulerMetrics metrics,
-            java.time.Clock runtimeClock
+            java.time.Clock runtimeClock,
+            com.firefly.executor.ExecutorInstanceDirectory instanceDirectory,
+            java.util.function.BooleanSupplier registrationAdmission
     ) {
         if (!options.nettyExecutorGatewayEnabled()) {
             log.info("Netty executor gateway disabled");
@@ -347,8 +380,10 @@ public final class FireflyBootstrap implements AutoCloseable {
                         executionId, Instant.now(), timeout
                 ),
                 metrics,
-                options.runtimeOptions().nettyGateway()
+                options.runtimeOptions().nettyGateway(),
+                instanceDirectory
         );
+        gateway.setRegistrationAdmission(registrationAdmission);
         try {
             gateway.start();
         } catch (InterruptedException e) {

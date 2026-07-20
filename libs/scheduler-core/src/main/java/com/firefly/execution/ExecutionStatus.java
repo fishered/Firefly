@@ -7,10 +7,11 @@ public enum ExecutionStatus {
     SUCCEEDED,
     PARTIAL,
     FAILED,
-    TIMEOUT;
+    TIMEOUT,
+    CANCELLED;
 
     public boolean terminal() {
-        return this == SUCCEEDED || this == PARTIAL || this == FAILED || this == TIMEOUT;
+        return this == SUCCEEDED || this == PARTIAL || this == FAILED || this == TIMEOUT || this == CANCELLED;
     }
 
     public boolean canTransitionTo(ExecutionStatus next) {
@@ -21,7 +22,7 @@ public enum ExecutionStatus {
             case DISPATCHING -> false;
             case DISPATCHED -> this == DISPATCHING;
             case RUNNING -> this == DISPATCHING || this == DISPATCHED;
-            case SUCCEEDED, PARTIAL, FAILED, TIMEOUT -> true;
+            case SUCCEEDED, PARTIAL, FAILED, TIMEOUT, CANCELLED -> true;
         };
     }
 }

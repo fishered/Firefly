@@ -9,6 +9,7 @@ public enum NettyExecutorMessageType {
     REGISTER_REJECTED,
     HEARTBEAT,
     TRIGGER_JOB,
+    CANCEL_JOB,
     ACK_JOB,
     REPORT_RESULT,
     UNREGISTER_EXECUTOR

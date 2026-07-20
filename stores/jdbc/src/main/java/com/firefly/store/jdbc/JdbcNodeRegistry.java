@@ -73,12 +73,11 @@ public final class JdbcNodeRegistry implements NodeRegistry {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
                      update firefly_node
-                     set last_heartbeat_at = ?, status = ?
+                     set last_heartbeat_at = ?
                      where node_id = ?
                      """)) {
             statement.setTimestamp(1, Timestamp.from(timeSource.now(connection)));
-            statement.setString(2, NodeStatus.ONLINE.name());
-            statement.setString(3, nodeId);
+            statement.setString(2, nodeId);
             return statement.executeUpdate() > 0;
         } catch (SQLException e) {
             throw new JdbcException("failed to heartbeat firefly node", e);
@@ -98,6 +97,24 @@ public final class JdbcNodeRegistry implements NodeRegistry {
             return statement.executeUpdate() > 0;
         } catch (SQLException e) {
             throw new JdbcException("failed to mark firefly node offline", e);
+        }
+    }
+
+    @Override
+    public boolean markDraining(String nodeId) {
+        return updateStatus(nodeId, NodeStatus.DRAINING);
+    }
+
+    private boolean updateStatus(String nodeId, NodeStatus status) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update firefly_node set status = ? where node_id = ?
+                     """)) {
+            statement.setString(1, status.name());
+            statement.setString(2, nodeId);
+            return statement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new JdbcException("failed to update firefly node status", e);
         }
     }
 
@@ -123,6 +140,21 @@ public final class JdbcNodeRegistry implements NodeRegistry {
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to list online firefly nodes", e);
+        }
+    }
+
+    @Override
+    public List<FireflyNode> listAll() {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select node_id, roles, registered_at, last_heartbeat_at, status, metadata
+                     from firefly_node order by node_id
+                     """); ResultSet resultSet = statement.executeQuery()) {
+            List<FireflyNode> nodes = new ArrayList<>();
+            while (resultSet.next()) nodes.add(mapNode(resultSet));
+            return List.copyOf(nodes);
+        } catch (SQLException e) {
+            throw new JdbcException("failed to list firefly nodes", e);
         }
     }
 

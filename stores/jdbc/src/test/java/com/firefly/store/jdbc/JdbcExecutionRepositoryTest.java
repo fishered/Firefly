@@ -13,9 +13,37 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcExecutionRepositoryTest {
+    @Test
+    void cancellationAtomicallyStopsTargetsAndOutbox() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-07-18T10:00:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> now);
+        JdbcExecutionRepository repository = new JdbcExecutionRepository(dataSource, ignored -> now);
+        com.firefly.domain.JobDefinition job = com.firefly.domain.JobDefinition.builder()
+                .id("cancel-job").name("Cancel job").handlerName("remote:orders:run")
+                .schedule(new com.firefly.domain.CronSchedule("0 * * * * *")).build();
+        assertTrue(jobs.enqueueManual(new com.firefly.engine.ExecutionCommand(
+                "cancel-exec", job, now, now, "node-a", 7L
+        )));
+        repository.saveExecution(new ExecutionRecord(
+                "cancel-exec", "cancel-job", now, now, ExecutorDispatchMode.UNICAST,
+                ExecutorCompletionPolicy.ALL_SUCCESS, ExecutionStatus.RUNNING,
+                1, 1, "node-a", 7L, now, now
+        ));
+        repository.saveTargets(List.of(target("cancel-exec", "cancel-exec", "instance-a", now)));
+
+        assertTrue(repository.cancelExecution("cancel-exec", now, "operator request"));
+        assertEquals(ExecutionStatus.CANCELLED,
+                repository.findExecution("cancel-exec").orElseThrow().status());
+        assertEquals(ExecutionStatus.CANCELLED, repository.listTargets("cancel-exec").getFirst().status());
+        assertEquals(1L, jobs.outboxCounts().get(com.firefly.store.DispatchOutboxStatus.DEAD));
+        assertFalse(repository.complete("cancel-exec", ExecutionStatus.SUCCEEDED, "late", now.plusSeconds(1)));
+    }
+
     @Test
     void serializesConcurrentTargetCompletionsThroughTheParentRow() throws Exception {
         JdbcExecutionRepository repository = new JdbcExecutionRepository(JdbcTestSupport.dataSource());

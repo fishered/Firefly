@@ -15,4 +15,8 @@ public interface ShardManager {
     boolean release(int shardId, String nodeId, long fencingToken);
 
     Optional<ShardLease> findLease(int shardId);
+
+    default long countActiveOwnedBy(String nodeId, Instant now) {
+        return 0L;
+    }
 }

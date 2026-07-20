@@ -2,6 +2,7 @@ package com.firefly.server;
 
 import com.firefly.executor.netty.NettyExecutorGatewayOptions;
 import com.firefly.store.jdbc.JdbcClockOptions;
+import com.firefly.engine.SchedulerEngineOptions;
 
 import java.util.Objects;
 
@@ -11,7 +12,8 @@ public record ServerRuntimeOptions(
         ExecutionMaintenanceOptions executionMaintenance,
         JdbcClockOptions jdbcClock,
         NettyExecutorGatewayOptions nettyGateway,
-        AdminAuthorizationOptions adminAuthorization
+        AdminAuthorizationOptions adminAuthorization,
+        SchedulerEngineOptions schedulerEngine
 ) {
     public ServerRuntimeOptions(
             DispatchOutboxOptions dispatchOutbox,
@@ -20,7 +22,18 @@ public record ServerRuntimeOptions(
             NettyExecutorGatewayOptions nettyGateway
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                AdminAuthorizationOptions.defaults());
+                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults());
+    }
+
+    public ServerRuntimeOptions(
+            DispatchOutboxOptions dispatchOutbox,
+            ExecutionMaintenanceOptions executionMaintenance,
+            JdbcClockOptions jdbcClock,
+            NettyExecutorGatewayOptions nettyGateway,
+            AdminAuthorizationOptions adminAuthorization
+    ) {
+        this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
+                adminAuthorization, SchedulerEngineOptions.defaults());
     }
 
     public ServerRuntimeOptions {
@@ -29,6 +42,7 @@ public record ServerRuntimeOptions(
         Objects.requireNonNull(jdbcClock, "jdbcClock");
         Objects.requireNonNull(nettyGateway, "nettyGateway");
         Objects.requireNonNull(adminAuthorization, "adminAuthorization");
+        Objects.requireNonNull(schedulerEngine, "schedulerEngine");
     }
 
     public static ServerRuntimeOptions defaults() {
@@ -37,7 +51,8 @@ public record ServerRuntimeOptions(
                 ExecutionMaintenanceOptions.defaults(),
                 JdbcClockOptions.defaults(),
                 NettyExecutorGatewayOptions.defaults(),
-                AdminAuthorizationOptions.defaults()
+                AdminAuthorizationOptions.defaults(),
+                SchedulerEngineOptions.defaults()
         );
     }
 }

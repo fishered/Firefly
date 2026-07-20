@@ -19,7 +19,7 @@ Firefly is a lightweight Java 21 scheduling service. Keep the core small, testab
 - Spring Boot starter module: `integrations/spring-boot-starter`
 - Server CLI placeholder module: `integrations/server-cli`
 - Netty executor module: `transports/netty`
-- Netty Spring Boot starter module: `integrations/netty-spring-boot-starter`
+- Public Spring Boot starter module: `integrations/firefly-spring-boot-starter`
 - JDBC storage module: `stores/jdbc`
 - Plugin API module: `plugins/plugin-api`
 - Admin HTTP/API and Admin UI: `apis/admin-http` and `ui/admin`

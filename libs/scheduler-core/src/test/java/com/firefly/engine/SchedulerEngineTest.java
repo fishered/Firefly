@@ -133,6 +133,25 @@ class SchedulerEngineTest {
         assertEquals(150, fixture.scheduledFireTimes().size());
     }
 
+    @Test
+    void configurableTickBudgetBoundsOnePassAndRecordsBacklog() {
+        Instant now = Instant.parse("2026-07-06T00:10:00Z");
+        com.firefly.metrics.SchedulerMetrics metrics = new com.firefly.metrics.SchedulerMetrics();
+        TestFixture fixture = new TestFixture(
+                now, new SchedulerEngineOptions(2, Duration.ofMillis(100)), metrics
+        );
+        for (int index = 0; index < 3; index++) {
+            fixture.repository.save(jobBuilder("budget-job-" + index).build(), now.minusSeconds(1));
+        }
+
+        fixture.engine.tick();
+        assertEquals(2, fixture.scheduledFireTimes().size());
+        assertEquals(1L, metrics.snapshot().dueBacklogEvents());
+
+        fixture.engine.tick();
+        assertEquals(3, fixture.scheduledFireTimes().size());
+    }
+
     private static JobDefinition.Builder jobBuilder(String id) {
         return JobDefinition.builder()
                 .id(id)
@@ -150,11 +169,25 @@ class SchedulerEngineTest {
         private final SchedulerEngine engine;
 
         private TestFixture(Instant now) {
+            this(now, SchedulerEngineOptions.defaults(), new com.firefly.metrics.SchedulerMetrics());
+        }
+
+        private TestFixture(
+                Instant now,
+                SchedulerEngineOptions options,
+                com.firefly.metrics.SchedulerMetrics metrics
+        ) {
             Clock clock = Clock.fixed(now, ZoneOffset.UTC);
             ExecutorService directExecutor = new DirectExecutorService();
             registry.register("handler", executions::add);
             JobDispatcher dispatcher = new JobDispatcher(registry, directExecutor, clock);
-            engine = new SchedulerEngine(repository, dispatcher, clock);
+            engine = new SchedulerEngine(
+                    repository, dispatcher, clock,
+                    () -> java.util.Map.of(0, new com.firefly.cluster.ShardLease(
+                            0, "local", Instant.MAX, 1L
+                    )),
+                    1, false, metrics, options
+            );
         }
 
         private List<Instant> scheduledFireTimes() {

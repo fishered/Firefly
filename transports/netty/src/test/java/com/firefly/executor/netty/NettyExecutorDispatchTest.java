@@ -4,6 +4,7 @@ import com.firefly.domain.ExecutionContext;
 import com.firefly.domain.ExecutorCompletionPolicy;
 import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorRoutingStrategy;
+import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.executor.InMemoryExecutorRegistry;
 import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.catalog.InMemorySchedulerCatalog;
@@ -106,6 +107,35 @@ class NettyExecutorDispatchTest {
         assertEquals(1, retry.requestedTargets());
         assertEquals(1, retry.acceptedTargets());
         assertEquals(1, outboundCount(first) + outboundCount(second));
+    }
+
+    @Test
+    void broadcastAllTargetsRetryReexecutesEveryOriginalTarget() {
+        NettyExecutorConnectionRegistry connections = new NettyExecutorConnectionRegistry();
+        EmbeddedChannel first = new EmbeddedChannel();
+        EmbeddedChannel second = new EmbeddedChannel();
+        connections.register("orders", "orders-1", first);
+        connections.register("orders", "orders-2", second);
+        InMemoryExecutionRepository executions = new InMemoryExecutionRepository();
+        NettyExecutorGateway gateway = gateway(connections, executions);
+        Instant completedAt = Instant.parse("2026-07-14T10:00:01Z");
+
+        gateway.dispatch(request(ExecutorDispatchMode.BROADCAST, 1));
+        outboundCount(first);
+        outboundCount(second);
+        var targets = executions.listTargets("exec-1");
+        executions.completeResult(targets.get(0).targetExecutionId(), ExecutionStatus.SUCCEEDED, "", completedAt);
+        executions.completeResult(targets.get(1).targetExecutionId(), ExecutionStatus.FAILED, "boom", completedAt);
+
+        var retry = gateway.dispatch(retryRequest(
+                ExecutorDispatchMode.BROADCAST, 1, ExecutorCompletionPolicy.ALL_SUCCESS,
+                ExecutorRetryScope.ALL_TARGETS
+        ));
+
+        assertEquals(2, retry.requestedTargets());
+        assertEquals(2, retry.acceptedTargets());
+        assertEquals(2, outboundCount(first) + outboundCount(second));
+        assertEquals(2, executions.listTargets("exec-1@attempt:1").size());
     }
 
     @Test
@@ -224,6 +254,13 @@ class NettyExecutorDispatchTest {
     private RemoteDispatchRequest retryRequest(
             ExecutorDispatchMode mode, int shardCount, ExecutorCompletionPolicy completionPolicy
     ) {
+        return retryRequest(mode, shardCount, completionPolicy, ExecutorRetryScope.FAILED_TARGETS_ONLY);
+    }
+
+    private RemoteDispatchRequest retryRequest(
+            ExecutorDispatchMode mode, int shardCount, ExecutorCompletionPolicy completionPolicy,
+            ExecutorRetryScope retryScope
+    ) {
         Instant now = Instant.parse("2026-07-14T10:00:02Z");
         return new RemoteDispatchRequest(
                 "orders", "handleOrder",
@@ -232,7 +269,7 @@ class NettyExecutorDispatchTest {
                         "remote:orders:handleOrder", now.minusSeconds(2), now, now, Map.of()
                 ),
                 mode, ExecutorRoutingStrategy.ROUND_ROBIN, completionPolicy,
-                shardCount, "order-42", "local", 1L, "exec-1", 1
+                shardCount, "order-42", "local", 1L, "exec-1", 1, retryScope
         );
     }
 

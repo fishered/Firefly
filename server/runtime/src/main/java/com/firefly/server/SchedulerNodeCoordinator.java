@@ -112,6 +112,17 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
     void reconcile() {
         Instant now = clock.instant();
         nodeRegistry.heartbeat(nodeId, now);
+        com.firefly.cluster.NodeStatus status = nodeRegistry.find(nodeId)
+                .map(FireflyNode::status)
+                .orElse(com.firefly.cluster.NodeStatus.OFFLINE);
+        if (status != com.firefly.cluster.NodeStatus.ONLINE) {
+            owned.values().forEach(lease -> shardManager.release(
+                    lease.shardId(), nodeId, lease.fencingToken()
+            ));
+            owned.clear();
+            metrics.ownedShards(0);
+            return;
+        }
         if (!scheduler) {
             metrics.ownedShards(0);
             return;

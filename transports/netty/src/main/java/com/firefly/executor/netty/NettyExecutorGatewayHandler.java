@@ -5,6 +5,9 @@ import com.firefly.domain.ExecutorDefinition;
 import com.firefly.domain.ExecutorInstance;
 import com.firefly.domain.ExecutorProtocol;
 import com.firefly.executor.ExecutorRegistry;
+import com.firefly.executor.ExecutorInstanceDirectory;
+import com.firefly.executor.ExecutorInstanceLocation;
+import com.firefly.executor.InMemoryExecutorInstanceDirectory;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
 import com.firefly.metrics.SchedulerMetrics;
@@ -33,6 +36,12 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
     private final String executorAuthToken;
     private final java.util.function.BiConsumer<String, Boolean> retryScheduler;
     private final SchedulerMetrics metrics;
+    private final ExecutorInstanceDirectory instanceDirectory;
+    private final String advertisedGatewayAddress;
+    private final java.time.Duration instanceLocationLease;
+    private final java.time.Duration instanceLocationRefreshInterval;
+    private Instant lastLocationRefreshAt = Instant.EPOCH;
+    private final java.util.function.BooleanSupplier registrationAdmission;
 
     NettyExecutorGatewayHandler(
             ExecutorRegistry executorRegistry,
@@ -69,6 +78,33 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
             java.util.function.BiConsumer<String, Boolean> retryScheduler,
             SchedulerMetrics metrics
     ) {
+        this(executorRegistry, connectionRegistry, codec, clock, schedulerCatalog,
+                autoCreateExecutorDefinitions, gatewayNodeId, executionRepository,
+                dispatchAcknowledger, resultPersistenceExecutor, executorAuthToken, retryScheduler,
+                metrics, new InMemoryExecutorInstanceDirectory(), "",
+                java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(90), () -> true);
+    }
+
+    NettyExecutorGatewayHandler(
+            ExecutorRegistry executorRegistry,
+            NettyExecutorConnectionRegistry connectionRegistry,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            SchedulerCatalog schedulerCatalog,
+            boolean autoCreateExecutorDefinitions,
+            String gatewayNodeId,
+            ExecutionRepository executionRepository,
+            java.util.function.BiConsumer<String, Instant> dispatchAcknowledger,
+            java.util.concurrent.Executor resultPersistenceExecutor,
+            String executorAuthToken,
+            java.util.function.BiConsumer<String, Boolean> retryScheduler,
+            SchedulerMetrics metrics,
+            ExecutorInstanceDirectory instanceDirectory,
+            String advertisedGatewayAddress,
+            java.time.Duration instanceLocationRefreshInterval,
+            java.time.Duration instanceLocationLease,
+            java.util.function.BooleanSupplier registrationAdmission
+    ) {
         this.executorRegistry = executorRegistry;
         this.connectionRegistry = connectionRegistry;
         this.codec = codec;
@@ -82,6 +118,11 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         this.executorAuthToken = executorAuthToken;
         this.retryScheduler = retryScheduler;
         this.metrics = metrics;
+        this.instanceDirectory = instanceDirectory;
+        this.advertisedGatewayAddress = advertisedGatewayAddress;
+        this.instanceLocationRefreshInterval = instanceLocationRefreshInterval;
+        this.instanceLocationLease = instanceLocationLease;
+        this.registrationAdmission = registrationAdmission;
     }
 
     @Override
@@ -93,7 +134,8 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
             case UNREGISTER_EXECUTOR -> unregister(context, message.payload());
             case ACK_JOB -> acknowledge(context, message.payload());
             case REPORT_RESULT -> reportResult(context, message.payload());
-            case TRIGGER_JOB -> throw new IllegalStateException("gateway must not receive TRIGGER_JOB");
+            case TRIGGER_JOB, CANCEL_JOB ->
+                    throw new IllegalStateException("gateway must not receive scheduler commands");
             case REGISTERED, REGISTER_REJECTED ->
                     throw new IllegalStateException("gateway must not receive registration responses");
         }
@@ -101,11 +143,21 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
 
     @Override
     public void channelInactive(ChannelHandlerContext context) {
-        connectionRegistry.unregister(context.channel()).ifPresent(key ->
-                executorRegistry.markOffline(key.executorName(), key.instanceId()));
+        connectionRegistry.unregister(context.channel()).ifPresent(key -> {
+            executorRegistry.markOffline(key.executorName(), key.instanceId());
+            instanceDirectory.markOffline(
+                    key.executorName(), key.instanceId(), gatewayNodeId, key.sessionId()
+            );
+        });
+        metrics.executorConnections(connectionRegistry.list().size());
+        metrics.recordExecutorDisconnect();
     }
 
     private void register(ChannelHandlerContext context, Map<String, String> payload) {
+        if (!registrationAdmission.getAsBoolean()) {
+            rejectRegistration(context, "NODE_DRAINING", "Gateway is draining and rejects new registrations");
+            return;
+        }
         String executorName = payload.get("executorName");
         String instanceId = payload.get("instanceId");
         String sessionId = payload.getOrDefault("sessionId", instanceId);
@@ -114,35 +166,45 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         try {
             protocolVersion = Integer.parseInt(payload.getOrDefault("protocolVersion", "1"));
         } catch (NumberFormatException invalidVersion) {
-            rejectRegistration(context, "invalid protocol version");
+            rejectRegistration(context, "INVALID_PROTOCOL_VERSION", "invalid protocol version");
             return;
         }
         if (!NettyExecutorProtocol.supports(protocolVersion)) {
-            rejectRegistration(context, "unsupported protocol version: " + protocolVersion);
+            rejectRegistration(context, "UNSUPPORTED_PROTOCOL_VERSION",
+                    "unsupported protocol version: " + protocolVersion);
             return;
         }
         java.util.Set<String> clientCapabilities = parseCapabilities(payload.get("capabilities"));
         if (payload.containsKey("capabilities")
                 && !NettyExecutorProtocol.hasRequiredCapabilities(clientCapabilities)) {
-            rejectRegistration(context, "required capabilities are missing");
+            rejectRegistration(context, "MISSING_CAPABILITIES", "required capabilities are missing");
             return;
         }
         java.util.Set<String> negotiatedCapabilities = clientCapabilities.isEmpty()
-                ? NettyExecutorProtocol.SERVER_CAPABILITIES
+                ? NettyExecutorProtocol.REQUIRED_CAPABILITIES
                 : NettyExecutorProtocol.SERVER_CAPABILITIES.stream()
                 .filter(clientCapabilities::contains)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (!authorized(payload.getOrDefault("authToken", ""))) {
-            context.close();
-            throw new IllegalStateException("executor authentication failed");
+            rejectRegistration(context, "AUTHENTICATION_FAILED", "executor authentication failed");
+            return;
         }
-        ExecutorDefinition definition = schedulerCatalog.findExecutor(executorName)
-                .orElseGet(() -> autoCreateDefinition(executorName));
+        ExecutorDefinition definition = schedulerCatalog.findExecutor(executorName).orElse(null);
+        if (definition == null) {
+            if (!autoCreateExecutorDefinitions) {
+                rejectRegistration(context, "UNKNOWN_EXECUTOR", "unknown executor definition: " + executorName);
+                return;
+            }
+            definition = autoCreateDefinition(executorName);
+        }
         if (!definition.enabled()) {
-            throw new IllegalStateException("executor definition is disabled: " + executorName);
+            rejectRegistration(context, "EXECUTOR_DISABLED", "executor definition is disabled: " + executorName);
+            return;
         }
         if (!definition.protocols().contains(ExecutorProtocol.TCP)) {
-            throw new IllegalStateException("executor definition does not allow TCP registration: " + executorName);
+            rejectRegistration(context, "PROTOCOL_NOT_ALLOWED",
+                    "executor definition does not allow TCP registration: " + executorName);
+            return;
         }
         Instant now = clock.instant();
         executorRegistry.register(ExecutorInstance.builder()
@@ -157,12 +219,26 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 .registeredAt(now)
                 .lastHeartbeatAt(now)
                 .build());
-        connectionRegistry.register(executorName, instanceId, sessionId, context.channel());
+        int negotiatedProtocolVersion = Math.min(protocolVersion, NettyExecutorProtocol.CURRENT_VERSION);
+        connectionRegistry.register(
+                executorName, instanceId, sessionId, negotiatedProtocolVersion,
+                negotiatedCapabilities, context.channel()
+        );
+        instanceDirectory.register(new ExecutorInstanceLocation(
+                executorName, instanceId, gatewayNodeId, advertisedGatewayAddress, sessionId,
+                now, now.plus(instanceLocationLease), Map.of(
+                        "serviceName", serviceName,
+                        "protocolVersion", Integer.toString(negotiatedProtocolVersion),
+                        "capabilities", NettyExecutorProtocol.encodeCapabilities(negotiatedCapabilities)
+                )
+        ));
+        lastLocationRefreshAt = now;
+        metrics.executorConnections(connectionRegistry.list().size());
         write(context, new NettyExecutorMessage(
                 java.util.UUID.randomUUID().toString(),
                 NettyExecutorMessageType.REGISTERED,
                 Map.of(
-                        "protocolVersion", Integer.toString(NettyExecutorProtocol.CURRENT_VERSION),
+                        "protocolVersion", Integer.toString(negotiatedProtocolVersion),
                         "capabilities", NettyExecutorProtocol.encodeCapabilities(
                                 negotiatedCapabilities
                         ),
@@ -175,12 +251,14 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 + ", remote=" + remoteHost(context));
     }
 
-    private void rejectRegistration(ChannelHandlerContext context, String reason) {
+    private void rejectRegistration(ChannelHandlerContext context, String reasonCode, String reason) {
+        metrics.recordExecutorRegistrationRejection();
         NettyExecutorMessage rejection = new NettyExecutorMessage(
                 java.util.UUID.randomUUID().toString(),
                 NettyExecutorMessageType.REGISTER_REJECTED,
                 Map.of(
                         "reason", reason,
+                        "reasonCode", reasonCode,
                         "minimumVersion", Integer.toString(NettyExecutorProtocol.MIN_SUPPORTED_VERSION),
                         "maximumVersion", Integer.toString(NettyExecutorProtocol.CURRENT_VERSION)
                 )
@@ -224,7 +302,15 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         String sessionId = payload.getOrDefault("sessionId", instanceId);
         executorRegistry.find(executorName, instanceId)
                 .filter(instance -> instance.sessionId().equals(sessionId))
-                .ifPresent(instance -> executorRegistry.heartbeat(executorName, instanceId, clock.instant()));
+                .ifPresent(instance -> {
+                    Instant now = clock.instant();
+                    executorRegistry.heartbeat(executorName, instanceId, now);
+                    if (!now.isBefore(lastLocationRefreshAt.plus(instanceLocationRefreshInterval))) {
+                        if (instanceDirectory.heartbeat(
+                                executorName, instanceId, gatewayNodeId, sessionId, now, instanceLocationLease
+                        )) lastLocationRefreshAt = now;
+                    }
+                });
     }
 
     private void unregister(ChannelHandlerContext context, Map<String, String> payload) {
@@ -233,7 +319,10 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         String sessionId = payload.getOrDefault("sessionId", instanceId);
         executorRegistry.find(executorName, instanceId)
                 .filter(instance -> instance.sessionId().equals(sessionId))
-                .ifPresent(instance -> executorRegistry.markOffline(executorName, instanceId));
+                .ifPresent(instance -> {
+                    executorRegistry.markOffline(executorName, instanceId);
+                    instanceDirectory.markOffline(executorName, instanceId, gatewayNodeId, sessionId);
+                });
         connectionRegistry.unregister(context.channel());
         log.info(() -> "executor unregistered: executor=" + executorName
                 + ", instance=" + instanceId);
@@ -271,8 +360,11 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
 
     private void reportResult(ChannelHandlerContext context, Map<String, String> payload) {
         if (!validReporter(context, payload)) return;
-        ExecutionStatus status = "SUCCEEDED".equalsIgnoreCase(payload.get("status"))
-                ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED;
+        ExecutionStatus status = switch (payload.getOrDefault("status", "FAILED").toUpperCase(java.util.Locale.ROOT)) {
+            case "SUCCEEDED" -> ExecutionStatus.SUCCEEDED;
+            case "CANCELLED" -> ExecutionStatus.CANCELLED;
+            default -> ExecutionStatus.FAILED;
+        };
         String parentExecutionId = payload.getOrDefault("parentExecutionId", payload.get("executionId"));
         Instant now = clock.instant();
         persist(context, () -> {
