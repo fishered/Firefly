@@ -193,13 +193,16 @@ firefly:
     service-name: billing-service
     reconnect-initial-delay: 1s
     reconnect-max-delay: 30s
-    auth-token: ${FIREFLY_EXECUTOR_AUTH_TOKEN:}
+    auth:
+      token-url: http://firefly-api:9710/api/auth/token
+      client-id: ${FIREFLY_CLIENT_ID:spring-example}
+      client-secret: ${FIREFLY_CLIENT_SECRET:local-spring-secret}
+      refresh-skew: 30s
     idempotency-directory: /data/firefly-executor-results
     idempotency-retention: 24h
     job-registration:
       enabled: true
       admin-url: http://firefly-api:9710
-      admin-token: ${FIREFLY_ADMIN_TOKEN:}
       update-existing: false
       fail-fast: false
 ```
@@ -214,7 +217,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class BillingJobs {
     @FireflyJob(
-            id = "billing-daily-job",
             name = "每日账单处理",
             cron = "0 0 2 * * *",
             zoneId = "Asia/Shanghai",
@@ -227,19 +229,48 @@ public class BillingJobs {
 }
 ```
 
-`handlerName` 默认使用方法名，因此上例自动注册为 `billingHandler`。方法必须返回 `void`，参数只能为空，
-或接收一个 `ExecutionContext`。Starter 会先完成全部注解扫描和 Handler 注册，再连接 Gateway；Spring
-应用就绪后通过 Admin API 同步任务。Executor 名称自动使用 `firefly.executor.name`。
+Starter 使用目标 Bean 的全限定类名和方法名生成执行入口，例如
+`com.example.billing.BillingJobs#billingHandler`。单计划任务默认使用同一个值作为任务 ID，不需要也不允许在
+注解中维护全局 `id` 或 `handlerName`。它在所有服务实例上稳定一致，因此多实例并发启动只会收敛到同一
+任务定义。极端情况下标识超过数据库长度限制时，Starter 会使用“可读前缀 + SHA-256 摘要”稳定缩短。
+
+方法必须返回 `void`，参数只能为空或接收一个 `ExecutionContext`。Starter 会先完成全部注解扫描和执行入口
+注册，再连接 Gateway；Spring 应用就绪后通过 Admin API 同步任务。Executor 名称使用
+`firefly.executor.name`，它表示逻辑服务池，不是 Java 方法。
+
+`zoneId` 继续直接使用 IANA/JDK 时区字符串，不增加额外配置或不完整的时区枚举。Starter 在 Spring Bean
+扫描阶段使用 `ZoneId.of(zoneId)` 校验每个注解，程序化 `FireflyJobRegistration` 构造时执行相同校验；
+非法时区会携带具体类和方法阻止应用启动，不会等到连接 Gateway 或同步任务后才失败。合法值会使用 JDK
+解析后的标准 ID 发送给调度中心。
+
+Executor 与 Handler 不是 1:1。Executor 是一个逻辑服务池，同名的多个服务实例共同承载它；Handler 是
+该服务池暴露的具体业务方法，一个 Executor 可以注册多个 Handler。任务最终绑定
+`executorName + handlerName`，但 `handlerName` 是内部执行入口标识，普通使用者不需要维护。Executor 连接
+Gateway 时会上报入口能力。Admin UI 选择 Executor 后，只有一个共同入口时自动绑定并隐藏该字段；确实存在
+多个入口时才要求选择。能力不一致时取所有在线实例的交集，避免任务随机路由到不支持该入口的实例。
+
+Admin UI 新建执行器时使用受控协议选择。当前只有 `TCP` 可用于远程执行器，它对应 Netty 长连接；
+`HTTP` 仅在领域模型中预留，尚未实现完整传输；`EMBEDDED` 由同进程代码注册，不通过管理页面手动创建。
+页面会展示但禁用后两项，避免保存能够通过模型校验、实际却无法接收任务的执行器定义。
+
+`SHARDING` 的 `shardCount` 表示一次任务拆出的逻辑子执行数，处理器可从执行上下文读取分片索引和总数。
+`routingKey` 用于一致性哈希稳定选择实例；分片模式会使用“routingKey + shardIndex”分配每个分片。
+留空时使用本次 `executionId`，因此跨执行不保证固定落到同一实例。
 
 同一个业务方法需要多个调度计划时，可以重复使用注解，不需要复制 Handler：
 
 ```java
-@FireflyJob(id = "billing-incremental", cron = "0 */5 * * * *", zoneId = "Asia/Shanghai")
-@FireflyJob(id = "billing-full", cron = "0 0 3 * * *", zoneId = "Asia/Shanghai")
+@FireflyJob(key = "incremental", cron = "0 */5 * * * *", zoneId = "Asia/Shanghai")
+@FireflyJob(key = "full", cron = "0 0 3 * * *", zoneId = "Asia/Shanghai")
 public void reconcile(ExecutionContext context) {
     // distinguish jobs with context.jobId() when necessary
 }
 ```
+
+此时两个任务 ID 分别为
+`com.example.billing.BillingJobs#reconcile:incremental` 和
+`com.example.billing.BillingJobs#reconcile:full`。`key` 只需在当前方法内唯一，允许字母、数字、点、下划线
+和连字符；同一方法重复声明时每个计划都必须填写非空 `key`。
 
 `FireflyJobRegistration` Bean API 仍保留给需要根据配置或租户列表动态生成任务声明的高级场景，普通业务
 集成应优先使用 `@FireflyJob`。
@@ -248,15 +279,73 @@ public void reconcile(ExecutionContext context) {
 `update-existing=false` 时保留控制台配置；只有显式设置 `update-existing=true` 才按代码声明更新。
 多个服务实例同时启动时，Admin API 通过创建冲突检测保证最终只有一个任务定义。
 
-如果 Admin API 开启 RBAC，首次创建任务使用的 `admin-token` 必须是 `ADMIN`；持续更新只要求
-`OPERATOR`。默认 `fail-fast=false`，调度中心短暂不可用时业务服务仍可启动，但日志会明确报告同步失败。
-显式指定的 `handlerName` 必须在当前服务内唯一；重复 `jobId`、重复 Handler 名或错误的方法签名会使
-Spring 启动明确失败。
+Starter 使用同一个短期 JWT 完成 Gateway 注册和启动任务同步。令牌必须包含 `EXECUTOR` 角色，且
+`executorNames` 必须包含当前 `firefly.executor.name`。Starter 会缓存令牌并在到期前刷新，Gateway 重连时
+自动使用当前令牌。旧的 `auth-token` 和 `job-registration.admin-token` 仅为迁移兼容保留。
+默认 `fail-fast=false`，调度中心短暂不可用时业务服务仍可启动，但日志会明确报告同步失败。
+重复 `key`、重复自动执行入口或错误的方法签名会使 Spring 启动明确失败。
 
 一个 Handler 可以对应多个启动任务声明，例如分别声明“每 5 分钟增量处理”和“每天全量处理”。
 这些任务拥有独立的 `jobId`、Cron、路由策略和执行记录。
 
+从早期 Starter 版本升级时，需要从业务注解中删除旧的 `id` 和 `handlerName`。升级后自动 ID 会变化为
+`包名.类名#方法名[:key]`；数据库中由旧 ID 创建的任务不会被自动删除。应先暂停或删除旧任务，再启动新版
+业务服务，避免新旧任务同时触发。程序化 `FireflyJobRegistration` 不受此迁移影响。
+
 业务服务不需要开放监听端口。它只需要能连到调度中心 gateway。
+
+## 认证配置
+
+主服务使用 HS256 JWT 作为短期访问令牌，但区分两类身份：Admin 用户保存在 `firefly_user`，通过
+`POST /api/auth/login` 以用户名/密码登录；Starter/Executor 是机器客户端，通过 `POST /api/auth/token`
+以 `clientId/clientSecret` 换取令牌。生产环境必须通过 Secret 管理系统或环境变量覆盖签名密钥、
+机器客户端密码和首次 Admin 引导密码：
+
+```properties
+firefly.security.jwt.enabled=true
+firefly.security.jwt.secret=${FIREFLY_SECURITY_JWT_SECRET}
+firefly.security.jwt.issuer=firefly
+firefly.security.jwt.access-token-ttl=PT1H
+firefly.security.jwt.clients=billing
+
+firefly.security.jwt.client.billing.secret=${FIREFLY_BILLING_CLIENT_SECRET}
+firefly.security.jwt.client.billing.roles=EXECUTOR
+firefly.security.jwt.client.billing.executor-names=billing-executor
+
+firefly.security.admin.bootstrap-username=admin
+firefly.security.admin.bootstrap-password=${FIREFLY_ADMIN_BOOTSTRAP_PASSWORD}
+```
+
+`ADMIN` 可操作全部 Admin API 和 `/api/users`；`READER` 只读；`OPERATOR` 可触发、启停和取消；
+`EXECUTOR` 只能注册授权范围内的执行器，并创建或更新绑定到该执行器的启动任务。引导配置只在
+账号不存在时执行一次，之后修改配置不会重置数据库密码。
+
+默认 standalone 配置提供以下仅限本机开发的凭据，直接启动即可登录和接入：
+
+```text
+Admin UI: admin / local-admin-secret
+Spring Executor: spring-example / local-spring-secret
+```
+
+启动日志会警告正在使用开发凭据；`cluster` 模式会直接拒绝这些值。非本地环境必须通过环境变量覆盖：
+
+```powershell
+$env:FIREFLY_SECURITY_JWT_SECRET='replace-with-at-least-32-random-bytes'
+$env:FIREFLY_SECURITY_ADMIN_BOOTSTRAP_PASSWORD='replace-with-a-strong-admin-password'
+$env:FIREFLY_SECURITY_JWT_CLIENT_SPRING_EXAMPLE_SECRET='local-spring-secret'
+```
+
+Admin UI 不在浏览器保存 JWT。用户通过数据库用户名/密码登录后，UI Node 服务在内存中保存短期 JWT，
+浏览器只接收 `HttpOnly; SameSite=Strict` 的随机 Session Cookie。默认空闲 30 分钟过期，绝对有效期不超过
+JWT 的 `exp`；修改请求还必须携带会话 CSRF Token。可通过以下环境变量调整：
+
+```properties
+FIREFLY_ADMIN_SESSION_IDLE_TIMEOUT=30m
+FIREFLY_ADMIN_SESSION_COOKIE_SECURE=true
+```
+
+生产 HTTPS 环境必须设置 `FIREFLY_ADMIN_SESSION_COOKIE_SECURE=true`。UI 进程重启会主动使内存会话失效，
+适合当前轻量单实例管理端；多 UI 实例部署时应将 Session Store 抽象到 Redis 或使用负载均衡粘性会话。
 
 ### 实例下线与重启
 

@@ -96,7 +96,7 @@ Scheduler 容量参数为 `firefly.scheduler.max-due-records-per-tick` 和 `fire
 
 集群生产环境建议关闭 `FIREFLY_EXECUTOR_REGISTRATION_AUTO_CREATE_DEFINITION`。先通过 `POST /api/executor-definitions` 创建逻辑执行器，再由业务服务使用相同的 `executorName` 注册一个或多个运行实例；服务断线只会使实例离线，不会删除执行器定义。
 
-数据库全量初始化和旧库升级说明见 [database-schema.md](database-schema.md)。当前 schema v9 还包含共享 Executor 位置目录、持久化审计和任务变更历史。
+数据库全量初始化和旧库升级说明见 [database-schema.md](database-schema.md)。当前 schema v10 包含共享 Executor 位置目录、持久化审计、任务变更历史和 Admin 用户表。
 
 需要修改 scheduler shard count 时必须停机执行显式维护命令；工具会拒绝在线节点、活跃 execution 和未完成 Outbox，并重算 `firefly_job.shard_id`、清理旧 shard lease、更新集群元数据：
 

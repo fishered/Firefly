@@ -35,7 +35,7 @@ public final class FireflyExecutorStartup implements SmartInitializingSingleton 
         int jobs = 0;
         for (var method : annotationProcessor.discoveredMethods()) {
             for (FireflyJob declaration : method.declarations()) {
-                String handlerName = method.handlerName(declaration);
+                String handlerName = method.handlerName();
                 var previous = handlers.putIfAbsent(handlerName, method);
                 if (previous != null
                         && (previous.bean() != method.bean() || !previous.method().equals(method.method()))) {

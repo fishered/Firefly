@@ -5,7 +5,7 @@ const views = {
   executions: { title: '执行记录', action: 'refresh' },
   nodes: { title: '节点与集群', badge: 'Cluster Mode', action: 'refresh' },
   plugins: { title: '插件' },
-  settings: { title: '配置' }
+  settings: { title: '账号与安全', action: 'new-user' }
 };
 
 const sampleJobs = [
@@ -32,6 +32,7 @@ const sampleExecutions = [
 const state = {
   currentView: 'overview',
   config: null,
+  session: null,
   overview: null,
   jobs: sampleJobs,
   executions: [],
@@ -40,19 +41,173 @@ const state = {
   executorDefinitions: [],
   executorHeartbeatTimeoutSeconds: 30,
   executorServerTime: null,
-  nodes: sampleNodes
+  nodes: sampleNodes,
+  users: []
+};
+
+const jobFieldHelp = {
+  executorName: ['执行器是承载任务的逻辑服务池，可由一个或多个服务实例共同注册。'],
+  handlerName: [
+    '执行入口由 Starter 根据“完整类名#方法名”自动注册，普通情况下不需要手工维护。',
+    '一个执行器只有一个可用入口时会自动绑定；只有存在多个入口时才需要选择。'
+  ],
+  dispatchMode: [
+    'UNICAST：选择一个在线实例，任务只执行一次。',
+    'BROADCAST：每个在线实例各执行一次。',
+    'SHARDING：拆成指定数量的逻辑分片，每个分片执行一次。'
+  ],
+  routingStrategy: [
+    'ROUND_ROBIN：按顺序轮换实例。',
+    'RANDOM：每次随机选择实例。',
+    'CONSISTENT_HASH：相同路由键尽量落到同一实例。'
+  ],
+  completionPolicy: [
+    'ALL_SUCCESS：所有目标成功才算成功。',
+    'ANY_SUCCESS：任意一个目标成功即算成功。',
+    'QUORUM：超过半数目标成功即算成功。'
+  ],
+  retryScope: [
+    'FAILED_TARGETS_ONLY：只重试失败、超时或缺失的目标。',
+    'ALL_TARGETS：包括已成功目标在内全部重跑，业务必须幂等。'
+  ],
+  shardCount: ['仅 SHARDING 生效。例如分片数为 8，会产生 0～7 共 8 个子执行，并向处理器传入分片索引和总数。'],
+  routingKey: ['一致性哈希使用它稳定选择实例；分片模式使用“路由键 + 分片索引”分配各分片。留空时每次执行使用 executionId。']
+};
+
+const executorFieldHelp = {
+  protocols: [
+    'TCP：通过 Netty 长连接注册、心跳和接收任务，是当前远程执行器使用的协议。',
+    'HTTP：领域模型已预留，但当前尚未实现完整的任务传输。',
+    'EMBEDDED：用于与 Scheduler 同进程运行的处理器，由代码注册，不通过 Admin 页面手动创建。'
+  ]
 };
 
 document.querySelectorAll('.nav').forEach(button => {
   button.addEventListener('click', () => setView(button.dataset.view));
 });
+document.querySelectorAll('[data-logout]').forEach(button => button.addEventListener('click', logout));
+
+let sessionTimer = null;
 
 bootstrap();
 
 async function bootstrap() {
   await loadUiConfig();
-  await loadAllData();
-  setView('overview');
+  if (!await restoreSession()) {
+    showLogin();
+    return;
+  }
+  await activateConsole();
+}
+
+async function restoreSession() {
+  try {
+    const response = await fetch('/ui/auth/session', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return false;
+    const session = await response.json();
+    if (!session.authenticated) return false;
+    state.session = session;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function activateConsole() {
+  document.body.classList.remove('auth-pending', 'auth-required');
+  document.getElementById('modal-root').innerHTML = '';
+  updateSessionSummary();
+  clearInterval(sessionTimer);
+  sessionTimer = setInterval(updateSessionSummary, 1000);
+  await setView(state.currentView ?? 'overview');
+}
+
+function showLogin(message = '') {
+  state.session = null;
+  clearInterval(sessionTimer);
+  document.body.classList.remove('auth-pending');
+  document.body.classList.add('auth-required');
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <main class="login-screen">
+      <section class="login-panel" aria-labelledby="login-title">
+        <div class="login-brand"><span class="brand-icon" aria-hidden="true">◆</span><strong>Firefly</strong></div>
+        <h1 id="login-title">登录管理控制台</h1>
+        <form id="login-form">
+          <label class="field">用户名<input name="username" value="admin" autocomplete="username" required autofocus></label>
+          <label class="field">密码<input type="password" name="password" autocomplete="current-password" required></label>
+          <div class="login-error" role="alert">${escapeHtml(message)}</div>
+          <button class="btn primary login-submit" type="submit">登录</button>
+        </form>
+      </section>
+    </main>`;
+  root.querySelector('#login-form').addEventListener('submit', submitLogin);
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const error = form.querySelector('.login-error');
+  const credentials = Object.fromEntries(new FormData(form).entries());
+  submit.disabled = true;
+  error.textContent = '';
+  try {
+    const response = await fetch('/ui/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(credentials)
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(loginError(body.error));
+    state.session = body;
+    await activateConsole();
+  } catch (failure) {
+    error.textContent = failure.message;
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function logout() {
+  const csrfToken = state.session?.csrfToken;
+  try {
+    await fetch('/ui/auth/logout', {
+      method: 'POST',
+      headers: csrfToken ? { 'X-Firefly-CSRF': csrfToken } : {}
+    });
+  } finally {
+    showLogin();
+  }
+}
+
+function loginError(code) {
+  return {
+    invalid_credentials: '用户名或密码错误',
+    too_many_login_attempts: '登录失败次数过多，请稍后重试',
+    authentication_service_unavailable: '认证服务暂时不可用',
+    credentials_required: '请输入用户名和密码'
+  }[code] ?? '登录失败';
+}
+
+function updateSessionSummary() {
+  if (!state.session) return;
+  const absolute = new Date(state.session.expiresAt).getTime();
+  const idle = new Date(state.session.idleExpiresAt).getTime();
+  const remaining = Math.min(absolute, idle) - Date.now();
+  if (remaining <= 0) {
+    showLogin('会话已过期，请重新登录');
+    return;
+  }
+  document.getElementById('session-subject').textContent = state.session.subject;
+  document.getElementById('session-expiry').textContent = `会话剩余 ${formatRemaining(remaining)}`;
+}
+
+function formatRemaining(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 async function setView(view) {
@@ -91,12 +246,17 @@ function renderActions(view) {
     document.getElementById('refresh-page').addEventListener('click', () => refreshView(true));
     return;
   }
+  if (views[view].action === 'new-user') {
+    actions.innerHTML = `<button class="btn primary" type="button"><span>+</span>新建账号</button>`;
+    actions.querySelector('button').addEventListener('click', () => openUserDialog());
+    return;
+  }
   actions.innerHTML = view === 'overview' ? `<span class="muted">●</span><span class="muted">?</span>` : '';
 }
 
 async function loadAllData() {
   await Promise.allSettled([
-    loadOverview(), loadJobs(), loadExecutions(), loadDeadDispatches(), loadExecutors(), loadNodes()
+    loadOverview(), loadJobs(), loadExecutions(), loadDeadDispatches(), loadExecutors(), loadNodes(), loadUsers()
   ]);
 }
 
@@ -171,6 +331,15 @@ async function loadNodes() {
   }
 }
 
+async function loadUsers() {
+  try {
+    const data = await api('/api/users');
+    state.users = normalizeList(data, 'users');
+  } catch {
+    state.users = [];
+  }
+}
+
 function renderView(view) {
   const root = document.getElementById('view-root');
   if (view === 'overview') root.innerHTML = overviewPage();
@@ -179,7 +348,7 @@ function renderView(view) {
   if (view === 'executions') root.innerHTML = executionsPage();
   if (view === 'nodes') root.innerHTML = nodesPage();
   if (view === 'plugins') root.innerHTML = placeholderPage('插件管理页面正在接入 Admin API');
-  if (view === 'settings') root.innerHTML = placeholderPage('配置页面正在接入 Admin API');
+  if (view === 'settings') root.innerHTML = usersPage();
   bindViewActions(view);
 }
 
@@ -331,7 +500,7 @@ function executorsPage() {
       <div class="table-title">执行器定义</div>
       <div class="table-scroll">
         <table>
-          <thead><tr>${headers(['执行器名称', '说明', '协议', '状态', '已绑定实例', '操作'])}</tr></thead>
+          <thead><tr>${headers(['执行器名称', '说明', '协议', '可用处理器', '状态', '已绑定实例', '操作'])}</tr></thead>
           <tbody>${definitions.map(definition => {
             const bound = executors.filter(item => item.executorName === definition.name);
             const onlineCount = bound.filter(item => item.status === 'ONLINE').length;
@@ -340,6 +509,7 @@ function executorsPage() {
               code(definition.name),
               text(definition.description || '-'),
               text(Array.isArray(definition.protocols) ? definition.protocols.join(', ') : definition.protocols || '-'),
+              text(handlerNamesForExecutor(definition.name).join(', ') || '-'),
               statusText(definition.enabled === false ? 'DISABLED' : 'ENABLED', definition.enabled === false ? 'muted' : 'success'),
               `<button class="link-button" type="button" data-executor-instances="${escapeHtml(definition.name)}">${onlineCount} 在线${offlineCount ? ` / ${offlineCount} 离线` : ''}</button>`,
               `<div class="job-actions">
@@ -347,7 +517,7 @@ function executorsPage() {
                 ${definition.enabled === false ? '' : `<button class="link-button danger" type="button" data-isolate-executor="${escapeHtml(definition.name)}">隔离</button>`}
               </div>`
             ]);
-          }).join('') || emptyRow(6, '暂无执行器定义')}</tbody>
+          }).join('') || emptyRow(7, '暂无执行器定义')}</tbody>
         </table>
       </div>
     </section>
@@ -355,17 +525,18 @@ function executorsPage() {
       <div class="table-title">执行器实例</div>
       <div class="table-scroll">
         <table>
-          <thead><tr>${headers(['执行器','实例','服务','Gateway','地址','心跳年龄','状态','操作'])}</tr></thead>
+          <thead><tr>${headers(['执行器','实例','服务','处理器','Gateway','地址','心跳年龄','状态','操作'])}</tr></thead>
           <tbody>${executors.map(item => tableRow([
             text(item.executorName),
             code(item.instanceId),
             text(item.serviceName),
+            text((item.handlers ?? []).join(', ') || '-'),
             text(item.gatewayNodeId || '-'),
             text(`${item.host ?? '-'}:${item.port ?? '-'}`),
             text(`${Number(item.heartbeatAgeSeconds ?? 0)}s`),
             statusText(item.status ?? 'OFFLINE', item.status === 'ONLINE' ? 'success' : 'muted'),
             `<button class="link-button" type="button" data-executor-instance-detail="${escapeHtml(item.instanceId)}" data-executor-name="${escapeHtml(item.executorName)}">查看</button>`
-          ])).join('') || emptyRow(8, '暂无执行器实例')}</tbody>
+          ])).join('') || emptyRow(9, '暂无执行器实例')}</tbody>
         </table>
       </div>
     </section>
@@ -759,6 +930,8 @@ function executionTag(status) {
 }
 
 function openJobDialog() {
+  const executorName = defaultExecutorName();
+  const handlers = handlerNamesForExecutor(executorName);
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="job-dialog-title">
@@ -770,16 +943,15 @@ function openJobDialog() {
         <div class="modal-body">
           ${dialogField('任务 ID', 'id', 'remote-example-job', true)}
           ${dialogField('任务名称', 'name', 'remote-example-job', false)}
-          ${dialogField('执行器', 'executorName', 'example-executor', true)}
-          ${dialogField('处理器', 'handlerName', 'exampleHandler', true)}
-          ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'])}
-          ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'])}
-          ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'])}
-          ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'])}
-          ${dialogField('分片数', 'shardCount', '1', true, 'number')}
-          ${dialogField('路由键', 'routingKey', '', false)}
-          ${dialogField('Cron', 'cron', '*/5 * * * * *', true)}
-          ${dialogField('时区', 'zoneId', 'Asia/Shanghai', true)}
+          ${executorSelect(executorName)}
+          ${handlerSelect(executorName, handlers.length === 1 ? handlers[0] : '')}
+          ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'], jobFieldHelp.dispatchMode)}
+          ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'], jobFieldHelp.routingStrategy)}
+          ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'], jobFieldHelp.completionPolicy)}
+          ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'], jobFieldHelp.retryScope)}
+          ${dialogField('分片数', 'shardCount', '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
+          ${dialogField('路由键', 'routingKey', '', false, 'text', jobFieldHelp.routingKey)}
+          ${scheduleEditorFields('*/5 * * * * *', 'Asia/Shanghai')}
         </div>
         <div class="modal-footer">
           <button class="btn" type="button" data-close>取消</button>
@@ -789,7 +961,11 @@ function openJobDialog() {
     </div>
   `;
   root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
-  root.querySelector('#job-dialog').addEventListener('submit', createJob);
+  const form = root.querySelector('#job-dialog');
+  bindJobDestinationFields(form);
+  bindJobPolicyFields(form);
+  bindScheduleEditor(form);
+  form.addEventListener('submit', createJob);
 }
 
 function openExecutorDialog() {
@@ -801,7 +977,7 @@ function openExecutorDialog() {
         <div class="modal-body">
           ${dialogField('执行器名称', 'name', 'order-executor', true)}
           ${dialogField('说明', 'description', '订单服务执行器', false)}
-          ${dialogField('协议', 'protocols', 'TCP', true)}
+          ${executorProtocolSelect()}
         </div>
         <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">创建执行器</button></div>
       </form>
@@ -811,12 +987,362 @@ function openExecutorDialog() {
   root.querySelector('#executor-dialog').addEventListener('submit', createExecutor);
 }
 
-function dialogField(label, name, value, required, type = 'text') {
-  return `<label class="field">${escapeHtml(label)}<input type="${escapeHtml(type)}" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${required ? 'required' : ''}></label>`;
+function dialogField(label, name, value, required, type = 'text', help = null, attributes = '') {
+  return `<label class="field" data-field="${escapeHtml(name)}">${fieldLabel(label, help)}<input type="${escapeHtml(type)}" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${required ? 'required' : ''} ${attributes}></label>`;
 }
 
-function dialogSelect(label, name, options) {
-  return `<label class="field">${escapeHtml(label)}<select name="${escapeHtml(name)}">${options.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select></label>`;
+function dialogSelect(label, name, options, help = null) {
+  return `<label class="field" data-field="${escapeHtml(name)}">${fieldLabel(label, help)}<select name="${escapeHtml(name)}">${options.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select></label>`;
+}
+
+function executorProtocolSelect() {
+  const options = [
+    { value: 'TCP', label: 'TCP（Netty，当前支持）', disabled: false },
+    { value: 'HTTP', label: 'HTTP（尚未实现）', disabled: true },
+    { value: 'EMBEDDED', label: 'EMBEDDED（由进程内注册）', disabled: true }
+  ];
+  return `<label class="field" data-field="protocols">${fieldLabel('协议', executorFieldHelp.protocols)}<select name="protocols" required>${options.map(option => `<option value="${escapeHtml(option.value)}" ${option.disabled ? 'disabled' : ''}>${escapeHtml(option.label)}</option>`).join('')}</select></label>`;
+}
+
+function fieldLabel(label, help) {
+  const tooltip = help?.length
+    ? `<span class="help-tooltip" tabindex="0" aria-label="${escapeHtml(label)}说明">?<span class="help-tooltip-content" role="tooltip">${help.map(line => `<span>${escapeHtml(line)}</span>`).join('')}</span></span>`
+    : '';
+  return `<span class="field-label">${escapeHtml(label)}${tooltip}</span>`;
+}
+
+function defaultExecutorName() {
+  return state.executorDefinitions.find(definition => definition.enabled !== false)?.name ?? '';
+}
+
+function handlerNamesForExecutor(executorName) {
+  if (!executorName) return [];
+  const instances = state.executors.filter(instance => instance.executorName === executorName);
+  const online = instances.filter(instance => instance.status === 'ONLINE');
+  const candidates = online.length ? online : instances;
+  if (!candidates.length) return [];
+  const sets = candidates.map(instance => new Set(instance.handlers ?? []));
+  return [...sets[0]].filter(handler => sets.every(set => set.has(handler))).sort();
+}
+
+function executorSelect(value = '') {
+  const definitions = state.executorDefinitions.filter(definition => definition.enabled !== false);
+  const options = definitions.map(definition =>
+    `<option value="${escapeHtml(definition.name)}" ${definition.name === value ? 'selected' : ''}>${escapeHtml(definition.name)}</option>`
+  ).join('');
+  return `<label class="field" data-field="executorName">${fieldLabel('执行器', jobFieldHelp.executorName)}<select name="executorName" required>${options || '<option value="">暂无可用执行器</option>'}</select></label>`;
+}
+
+function handlerSelect(executorName, value = '') {
+  const handlers = handlerNamesForExecutor(executorName);
+  if (value && !handlers.includes(value)) handlers.unshift(value);
+  const options = handlers.map(handler =>
+    `<option value="${escapeHtml(handler)}" ${handler === value ? 'selected' : ''}>${escapeHtml(handler)}</option>`
+  ).join('');
+  return `<label class="field ${handlers.length === 1 ? 'automatic-handler-field' : ''}" data-field="handlerName">${fieldLabel('执行入口', jobFieldHelp.handlerName)}<select name="handlerName" required>${options || '<option value="">执行器尚未上报可用入口</option>'}</select></label>`;
+}
+
+function bindJobDestinationFields(form) {
+  const executor = form.elements.executorName;
+  const handler = form.elements.handlerName;
+  executor?.addEventListener('change', () => {
+    const handlers = handlerNamesForExecutor(executor.value);
+    handler.innerHTML = handlers.length
+      ? handlers.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
+      : '<option value="">执行器尚未上报可用入口</option>';
+    if (handlers.length === 1) handler.value = handlers[0];
+    handler.closest('[data-field="handlerName"]')?.classList.toggle('automatic-handler-field', handlers.length === 1);
+  });
+}
+
+function bindJobPolicyFields(form) {
+  const dispatch = form.elements.dispatchMode;
+  const routing = form.elements.routingStrategy;
+  const shardCount = form.elements.shardCount;
+  const sync = () => {
+    const sharding = dispatch.value === 'SHARDING';
+    const targeted = dispatch.value !== 'BROADCAST';
+    const keyed = sharding || routing.value === 'CONSISTENT_HASH';
+    shardCount.readOnly = !sharding;
+    if (!sharding) shardCount.value = '1';
+    form.querySelector('[data-field="shardCount"]')?.classList.toggle('context-muted', !sharding);
+    form.querySelector('[data-field="routingStrategy"]')?.classList.toggle('context-muted', !targeted);
+    form.querySelector('[data-field="completionPolicy"]')?.classList.toggle('context-muted', dispatch.value === 'UNICAST');
+    form.querySelector('[data-field="routingKey"]')?.classList.toggle('context-muted', !keyed);
+  };
+  dispatch.addEventListener('change', sync);
+  routing.addEventListener('change', sync);
+  sync();
+}
+
+function scheduleEditorFields(cron, zoneId) {
+  return `
+    <label class="field schedule-cron-field">Cron 表达式
+      <span class="field-input-action">
+        <input name="cron" value="${escapeHtml(cron)}" required autocomplete="off">
+        <button class="btn field-action" type="button" data-cron-builder-toggle aria-expanded="false">选择</button>
+      </span>
+    </label>
+    <label class="field timezone-field">时区
+      <span class="combobox-input">
+        <input name="zoneId" value="${escapeHtml(zoneId)}" required autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">
+        <button type="button" data-timezone-toggle title="展开时区" aria-label="展开时区" tabindex="-1">⌄</button>
+      </span>
+      <div class="timezone-options" role="listbox"></div>
+    </label>
+    <div class="cron-builder" hidden>
+      <div class="cron-builder-header"><strong>调度规则</strong><button type="button" class="icon-button" data-cron-builder-close title="收起" aria-label="收起">×</button></div>
+      <div class="cron-mode-tabs" role="tablist" aria-label="Cron 调度方式">
+        ${[
+          ['seconds', '每 N 秒'], ['minutes', '每 N 分钟'], ['hourly', '每小时'],
+          ['daily', '每天'], ['weekly', '每周'], ['monthly', '每月'], ['custom', '自定义']
+        ].map(([mode, label]) => `<button type="button" role="tab" data-cron-mode="${mode}">${label}</button>`).join('')}
+      </div>
+      <div class="cron-builder-controls"></div>
+      <div class="cron-generated"><span>生成结果</span><code data-cron-generated></code></div>
+    </div>
+    <div class="schedule-preview" aria-live="polite"><span class="muted">正在解析计划...</span></div>`;
+}
+
+function bindScheduleEditor(form) {
+  const cron = form.querySelector('[name="cron"]');
+  const zone = form.querySelector('[name="zoneId"]');
+  const options = form.querySelector('.timezone-options');
+  const timezoneToggle = form.querySelector('[data-timezone-toggle]');
+  const cronBuilder = form.querySelector('.cron-builder');
+  const cronBuilderToggle = form.querySelector('[data-cron-builder-toggle]');
+  let previewTimer;
+  let zoneTimer;
+  let zoneRequest = 0;
+  let zoneValues = [];
+  let activeZoneIndex = -1;
+
+  const preview = () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => refreshSchedulePreview(form), 220);
+  };
+  const closeTimezoneOptions = () => {
+    options.classList.remove('open');
+    zone.setAttribute('aria-expanded', 'false');
+    activeZoneIndex = -1;
+  };
+  const selectZone = value => {
+    zone.value = value;
+    zone.setCustomValidity('');
+    delete form.dataset.timezoneValidated;
+    closeTimezoneOptions();
+    preview();
+  };
+  const renderZones = () => {
+    options.innerHTML = zoneValues.map((value, index) => `<button type="button" role="option" aria-selected="${index === activeZoneIndex}" class="${index === activeZoneIndex ? 'active' : ''}" data-timezone-value="${escapeHtml(value)}">${escapeHtml(value)}</button>`).join('');
+    options.classList.toggle('open', zoneValues.length > 0);
+    zone.setAttribute('aria-expanded', options.classList.contains('open') ? 'true' : 'false');
+    options.querySelectorAll('[data-timezone-value]').forEach(button => button.addEventListener('mousedown', event => {
+      event.preventDefault();
+      selectZone(button.dataset.timezoneValue);
+    }));
+    options.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+  };
+  const searchZones = (query = zone.value.trim()) => {
+    clearTimeout(zoneTimer);
+    zone.setCustomValidity('');
+    const requestId = ++zoneRequest;
+    zoneValues = [];
+    activeZoneIndex = -1;
+    options.innerHTML = '<div class="combobox-loading">正在匹配时区...</div>';
+    options.classList.add('open');
+    zone.setAttribute('aria-expanded', 'true');
+    zoneTimer = setTimeout(async () => {
+      try {
+        const data = await api(`/api/schedules/timezones?query=${encodeURIComponent(query)}`);
+        if (requestId !== zoneRequest) return;
+        zoneValues = normalizeList(data, 'timezones').slice(0, 12);
+        activeZoneIndex = -1;
+        renderZones();
+      } catch (error) {
+        if (requestId !== zoneRequest) return;
+        zoneValues = [];
+        options.innerHTML = `<div class="combobox-error">${escapeHtml(scheduleApiError(error))}</div>`;
+        options.classList.add('open');
+        zone.setAttribute('aria-expanded', 'true');
+      }
+    }, 160);
+  };
+
+  cron.addEventListener('input', preview);
+  cronBuilderToggle.addEventListener('click', () => {
+    const opening = cronBuilder.hidden;
+    cronBuilder.hidden = !opening;
+    cronBuilderToggle.setAttribute('aria-expanded', String(opening));
+    if (opening) renderCronBuilder(form, inferCronMode(cron.value), preview);
+  });
+  form.querySelector('[data-cron-builder-close]').addEventListener('click', () => {
+    cronBuilder.hidden = true;
+    cronBuilderToggle.setAttribute('aria-expanded', 'false');
+  });
+  form.querySelectorAll('[data-cron-mode]').forEach(button => button.addEventListener('click', () => {
+    renderCronBuilder(form, button.dataset.cronMode, preview);
+  }));
+  zone.addEventListener('input', () => {
+    delete form.dataset.timezoneValidated;
+    searchZones(zone.value.trim());
+    preview();
+  });
+  zone.addEventListener('focus', () => searchZones(zone.value.trim()));
+  timezoneToggle.addEventListener('click', () => {
+    if (options.classList.contains('open')) closeTimezoneOptions();
+    else { zone.focus(); searchZones(''); }
+  });
+  zone.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      closeTimezoneOptions();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return;
+    if (!options.classList.contains('open')) {
+      if (event.key !== 'Enter') searchZones(zone.value.trim());
+      return;
+    }
+    event.preventDefault();
+    if (event.key === 'ArrowDown') activeZoneIndex = Math.min(zoneValues.length - 1, activeZoneIndex + 1);
+    if (event.key === 'ArrowUp') activeZoneIndex = Math.max(0, activeZoneIndex < 0 ? 0 : activeZoneIndex - 1);
+    if (event.key === 'Enter' && activeZoneIndex >= 0) {
+      selectZone(zoneValues[activeZoneIndex]);
+      return;
+    }
+    renderZones();
+  });
+  zone.addEventListener('blur', () => setTimeout(closeTimezoneOptions, 120));
+  form.addEventListener('submit', async event => {
+    if (form.dataset.timezoneValidated === zone.value) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    try {
+      const data = await api(`/api/schedules/timezones?query=${encodeURIComponent(zone.value.trim())}`);
+      if (!normalizeList(data, 'timezones').includes(zone.value.trim())) {
+        zone.setCustomValidity('请选择有效时区');
+        zone.reportValidity();
+        return;
+      }
+      zone.setCustomValidity('');
+      form.dataset.timezoneValidated = zone.value;
+      form.requestSubmit();
+    } catch (error) {
+      toast(scheduleApiError(error));
+    }
+  }, true);
+  refreshSchedulePreview(form);
+}
+
+function inferCronMode(expression) {
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 6) return 'custom';
+  if (/^\*\/\d+$/.test(fields[0]) && fields.slice(1).every(field => field === '*')) return 'seconds';
+  if (fields[0] === '0' && /^\*\/\d+$/.test(fields[1]) && fields.slice(2).every(field => field === '*')) return 'minutes';
+  if (/^\d+$/.test(fields[0]) && /^\d+$/.test(fields[1]) && fields.slice(2).every(field => field === '*')) return 'hourly';
+  if (fields.slice(0, 3).every(field => /^\d+$/.test(field)) && fields[3] === '*' && fields[4] === '*') {
+    return fields[5] === '*' ? 'daily' : 'weekly';
+  }
+  if (fields.slice(0, 4).every(field => /^\d+$/.test(field)) && fields[4] === '*' && fields[5] === '*') return 'monthly';
+  return 'custom';
+}
+
+function renderCronBuilder(form, mode, preview) {
+  const cron = form.querySelector('[name="cron"]');
+  const controls = form.querySelector('.cron-builder-controls');
+  form.querySelectorAll('[data-cron-mode]').forEach(button => {
+    const active = button.dataset.cronMode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  controls.innerHTML = cronBuilderControls(mode, cron.value);
+  const apply = () => {
+    cron.value = cronExpressionFromBuilder(mode, controls, cron.value);
+    form.querySelector('[data-cron-generated]').textContent = cron.value;
+    preview();
+  };
+  controls.querySelectorAll('input, select').forEach(control => control.addEventListener('input', apply));
+  apply();
+}
+
+function cronBuilderControls(mode, expression) {
+  const fields = expression.trim().split(/\s+/);
+  const secondsStep = fields[0]?.match(/^\*\/(\d+)$/)?.[1] ?? '5';
+  const minutesStep = fields[1]?.match(/^\*\/(\d+)$/)?.[1] ?? '5';
+  const second = /^\d+$/.test(fields[0] ?? '') ? fields[0] : '0';
+  const minute = /^\d+$/.test(fields[1] ?? '') ? fields[1] : '0';
+  const hour = /^\d+$/.test(fields[2] ?? '') ? fields[2] : '0';
+  const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+  if (mode === 'seconds') return cronNumberControl('间隔秒数', 'step', secondsStep, 1, 59);
+  if (mode === 'minutes') return cronNumberControl('间隔分钟', 'step', minutesStep, 1, 59);
+  if (mode === 'hourly') return `${cronNumberControl('第几分钟', 'minute', minute, 0, 59)}${cronNumberControl('秒', 'second', second, 0, 59)}`;
+  if (mode === 'daily') return cronTimeControl(time);
+  if (mode === 'weekly') return `${cronSelectControl('星期', 'weekday', ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'], fields[5] === '*' ? 'MON' : fields[5])}${cronTimeControl(time)}`;
+  if (mode === 'monthly') return `${cronNumberControl('日期', 'day', /^\d+$/.test(fields[3] ?? '') ? fields[3] : '1', 1, 31)}${cronTimeControl(time)}`;
+  const values = fields.length === 6 ? fields : ['0', '*', '*', '*', '*', '*'];
+  return ['秒', '分', '时', '日', '月', '星期'].map((label, index) => `<label>${label}<input name="field${index}" value="${escapeHtml(values[index])}" required></label>`).join('');
+}
+
+function cronNumberControl(label, name, value, min, max) {
+  return `<label>${label}<input type="number" name="${name}" value="${escapeHtml(value)}" min="${min}" max="${max}" required></label>`;
+}
+
+function cronTimeControl(value) {
+  return `<label>执行时间<input type="time" name="time" value="${escapeHtml(value)}" step="1" required></label>`;
+}
+
+function cronSelectControl(label, name, values, selected) {
+  return `<label>${label}<select name="${name}">${values.map(value => `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`).join('')}</select></label>`;
+}
+
+function cronExpressionFromBuilder(mode, controls, fallback) {
+  const value = name => controls.querySelector(`[name="${name}"]`)?.value ?? '';
+  const time = () => {
+    const [hour = '0', minute = '0', second = '0'] = value('time').split(':');
+    return { hour: Number(hour), minute: Number(minute), second: Number(second) };
+  };
+  if (mode === 'seconds') return `*/${value('step') || 1} * * * * *`;
+  if (mode === 'minutes') return `0 */${value('step') || 1} * * * *`;
+  if (mode === 'hourly') return `${value('second') || 0} ${value('minute') || 0} * * * *`;
+  if (mode === 'daily') { const at = time(); return `${at.second} ${at.minute} ${at.hour} * * *`; }
+  if (mode === 'weekly') { const at = time(); return `${at.second} ${at.minute} ${at.hour} * * ${value('weekday')}`; }
+  if (mode === 'monthly') { const at = time(); return `${at.second} ${at.minute} ${at.hour} ${value('day') || 1} * *`; }
+  const fields = Array.from({ length: 6 }, (_, index) => value(`field${index}`));
+  return fields.every(Boolean) ? fields.join(' ') : fallback;
+}
+
+async function refreshSchedulePreview(form) {
+  const preview = form.querySelector('.schedule-preview');
+  const cron = form.querySelector('[name="cron"]');
+  const zone = form.querySelector('[name="zoneId"]');
+  if (!cron.value.trim() || !zone.value.trim()) return;
+  const requestId = Number(form.dataset.schedulePreviewRequest ?? 0) + 1;
+  form.dataset.schedulePreviewRequest = String(requestId);
+  try {
+    const data = await api('/api/schedules/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cron: cron.value.trim(), zoneId: zone.value.trim(), count: 5 })
+    });
+    if (form.dataset.schedulePreviewRequest !== String(requestId)) return;
+    cron.setCustomValidity('');
+    preview.classList.remove('invalid');
+    preview.dataset.cron = data.cron;
+    preview.innerHTML = `<strong>未来 5 次触发</strong><ol>${normalizeList(data, 'nextFireTimes').map(item => `<li><time datetime="${escapeHtml(item.instant)}">${escapeHtml(item.local)}</time></li>`).join('')}</ol>`;
+  } catch (error) {
+    if (form.dataset.schedulePreviewRequest !== String(requestId)) return;
+    const message = scheduleApiError(error);
+    cron.setCustomValidity(message);
+    preview.classList.add('invalid');
+    delete preview.dataset.cron;
+    preview.innerHTML = `<strong>${error.message === 'admin_ui_is_external' ? '服务版本不匹配' : 'Cron 无效'}</strong><span>${escapeHtml(message)}</span>`;
+  }
+}
+
+function scheduleApiError(error) {
+  return error.message === 'admin_ui_is_external'
+    ? '当前 Admin API 仍是旧版本，请重启 Firefly 主服务后再试。'
+    : error.message;
 }
 
 function closeDialog() {
@@ -934,7 +1460,15 @@ async function api(path, options) {
 }
 
 async function request(path, options) {
-  const response = await fetch(path, options);
+  const requestOptions = { ...(options ?? {}) };
+  const method = (requestOptions.method ?? 'GET').toUpperCase();
+  const headers = new Headers(requestOptions.headers ?? {});
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && state.session?.csrfToken) {
+    headers.set('X-Firefly-CSRF', state.session.csrfToken);
+  }
+  requestOptions.headers = headers;
+  const response = await fetch(path, requestOptions);
+  updateSessionFromResponse(response);
   const text = await response.text();
   let data = null;
   try {
@@ -943,10 +1477,22 @@ async function request(path, options) {
     data = { error: 'invalid_json', message: text };
   }
   if (!response.ok) {
+    if (response.status === 401 && path.startsWith('/api/')) {
+      showLogin('会话已过期，请重新登录');
+    }
     const message = data?.message ?? data?.error ?? `HTTP ${response.status}`;
     throw new Error(message);
   }
   return data;
+}
+
+function updateSessionFromResponse(response) {
+  if (!state.session) return;
+  const expiresAt = response.headers.get('X-Firefly-Session-Expires-At');
+  const idleExpiresAt = response.headers.get('X-Firefly-Session-Idle-Expires-At');
+  if (expiresAt) state.session.expiresAt = expiresAt;
+  if (idleExpiresAt) state.session.idleExpiresAt = idleExpiresAt;
+  updateSessionSummary();
 }
 
 function normalizeList(data, key) {
@@ -1020,7 +1566,6 @@ function jobsPage() {
     text(formatDate(job.nextFireTime)),
     text(job.executorName ?? '-'),
     text(job.dispatchMode ?? 'UNICAST'),
-    text(job.businessHandlerName ?? job.handlerName ?? '-'),
     statusText(job.enabled === false ? 'DISABLED' : 'ENABLED', job.enabled === false ? 'muted' : 'success'),
     statusText(job.lastResult ?? '-', job.lastResult === 'FAILED' ? 'danger' : 'success'),
     jobActions(job)
@@ -1040,8 +1585,8 @@ function jobsPage() {
       </div>
       <div class="table-scroll">
         <table class="jobs-table">
-          <thead><tr>${headers(['Job ID', 'Name', 'Group', 'Schedule', 'Time zone', 'Next fire', 'Executor', 'Dispatch', 'Handler', 'Status', 'Last result', 'Actions'])}</tr></thead>
-          <tbody>${rows || emptyRow(12, 'No jobs found')}</tbody>
+          <thead><tr>${headers(['Job ID', 'Name', 'Group', 'Schedule', 'Time zone', 'Next fire', 'Executor', 'Dispatch', 'Status', 'Last result', 'Actions'])}</tr></thead>
+          <tbody>${rows || emptyRow(11, 'No jobs found')}</tbody>
         </table>
       </div>
     </section>
@@ -1095,6 +1640,120 @@ function bindViewActions(view) {
     document.querySelectorAll('[data-node-operation]').forEach(button => {
       button.addEventListener('click', () => updateNode(button.dataset.nodeId, button.dataset.nodeOperation));
     });
+  }
+  if (view === 'settings') {
+    document.querySelectorAll('[data-user-edit]').forEach(button => {
+      button.addEventListener('click', () => openUserDialog(
+        state.users.find(user => user.username === button.dataset.userEdit)
+      ));
+    });
+    document.querySelectorAll('[data-user-delete]').forEach(button => {
+      button.addEventListener('click', () => deleteUser(button.dataset.userDelete));
+    });
+  }
+}
+
+function usersPage() {
+  const rows = state.users.map(user => {
+    const current = user.username === state.session?.subject;
+    return tableRow([
+      code(user.username),
+      text(normalizeRoles(user.roles)),
+      statusText(user.enabled ? 'ENABLED' : 'DISABLED', user.enabled ? 'success' : 'muted'),
+      text(String(user.version)),
+      text(formatDate(user.createdAt)),
+      text(formatDate(user.updatedAt)),
+      `<div class="job-actions">
+        <button class="icon-button" type="button" title="编辑账号" aria-label="编辑账号" data-user-edit="${escapeHtml(user.username)}">&#9998;</button>
+        <button class="icon-button danger" type="button" title="删除账号" aria-label="删除账号" data-user-delete="${escapeHtml(user.username)}" ${current ? 'disabled' : ''}>&#10005;</button>
+      </div>`
+    ]);
+  }).join('');
+  return `
+    <section class="summary-strip">
+      ${statCard('管理账号', state.users.length, '个', '持久化账号', '▤', 'primary')}
+      ${statCard('启用账号', state.users.filter(user => user.enabled).length, '个', '可登录控制台', '●', 'yellow', 'success')}
+      ${statCard('管理员', state.users.filter(user => user.enabled && user.roles?.includes('ADMIN')).length, '个', '启用中的 ADMIN', '◆', 'gray')}
+    </section>
+    <section class="table-card">
+      <div class="table-toolbar"><div><strong>Admin 用户</strong><span class="table-count">共 ${state.users.length} 条</span></div><span class="muted">密码摘要不会通过 API 返回</span></div>
+      <div class="table-scroll"><table>
+        <thead><tr>${headers(['用户名', '角色', '状态', '版本', '创建时间', '更新时间', '操作'])}</tr></thead>
+        <tbody>${rows || emptyRow(7, '暂无账号或当前用户没有 ADMIN 权限')}</tbody>
+      </table></div>
+    </section>`;
+}
+
+function openUserDialog(user = null) {
+  const editing = Boolean(user);
+  const roles = new Set(user?.roles ?? ['READER']);
+  const current = user?.username === state.session?.subject;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="user-dialog-title">
+      <section class="modal compact-modal">
+        <div class="modal-header"><h2 id="user-dialog-title">${editing ? '编辑账号' : '新建账号'}</h2><button class="btn icon" type="button" data-close aria-label="关闭">×</button></div>
+        <form id="user-form">
+          <div class="modal-body">
+            <label class="field">用户名<input name="username" value="${escapeHtml(user?.username ?? '')}" ${editing ? 'readonly' : 'required'} pattern="[A-Za-z0-9._@-]{1,128}" autocomplete="off"></label>
+            <label class="field">${editing ? '新密码（留空则不修改）' : '密码'}<input type="password" name="password" ${editing ? '' : 'required'} minlength="8" maxlength="256" autocomplete="new-password"></label>
+            <fieldset class="role-field"><legend>角色</legend>
+              ${['READER', 'OPERATOR', 'ADMIN'].map(role => `<label><input type="checkbox" name="roles" value="${role}" ${roles.has(role) ? 'checked' : ''}> ${role}</label>`).join('')}
+            </fieldset>
+            <label class="toggle-field"><input type="checkbox" name="enabled" ${user?.enabled !== false ? 'checked' : ''} ${current ? 'disabled' : ''}><span>允许登录</span></label>
+            ${editing ? `<input type="hidden" name="version" value="${Number(user.version)}">` : ''}
+          </div>
+          <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">保存</button></div>
+        </form>
+      </section>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  root.querySelector('#user-form').addEventListener('submit', event => saveUser(event, user));
+}
+
+async function saveUser(event, existing) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const roles = [...form.querySelectorAll('input[name="roles"]:checked')].map(input => input.value);
+  if (!roles.length) {
+    toast('请至少选择一个角色');
+    return;
+  }
+  const body = {
+    username: form.elements.username.value.trim(),
+    password: form.elements.password.value,
+    roles: roles.join(','),
+    enabled: form.elements.enabled?.checked ?? existing?.enabled ?? true
+  };
+  if (existing) body.version = Number(form.elements.version.value);
+  if (existing && !body.password) delete body.password;
+  try {
+    await api(existing ? `/api/users/${encodeURIComponent(existing.username)}` : '/api/users', {
+      method: existing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    closeDialog();
+    await refreshView(false);
+    toast(existing ? `账号已更新：${existing.username}` : `账号已创建：${body.username}`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function deleteUser(username) {
+  const user = state.users.find(item => item.username === username);
+  if (!user || !window.confirm(`确认删除账号“${username}”？`)) return;
+  try {
+    await api(`/api/users/${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: Number(user.version) })
+    });
+    await refreshView(false);
+    toast(`账号已删除：${username}`);
+  } catch (error) {
+    toast(error.message);
   }
 }
 
@@ -1159,16 +1818,15 @@ function openJobEditDialog(job) {
         <div class="modal-body">
           ${dialogField('任务 ID', 'id', job.id, true)}
           ${dialogField('任务名称', 'name', job.name ?? job.id, true)}
-          ${dialogField('执行器', 'executorName', job.executorName ?? '', true)}
-          ${dialogField('处理器', 'handlerName', job.businessHandlerName ?? job.handlerName ?? '', true)}
-          ${dialogField('Cron 表达式', 'cron', job.schedule ?? '*/5 * * * * *', true)}
-          ${dialogField('时区', 'zoneId', job.zoneId ?? 'UTC', true)}
-          ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'])}
-          ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'])}
-          ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'])}
-          ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'])}
-          ${dialogField('分片数量', 'shardCount', job.shardCount ?? '1', true, 'number')}
-          ${dialogField('路由键', 'routingKey', job.routingKey ?? '', false)}
+          ${executorSelect(job.executorName ?? '')}
+          ${handlerSelect(job.executorName ?? '', job.businessHandlerName ?? job.handlerName ?? '')}
+          ${scheduleEditorFields(job.schedule ?? '*/5 * * * * *', job.zoneId ?? 'UTC')}
+          ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'], jobFieldHelp.dispatchMode)}
+          ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'], jobFieldHelp.routingStrategy)}
+          ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'], jobFieldHelp.completionPolicy)}
+          ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'], jobFieldHelp.retryScope)}
+          ${dialogField('分片数量', 'shardCount', job.shardCount ?? '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
+          ${dialogField('路由键', 'routingKey', job.routingKey ?? '', false, 'text', jobFieldHelp.routingKey)}
           ${dialogField('最大重试次数', 'retryMaxAttempts', job.retryMaxAttempts ?? '1', true, 'number')}
           ${dialogSelect('状态', 'enabled', ['true', 'false'])}
         </div>
@@ -1187,7 +1845,11 @@ function openJobEditDialog(job) {
     if (field) field.value = value;
   });
   root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
-  root.querySelector('#job-edit-dialog').addEventListener('submit', submitJobEdit);
+  const form = root.querySelector('#job-edit-dialog');
+  bindJobDestinationFields(form);
+  bindJobPolicyFields(form);
+  bindScheduleEditor(form);
+  form.addEventListener('submit', submitJobEdit);
 }
 
 async function submitJobEdit(event) {

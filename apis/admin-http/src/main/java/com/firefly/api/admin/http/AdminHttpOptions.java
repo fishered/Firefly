@@ -11,14 +11,23 @@ public record AdminHttpOptions(
         int port,
         Duration heartbeatTimeout,
         String apiToken,
-        java.util.Map<String, AdminRole> tokenRoles
+        java.util.Map<String, AdminRole> tokenRoles,
+        com.firefly.security.JwtService jwtService,
+        java.util.Map<String, com.firefly.security.JwtClient> jwtClients
 ) {
     public AdminHttpOptions(String host, int port, Duration heartbeatTimeout) {
-        this(host, port, heartbeatTimeout, "", java.util.Map.of());
+        this(host, port, heartbeatTimeout, "", java.util.Map.of(), null, java.util.Map.of());
     }
 
     public AdminHttpOptions(String host, int port, Duration heartbeatTimeout, String apiToken) {
-        this(host, port, heartbeatTimeout, apiToken, java.util.Map.of());
+        this(host, port, heartbeatTimeout, apiToken, java.util.Map.of(), null, java.util.Map.of());
+    }
+
+    public AdminHttpOptions(
+            String host, int port, Duration heartbeatTimeout, String apiToken,
+            java.util.Map<String, AdminRole> tokenRoles
+    ) {
+        this(host, port, heartbeatTimeout, apiToken, tokenRoles, null, java.util.Map.of());
     }
 
     public AdminHttpOptions {
@@ -34,6 +43,10 @@ public record AdminHttpOptions(
         if (!apiToken.isBlank()) roles.merge(apiToken, AdminRole.ADMIN,
                 (left, right) -> left.ordinal() >= right.ordinal() ? left : right);
         tokenRoles = java.util.Map.copyOf(roles);
+        jwtClients = jwtClients == null ? java.util.Map.of() : java.util.Map.copyOf(jwtClients);
+        if (jwtService == null && !jwtClients.isEmpty()) {
+            throw new IllegalArgumentException("jwtService is required when JWT clients are configured");
+        }
         if (host.isBlank()) {
             throw new IllegalArgumentException("host must not be blank");
         }
@@ -46,6 +59,7 @@ public record AdminHttpOptions(
     }
 
     public static AdminHttpOptions defaults() {
-        return new AdminHttpOptions("127.0.0.1", 9710, Duration.ofSeconds(30), "", java.util.Map.of());
+        return new AdminHttpOptions("127.0.0.1", 9710, Duration.ofSeconds(30), "", java.util.Map.of(), null,
+                java.util.Map.of());
     }
 }

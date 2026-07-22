@@ -9,6 +9,7 @@ import com.firefly.store.JobRepository;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.audit.AuditRepository;
 import com.firefly.store.JobHistoryRepository;
+import com.firefly.security.AdminUserRepository;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -33,6 +34,7 @@ public final class FireflyPluginContext {
     private final JobHistoryRepository jobHistoryRepository;
     private final ExecutorIsolationDispatcher executorIsolationDispatcher;
     private final NodeDrainStatusProvider nodeDrainStatusProvider;
+    private final AdminUserRepository adminUserRepository;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -50,6 +52,7 @@ public final class FireflyPluginContext {
         this.jobHistoryRepository = builder.jobHistoryRepository;
         this.executorIsolationDispatcher = builder.executorIsolationDispatcher;
         this.nodeDrainStatusProvider = builder.nodeDrainStatusProvider;
+        this.adminUserRepository = builder.adminUserRepository;
     }
 
     public static Builder builder() {
@@ -116,6 +119,10 @@ public final class FireflyPluginContext {
         return Optional.ofNullable(nodeDrainStatusProvider);
     }
 
+    public Optional<AdminUserRepository> adminUserRepository() {
+        return Optional.ofNullable(adminUserRepository);
+    }
+
     public static final class Builder {
         private Clock clock = Clock.systemUTC();
         private JobRepository jobRepository;
@@ -132,6 +139,7 @@ public final class FireflyPluginContext {
         private JobHistoryRepository jobHistoryRepository;
         private ExecutorIsolationDispatcher executorIsolationDispatcher;
         private NodeDrainStatusProvider nodeDrainStatusProvider;
+        private AdminUserRepository adminUserRepository;
 
         private Builder() {
         }
@@ -213,6 +221,11 @@ public final class FireflyPluginContext {
 
         public Builder nodeDrainStatusProvider(NodeDrainStatusProvider provider) {
             this.nodeDrainStatusProvider = Objects.requireNonNull(provider, "nodeDrainStatusProvider");
+            return this;
+        }
+
+        public Builder adminUserRepository(AdminUserRepository repository) {
+            this.adminUserRepository = Objects.requireNonNull(repository, "adminUserRepository");
             return this;
         }
 

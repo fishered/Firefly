@@ -1,6 +1,7 @@
 package com.firefly.spring.job;
 
 import com.firefly.executor.netty.NettyExecutorClient;
+import com.firefly.executor.netty.AuthTokenProvider;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -29,6 +30,7 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
     private final CopyOnWriteArrayList<FireflyJobRegistration> registrations;
     private final NettyExecutorClient executorClient;
     private final HttpClient httpClient;
+    private final AuthTokenProvider authTokenProvider;
 
     public FireflyJobRegistrar(
             String executorName,
@@ -36,10 +38,22 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
             List<FireflyJobRegistration> registrations,
             NettyExecutorClient executorClient
     ) {
+        this(executorName, properties, registrations, executorClient,
+                AuthTokenProvider.fixed(properties.getAdminToken()));
+    }
+
+    public FireflyJobRegistrar(
+            String executorName,
+            FireflyJobRegistrationProperties properties,
+            List<FireflyJobRegistration> registrations,
+            NettyExecutorClient executorClient,
+            AuthTokenProvider authTokenProvider
+    ) {
         this.executorName = requireNonBlank(executorName, "executorName");
         this.properties = Objects.requireNonNull(properties, "properties");
         this.registrations = new CopyOnWriteArrayList<>(registrations);
         this.executorClient = Objects.requireNonNull(executorClient, "executorClient");
+        this.authTokenProvider = Objects.requireNonNull(authTokenProvider, "authTokenProvider");
         validateConfiguration();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(positive(properties.getRequestTimeout(), "requestTimeout"))
@@ -155,8 +169,12 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .timeout(positive(properties.getRequestTimeout(), "requestTimeout"))
                 .header("Accept", "application/json");
-        if (properties.getAdminToken() != null && !properties.getAdminToken().isBlank()) {
-            request.header("X-Firefly-Token", properties.getAdminToken());
+        String legacyToken = properties.getAdminToken();
+        String token = authTokenProvider.accessToken();
+        if (legacyToken != null && !legacyToken.isBlank()) {
+            request.header("X-Firefly-Token", legacyToken);
+        } else if (token != null && !token.isBlank()) {
+            request.header("Authorization", "Bearer " + token);
         }
         return request;
     }

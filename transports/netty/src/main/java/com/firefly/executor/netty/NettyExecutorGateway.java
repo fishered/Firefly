@@ -54,6 +54,7 @@ public final class NettyExecutorGateway implements AutoCloseable {
     private final ExecutionRepository executionRepository;
     private final java.util.function.BiConsumer<String, Instant> dispatchAcknowledger;
     private final String executorAuthToken;
+    private volatile java.util.function.BiPredicate<String, String> registrationAuthenticator;
     private final java.util.function.BiConsumer<String, Boolean> retryScheduler;
     private final SchedulerMetrics metrics;
     private final NettyExecutorGatewayOptions options;
@@ -243,6 +244,7 @@ public final class NettyExecutorGateway implements AutoCloseable {
         this.executionRepository = Objects.requireNonNull(executionRepository, "executionRepository");
         this.dispatchAcknowledger = Objects.requireNonNull(dispatchAcknowledger, "dispatchAcknowledger");
         this.executorAuthToken = executorAuthToken == null ? "" : executorAuthToken;
+        this.registrationAuthenticator = sharedTokenAuthenticator(this.executorAuthToken);
         this.retryScheduler = Objects.requireNonNull(retryScheduler, "retryScheduler");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.options = Objects.requireNonNull(options, "options");
@@ -293,7 +295,7 @@ public final class NettyExecutorGateway implements AutoCloseable {
                                         executionRepository,
                                         dispatchAcknowledger,
                                         resultPersistenceExecutor,
-                                        executorAuthToken,
+                                        registrationAuthenticator,
                                         retryScheduler,
                                         metrics,
                                         instanceDirectory,
@@ -305,6 +307,17 @@ public final class NettyExecutorGateway implements AutoCloseable {
                     }
                 });
         serverChannel = bootstrap.bind(port).sync().channel();
+    }
+
+    public void setRegistrationAuthenticator(java.util.function.BiPredicate<String, String> authenticator) {
+        this.registrationAuthenticator = Objects.requireNonNull(authenticator, "authenticator");
+    }
+
+    private static java.util.function.BiPredicate<String, String> sharedTokenAuthenticator(String expected) {
+        return (provided, executorName) -> expected.isBlank() || java.security.MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                (provided == null ? "" : provided).getBytes(StandardCharsets.UTF_8)
+        );
     }
 
     public boolean dispatch(String executorName, ExecutionCommand command) {

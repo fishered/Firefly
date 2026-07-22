@@ -6,7 +6,7 @@
   <title>Firefly Console</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="auth-pending">
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-icon" aria-hidden="true">◆</span>
@@ -25,10 +25,11 @@
 
     <div class="user-box">
       <div class="avatar">●</div>
-      <div>
-        <div>管理员</div>
-        <small>v1.0.0</small>
+      <div class="session-summary">
+        <div id="session-subject">管理员</div>
+        <small id="session-expiry">--:--</small>
       </div>
+      <button class="logout-button" type="button" data-logout>退出</button>
     </div>
   </aside>
 
@@ -38,7 +39,7 @@
         <h1 id="page-title">总览</h1>
         <span id="page-badge" class="title-badge hidden"></span>
       </div>
-      <div id="page-actions" class="page-actions"></div>
+      <div class="topbar-actions"><div id="page-actions" class="page-actions"></div><button class="btn mobile-logout" type="button" data-logout>退出</button></div>
     </header>
 
     <section id="view-root" class="view-root" aria-live="polite"></section>

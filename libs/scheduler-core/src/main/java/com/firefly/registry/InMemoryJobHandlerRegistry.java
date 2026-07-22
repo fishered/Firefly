@@ -14,8 +14,8 @@ public final class InMemoryJobHandlerRegistry implements JobHandlerRegistry {
     public void register(String name, JobHandler handler) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(handler, "handler");
-        if (name.isBlank()) {
-            throw new IllegalArgumentException("handler name must not be blank");
+        if (name.isBlank() || name.contains(",")) {
+            throw new IllegalArgumentException("handler name must not be blank or contain ','");
         }
         handlers.put(name, handler);
     }
@@ -23,6 +23,11 @@ public final class InMemoryJobHandlerRegistry implements JobHandlerRegistry {
     @Override
     public Optional<JobHandler> find(String name) {
         return Optional.ofNullable(handlers.get(name));
+    }
+
+    @Override
+    public java.util.Set<String> names() {
+        return java.util.Set.copyOf(handlers.keySet());
     }
 }
 

@@ -33,7 +33,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
     private final ExecutionRepository executionRepository;
     private final java.util.function.BiConsumer<String, Instant> dispatchAcknowledger;
     private final java.util.concurrent.Executor resultPersistenceExecutor;
-    private final String executorAuthToken;
+    private final java.util.function.BiPredicate<String, String> registrationAuthenticator;
     private final java.util.function.BiConsumer<String, Boolean> retryScheduler;
     private final SchedulerMetrics metrics;
     private final ExecutorInstanceDirectory instanceDirectory;
@@ -105,6 +105,33 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
             java.time.Duration instanceLocationLease,
             java.util.function.BooleanSupplier registrationAdmission
     ) {
+        this(executorRegistry, connectionRegistry, codec, clock, schedulerCatalog,
+                autoCreateExecutorDefinitions, gatewayNodeId, executionRepository, dispatchAcknowledger,
+                resultPersistenceExecutor, sharedTokenAuthenticator(executorAuthToken), retryScheduler, metrics,
+                instanceDirectory, advertisedGatewayAddress, instanceLocationRefreshInterval,
+                instanceLocationLease, registrationAdmission);
+    }
+
+    NettyExecutorGatewayHandler(
+            ExecutorRegistry executorRegistry,
+            NettyExecutorConnectionRegistry connectionRegistry,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            SchedulerCatalog schedulerCatalog,
+            boolean autoCreateExecutorDefinitions,
+            String gatewayNodeId,
+            ExecutionRepository executionRepository,
+            java.util.function.BiConsumer<String, Instant> dispatchAcknowledger,
+            java.util.concurrent.Executor resultPersistenceExecutor,
+            java.util.function.BiPredicate<String, String> registrationAuthenticator,
+            java.util.function.BiConsumer<String, Boolean> retryScheduler,
+            SchedulerMetrics metrics,
+            ExecutorInstanceDirectory instanceDirectory,
+            String advertisedGatewayAddress,
+            java.time.Duration instanceLocationRefreshInterval,
+            java.time.Duration instanceLocationLease,
+            java.util.function.BooleanSupplier registrationAdmission
+    ) {
         this.executorRegistry = executorRegistry;
         this.connectionRegistry = connectionRegistry;
         this.codec = codec;
@@ -115,7 +142,8 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         this.executionRepository = executionRepository;
         this.dispatchAcknowledger = dispatchAcknowledger;
         this.resultPersistenceExecutor = resultPersistenceExecutor;
-        this.executorAuthToken = executorAuthToken;
+        this.registrationAuthenticator = java.util.Objects.requireNonNull(
+                registrationAuthenticator, "registrationAuthenticator");
         this.retryScheduler = retryScheduler;
         this.metrics = metrics;
         this.instanceDirectory = instanceDirectory;
@@ -162,6 +190,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         String instanceId = payload.get("instanceId");
         String sessionId = payload.getOrDefault("sessionId", instanceId);
         String serviceName = payload.getOrDefault("serviceName", instanceId);
+        String handlerNames = normalizeHandlerNames(payload.getOrDefault("handlerNames", ""));
         int protocolVersion;
         try {
             protocolVersion = Integer.parseInt(payload.getOrDefault("protocolVersion", "1"));
@@ -185,7 +214,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 : NettyExecutorProtocol.SERVER_CAPABILITIES.stream()
                 .filter(clientCapabilities::contains)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        if (!authorized(payload.getOrDefault("authToken", ""))) {
+        if (!authorized(payload.getOrDefault("authToken", ""), executorName)) {
             rejectRegistration(context, "AUTHENTICATION_FAILED", "executor authentication failed");
             return;
         }
@@ -218,6 +247,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 .protocol(ExecutorProtocol.TCP)
                 .registeredAt(now)
                 .lastHeartbeatAt(now)
+                .metadata(Map.of("handlerNames", handlerNames))
                 .build());
         int negotiatedProtocolVersion = Math.min(protocolVersion, NettyExecutorProtocol.CURRENT_VERSION);
         connectionRegistry.register(
@@ -228,6 +258,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 executorName, instanceId, gatewayNodeId, advertisedGatewayAddress, sessionId,
                 now, now.plus(instanceLocationLease), Map.of(
                         "serviceName", serviceName,
+                        "handlerNames", handlerNames,
                         "protocolVersion", Integer.toString(negotiatedProtocolVersion),
                         "capabilities", NettyExecutorProtocol.encodeCapabilities(negotiatedCapabilities)
                 )
@@ -249,6 +280,15 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 + ", instance=" + instanceId
                 + ", service=" + serviceName
                 + ", remote=" + remoteHost(context));
+    }
+
+    private String normalizeHandlerNames(String value) {
+        return java.util.Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(name -> !name.isEmpty())
+                .distinct()
+                .sorted()
+                .collect(java.util.stream.Collectors.joining(","));
     }
 
     private void rejectRegistration(ChannelHandlerContext context, String reasonCode, String reason) {
@@ -275,11 +315,19 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         context.writeAndFlush(codec.encode(message) + "\n");
     }
 
-    private boolean authorized(String provided) {
-        if (executorAuthToken.isBlank()) return true;
-        return java.security.MessageDigest.isEqual(
-                executorAuthToken.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                provided.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    private boolean authorized(String provided, String executorName) {
+        try {
+            return registrationAuthenticator.test(provided, executorName);
+        } catch (RuntimeException invalidCredential) {
+            return false;
+        }
+    }
+
+    private static java.util.function.BiPredicate<String, String> sharedTokenAuthenticator(String expected) {
+        String token = expected == null ? "" : expected;
+        return (provided, executorName) -> token.isBlank() || java.security.MessageDigest.isEqual(
+                token.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                (provided == null ? "" : provided).getBytes(java.nio.charset.StandardCharsets.UTF_8)
         );
     }
 

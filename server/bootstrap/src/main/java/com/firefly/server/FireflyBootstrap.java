@@ -78,6 +78,11 @@ public final class FireflyBootstrap implements AutoCloseable {
     }
 
     public static FireflyBootstrap start(ServerOptions options) {
+        if (options.runtimeOptions().jwtSecurity().usesDevelopmentCredentials()
+                || options.runtimeOptions().adminSecurity().usesDevelopmentCredentials()) {
+            log.warning("Firefly is using bundled local-development security credentials; "
+                    + "replace them before any non-local deployment");
+        }
         RuntimeAssembly assembly = schedulerAssembly(options);
         Injector injector = Guice.createInjector(assembly.module());
         JobRepository repository = injector.getInstance(JobRepository.class);
@@ -91,6 +96,7 @@ public final class FireflyBootstrap implements AutoCloseable {
         JobDispatcher jobDispatcher = injector.getInstance(JobDispatcher.class);
         SchedulerMetrics metrics = injector.getInstance(SchedulerMetrics.class);
         java.time.Clock runtimeClock = injector.getInstance(java.time.Clock.class);
+        bootstrapAdminUser(assembly.adminUserRepository(), options.runtimeOptions().adminSecurity(), runtimeClock);
         java.util.function.BooleanSupplier acceptingNewWork = () -> nodeRegistry.find(options.nodeName())
                 .map(node -> node.status() == NodeStatus.ONLINE)
                 .orElse(false);
@@ -181,6 +187,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                 .schedulerMetrics(metrics)
                 .auditRepository(injector.getInstance(com.firefly.audit.AuditRepository.class))
                 .jobHistoryRepository(injector.getInstance(com.firefly.store.JobHistoryRepository.class))
+                .adminUserRepository(assembly.adminUserRepository())
                 .nodeDrainStatusProvider(nodeDrainMonitor);
         if (executorGateway != null) {
             pluginContext.remoteExecutorDispatcher(executorGateway::dispatch);
@@ -230,9 +237,11 @@ public final class FireflyBootstrap implements AutoCloseable {
         int shardCount = options.schedulerShards().shardCount();
         if (!store.jdbcEnabled()) {
             log.info("Storage: memory");
-            return new RuntimeAssembly(new SchedulerModule(
-                    shardCount, options.runtimeOptions().schedulerEngine()
-            ), () -> { });
+            return new RuntimeAssembly(
+                    new SchedulerModule(shardCount, options.runtimeOptions().schedulerEngine()),
+                    () -> { },
+                    new com.firefly.security.InMemoryAdminUserRepository()
+            );
         }
         DataSource dataSource = new DriverManagerDataSource(store.jdbcUrl(), store.jdbcUsername(), store.jdbcPassword());
         JdbcSchemaOptions schemaOptions = JdbcSchemaOptions.of(store.jdbcDialect())
@@ -272,7 +281,33 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new com.firefly.store.jdbc.JdbcJobHistoryRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource)
         );
-        return new RuntimeAssembly(module, clock);
+        return new RuntimeAssembly(module, clock, new com.firefly.store.jdbc.JdbcAdminUserRepository(dataSource));
+    }
+
+    private static void bootstrapAdminUser(
+            com.firefly.security.AdminUserRepository repository,
+            AdminSecurityOptions options,
+            java.time.Clock clock
+    ) {
+        if (!options.bootstrapEnabled()) return;
+        String username = options.bootstrapUsername();
+        if (repository.find(username).isPresent()) {
+            log.info("Admin bootstrap account already exists: " + username);
+            return;
+        }
+        Instant now = clock.instant();
+        char[] password = options.bootstrapPassword().toCharArray();
+        String passwordHash;
+        try {
+            passwordHash = new com.firefly.security.Pbkdf2PasswordHasher().hash(password);
+        } finally {
+            java.util.Arrays.fill(password, '\0');
+        }
+        boolean created = repository.create(new com.firefly.security.AdminUser(
+                username, passwordHash, Set.of(com.firefly.security.FireflyRole.ADMIN), true, 0, now, now
+        ));
+        if (created) log.info("Admin bootstrap account created: " + username);
+        else log.info("Admin bootstrap account was created concurrently: " + username);
     }
 
     private static void registerNode(NodeRegistry nodeRegistry, ServerOptions options, java.time.Clock clock) {
@@ -310,11 +345,13 @@ public final class FireflyBootstrap implements AutoCloseable {
     private static List<FireflyPlugin> configuredPlugins(ServerOptions options) {
         List<FireflyPlugin> plugins = new ArrayList<>();
         if (options.adminHttpEnabled()) {
+            com.firefly.security.JwtService jwtService = jwtService(options, java.time.Clock.systemUTC());
             plugins.add(new AdminHttpPlugin(new AdminHttpOptions(
                     options.adminHttpHost(),
                     options.adminHttpPort(),
                     Duration.ofSeconds(30),
-                    options.adminApiToken(), adminTokenRoles(options)
+                    options.adminApiToken(), adminTokenRoles(options), jwtService,
+                    options.runtimeOptions().jwtSecurity().clients()
             )));
             log.info("Admin HTTP: http://" + options.adminHttpHost() + ":" + options.adminHttpPort() + "/");
         }
@@ -383,6 +420,13 @@ public final class FireflyBootstrap implements AutoCloseable {
                 options.runtimeOptions().nettyGateway(),
                 instanceDirectory
         );
+        com.firefly.security.JwtService jwtService = jwtService(options, runtimeClock);
+        if (jwtService != null) {
+            gateway.setRegistrationAuthenticator((token, executorName) -> {
+                com.firefly.security.FireflyPrincipal principal = jwtService.verify(token);
+                return principal.allowsExecutor(executorName);
+            });
+        }
         gateway.setRegistrationAdmission(registrationAdmission);
         try {
             gateway.start();
@@ -394,6 +438,18 @@ public final class FireflyBootstrap implements AutoCloseable {
         return gateway;
     }
 
-    private record RuntimeAssembly(SchedulerModule module, AutoCloseable closeable) {
+    private static com.firefly.security.JwtService jwtService(ServerOptions options, java.time.Clock clock) {
+        JwtSecurityOptions security = options.runtimeOptions().jwtSecurity();
+        if (!security.enabled()) return null;
+        return new com.firefly.security.JwtService(
+                security.secret(), security.issuer(), security.accessTokenTtl(), clock
+        );
+    }
+
+    private record RuntimeAssembly(
+            SchedulerModule module,
+            AutoCloseable closeable,
+            com.firefly.security.AdminUserRepository adminUserRepository
+    ) {
     }
 }

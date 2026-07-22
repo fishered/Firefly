@@ -21,7 +21,11 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Repeatable(FireflyJobs.class)
 public @interface FireflyJob {
-    String id();
+    /**
+     * Distinguishes multiple schedules declared on the same method.
+     * Leave blank when the method has only one schedule.
+     */
+    String key() default "";
 
     String cron();
 
@@ -29,8 +33,7 @@ public @interface FireflyJob {
 
     String groupId() default "default";
 
-    String handlerName() default "";
-
+    /** IANA time-zone ID validated by the Starter while the Spring bean is initialized. */
     String zoneId() default "UTC";
 
     boolean enabled() default true;

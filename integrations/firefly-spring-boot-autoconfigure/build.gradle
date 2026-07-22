@@ -5,6 +5,8 @@ plugins {
 dependencies {
     api project(":clients:executor-netty")
 
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.17.2"
+
     compileOnly "org.springframework.boot:spring-boot-autoconfigure:3.3.5"
     compileOnly "org.projectlombok:lombok:1.18.34"
     annotationProcessor "org.springframework.boot:spring-boot-configuration-processor:3.3.5"

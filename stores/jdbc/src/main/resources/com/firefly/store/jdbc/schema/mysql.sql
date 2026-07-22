@@ -186,6 +186,17 @@ create table if not exists firefly_job_history (
     index idx_firefly_job_history_job (job_id, occurred_at, history_id)
 );
 
+create table if not exists firefly_user (
+    username varchar(128) primary key,
+    password_hash varchar(512) not null,
+    roles varchar(256) not null,
+    enabled boolean not null,
+    version bigint not null,
+    created_at timestamp(6) not null,
+    updated_at timestamp(6) not null,
+    index idx_firefly_user_enabled (enabled, username)
+);
+
 insert into firefly_schema_version (version, installed_at)
 select 2, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 2);
@@ -217,3 +228,7 @@ where not exists (select 1 from firefly_schema_version where version = 8);
 insert into firefly_schema_version (version, installed_at)
 select 9, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 9);
+
+insert into firefly_schema_version (version, installed_at)
+select 10, current_timestamp
+where not exists (select 1 from firefly_schema_version where version = 10);

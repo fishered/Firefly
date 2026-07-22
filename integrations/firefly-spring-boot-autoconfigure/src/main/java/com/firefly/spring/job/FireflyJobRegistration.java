@@ -5,6 +5,8 @@ import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.domain.ExecutorRoutingStrategy;
 
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -35,7 +37,7 @@ public record FireflyJobRegistration(
         groupId = defaultIfBlank(groupId, "default");
         handlerName = requireNonBlank(handlerName, "handlerName");
         cron = requireNonBlank(cron, "cron");
-        zoneId = defaultIfBlank(zoneId, "UTC");
+        zoneId = requireValidZoneId(zoneId, "Firefly job " + id);
         Objects.requireNonNull(dispatchMode, "dispatchMode");
         Objects.requireNonNull(routingStrategy, "routingStrategy");
         Objects.requireNonNull(completionPolicy, "completionPolicy");
@@ -157,6 +159,22 @@ public record FireflyJobRegistration(
             throw new IllegalArgumentException(name + " must not be blank");
         }
         return value;
+    }
+
+    static String requireValidZoneId(String value, String owner) {
+        Objects.requireNonNull(value, "zoneId");
+        if (value.isBlank()) {
+            throw new IllegalArgumentException("zoneId must not be blank for " + owner);
+        }
+        try {
+            return ZoneId.of(value).getId();
+        } catch (DateTimeException e) {
+            throw new IllegalArgumentException(
+                    "invalid zoneId '" + value + "' for " + owner
+                            + "; use an ID accepted by java.time.ZoneId.of",
+                    e
+            );
+        }
     }
 
     private static String defaultIfBlank(String value, String fallback) {

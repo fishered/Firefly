@@ -135,6 +135,23 @@ final class AdminHttpJson {
         return json.append("]}").toString();
     }
 
+    static String users(List<com.firefly.security.AdminUser> users) {
+        return users.stream().map(AdminHttpJson::user)
+                .collect(java.util.stream.Collectors.joining(",", "{\"users\":[", "]}"));
+    }
+
+    static String user(com.firefly.security.AdminUser user) {
+        String roles = user.roles().stream().map(Enum::name).sorted()
+                .map(role -> "\"" + escape(role) + "\"")
+                .collect(java.util.stream.Collectors.joining(","));
+        return "{\"username\":\"" + escape(user.username())
+                + "\",\"roles\":[" + roles + "]"
+                + ",\"enabled\":" + user.enabled()
+                + ",\"version\":" + user.version()
+                + ",\"createdAt\":\"" + user.createdAt()
+                + "\",\"updatedAt\":\"" + user.updatedAt() + "\"}";
+    }
+
     static String nodeDrainStatus(com.firefly.plugin.NodeDrainStatus status) {
         return "{\"nodeId\":\"" + escape(status.nodeId())
                 + "\",\"status\":\"" + status.status().name()
@@ -363,7 +380,15 @@ final class AdminHttpJson {
                     .append("\",\"registeredAt\":\"").append(escape(instance.registeredAt().toString()))
                     .append("\",\"lastHeartbeatAt\":\"").append(escape(instance.lastHeartbeatAt().toString()))
                     .append("\",\"heartbeatAgeSeconds\":").append(Math.max(0, Duration.between(instance.lastHeartbeatAt(), now).toSeconds()))
-                    .append(",\"metadata\":{");
+                    .append(",\"handlers\":[");
+            int handlerIndex = 0;
+            for (String handler : java.util.Arrays.stream(
+                            instance.metadata().getOrDefault("handlerNames", "").split(","))
+                    .map(String::trim).filter(value -> !value.isEmpty()).sorted().toList()) {
+                if (handlerIndex++ > 0) json.append(',');
+                json.append('"').append(escape(handler)).append('"');
+            }
+            json.append("],\"metadata\":{");
             int metadataIndex = 0;
             for (var entry : instance.metadata().entrySet().stream()
                     .sorted(Map.Entry.comparingByKey()).toList()) {

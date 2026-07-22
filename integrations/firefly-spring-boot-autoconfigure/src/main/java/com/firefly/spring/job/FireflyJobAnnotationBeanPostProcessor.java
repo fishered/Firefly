@@ -11,13 +11,23 @@ import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Collects annotated job methods without forcing early creation of application beans. */
 public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProcessor, Ordered {
+    private static final int MAX_JOB_ID_LENGTH = 128;
+    private static final int MAX_HANDLER_NAME_LENGTH = 256;
+    private static final Pattern SCHEDULE_KEY = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     private final List<DiscoveredJobMethod> discovered = new ArrayList<>();
 
     @Override
@@ -29,10 +39,18 @@ public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProc
                 return;
             }
             validateMethod(method);
+            validateScheduleKeys(method, jobs);
+            validateZoneIds(method, jobs);
             Method invocable = AopUtils.selectInvocableMethod(method, bean.getClass());
             ReflectionUtils.makeAccessible(invocable);
             synchronized (discovered) {
-                discovered.add(new DiscoveredJobMethod(beanName, bean, invocable, List.of(jobs)));
+                discovered.add(new DiscoveredJobMethod(
+                        beanName,
+                        bean,
+                        invocable,
+                        boundedIdentifier(targetClass.getName() + "#" + method.getName(), MAX_HANDLER_NAME_LENGTH),
+                        List.of(jobs)
+                ));
             }
         }, method -> !method.isBridge() && !method.isSynthetic());
         return bean;
@@ -63,25 +81,73 @@ public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProc
         }
     }
 
+    private void validateScheduleKeys(Method method, FireflyJob[] jobs) {
+        Set<String> keys = new HashSet<>();
+        for (FireflyJob job : jobs) {
+            String key = job.key().trim();
+            if (jobs.length > 1 && key.isEmpty()) {
+                throw new IllegalStateException(
+                        "repeated @FireflyJob declarations require non-blank keys: " + method.toGenericString()
+                );
+            }
+            if (!key.isEmpty() && !SCHEDULE_KEY.matcher(key).matches()) {
+                throw new IllegalStateException(
+                        "@FireflyJob key must match " + SCHEDULE_KEY.pattern() + ": " + method.toGenericString()
+                );
+            }
+            if (!key.isEmpty() && !keys.add(key)) {
+                throw new IllegalStateException(
+                        "duplicate @FireflyJob key '" + key + "': " + method.toGenericString()
+                );
+            }
+        }
+    }
+
+    private void validateZoneIds(Method method, FireflyJob[] jobs) {
+        for (FireflyJob job : jobs) {
+            FireflyJobRegistration.requireValidZoneId(
+                    job.zoneId(),
+                    "@FireflyJob method " + method.toGenericString()
+            );
+        }
+    }
+
+    private static String boundedIdentifier(String value, int maxLength) {
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        String digest;
+        try {
+            digest = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))
+            ).substring(0, 24);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+        return value.substring(0, maxLength - digest.length() - 1) + "~" + digest;
+    }
+
     public record DiscoveredJobMethod(
             String beanName,
             Object bean,
             Method method,
+            String handlerName,
             List<FireflyJob> declarations
     ) {
-        public String handlerName(FireflyJob declaration) {
-            return declaration.handlerName().isBlank() ? method.getName() : declaration.handlerName();
-        }
-
         public JobHandler handler() {
             return context -> invoke(context);
         }
 
         public FireflyJobRegistration registration(FireflyJob declaration) {
+            String scheduleKey = declaration.key().trim();
+            String jobId = boundedIdentifier(
+                    scheduleKey.isEmpty() ? handlerName : handlerName + ":" + scheduleKey,
+                    MAX_JOB_ID_LENGTH
+            );
             FireflyJobRegistration.Builder builder = FireflyJobRegistration.builder(
-                            declaration.id(), handlerName(declaration), declaration.cron()
+                            jobId, handlerName, declaration.cron()
                     )
-                    .name(declaration.name().isBlank() ? declaration.id() : declaration.name())
+                    .name(declaration.name().isBlank() ? jobId : declaration.name())
                     .groupId(declaration.groupId())
                     .zoneId(declaration.zoneId())
                     .enabled(declaration.enabled())

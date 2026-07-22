@@ -50,7 +50,7 @@ public final class NettyExecutorClient implements AutoCloseable {
     private final List<GatewayEndpoint> gatewayEndpoints;
     private final Duration reconnectInitialDelay;
     private final Duration reconnectMaxDelay;
-    private final String authToken;
+    private final AuthTokenProvider authTokenProvider;
     private final JobHandlerRegistry handlerRegistry;
     private final ExecutorService workerPool;
     private final Clock clock;
@@ -76,6 +76,7 @@ public final class NettyExecutorClient implements AutoCloseable {
             Duration reconnectInitialDelay,
             Duration reconnectMaxDelay,
             String authToken,
+            AuthTokenProvider authTokenProvider,
             NettyTlsOptions tlsOptions,
             ExecutorResultStore resultStore,
             JobHandlerRegistry handlerRegistry,
@@ -91,7 +92,9 @@ public final class NettyExecutorClient implements AutoCloseable {
         this.gatewayEndpoints = endpoints(gatewayAddresses, this.schedulerHost, this.schedulerPort);
         this.reconnectInitialDelay = Objects.requireNonNull(reconnectInitialDelay, "reconnectInitialDelay");
         this.reconnectMaxDelay = Objects.requireNonNull(reconnectMaxDelay, "reconnectMaxDelay");
-        this.authToken = authToken == null ? "" : authToken;
+        this.authTokenProvider = authTokenProvider == null
+                ? AuthTokenProvider.fixed(authToken)
+                : authTokenProvider;
         this.sslContext = Objects.requireNonNull(tlsOptions, "tlsOptions").clientContext();
         this.executionRegistry = new NettyExecutorExecutionRegistry(
                 Objects.requireNonNull(resultStore, "resultStore")
@@ -121,6 +124,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                 .reconnectInitialDelay(Duration.ofSeconds(1))
                 .reconnectMaxDelay(Duration.ofSeconds(30))
                 .authToken("")
+                .authTokenProvider(null)
                 .tlsOptions(NettyTlsOptions.disabled())
                 .resultStore(new InMemoryExecutorResultStore())
                 .handlerRegistry(new InMemoryJobHandlerRegistry())
@@ -176,7 +180,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                                         executorName,
                                         instanceId,
                                         sessionId,
-                                        authToken,
+                                        authTokenProvider.accessToken(),
                                         serviceName,
                                         heartbeatInterval,
                                         handlerRegistry,

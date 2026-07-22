@@ -52,13 +52,21 @@ class NettyExecutorClientHaTest {
                 .executorName("billing-executor")
                 .instanceId("billing-instance-1")
                 .serviceName("billing-service")
-                .build();
+                .build()
+                .registerHandler("refundHandler", context -> { })
+                .registerHandler("billingHandler", context -> { });
         try (gateway) {
             client.start();
             await(() -> gateway.executorRegistry()
                     .find("billing-executor", "billing-instance-1")
                     .map(instance -> instance.status() == com.firefly.domain.ExecutorInstanceStatus.ONLINE)
                     .orElse(false), Duration.ofSeconds(3));
+
+            assertEquals(
+                    "billingHandler,refundHandler",
+                    gateway.executorRegistry().find("billing-executor", "billing-instance-1")
+                            .orElseThrow().metadata().get("handlerNames")
+            );
 
             client.close();
 

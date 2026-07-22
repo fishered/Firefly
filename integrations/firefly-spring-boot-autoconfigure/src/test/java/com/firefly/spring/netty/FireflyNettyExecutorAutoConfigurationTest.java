@@ -72,13 +72,14 @@ class FireflyNettyExecutorAutoConfigurationTest {
                 .run(context -> {
                     NettyExecutorClient client = context.getBean(NettyExecutorClient.class);
                     FireflyJobRegistrar registrar = context.getBean(FireflyJobRegistrar.class);
+                    String handlerName = AnnotatedBillingJobs.class.getName() + "#bill";
 
-                    assertTrue(client.handlerRegistry().find("billingHandler").isPresent());
+                    assertTrue(client.handlerRegistry().find(handlerName).isPresent());
                     assertEquals(2, registrar.registrationCount());
 
-                    client.handlerRegistry().find("billingHandler").orElseThrow().handle(
+                    client.handlerRegistry().find(handlerName).orElseThrow().handle(
                             new com.firefly.domain.ExecutionContext(
-                                    "execution-1", "billing-daily", "billingHandler",
+                                    "execution-1", handlerName + ":daily", handlerName,
                                     Instant.now(), Instant.now(), Instant.now(), Map.of()
                             )
                     );
@@ -132,15 +133,13 @@ class FireflyNettyExecutorAutoConfigurationTest {
         private final AtomicInteger invocations = new AtomicInteger();
 
         @FireflyJob(
-                id = "billing-daily",
+                key = "daily",
                 cron = "0 0 2 * * *",
-                handlerName = "billingHandler",
                 zoneId = "Asia/Shanghai"
         )
         @FireflyJob(
-                id = "billing-reconciliation",
+                key = "reconciliation",
                 cron = "0 0 3 * * *",
-                handlerName = "billingHandler",
                 zoneId = "Asia/Shanghai"
         )
         public void bill(com.firefly.domain.ExecutionContext executionContext) {

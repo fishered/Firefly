@@ -73,6 +73,8 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
                         "sessionId", sessionId,
                         "authToken", authToken,
                         "serviceName", serviceName,
+                        "handlerNames", handlerRegistry.names().stream().sorted()
+                                .collect(Collectors.joining(",")),
                         "protocolVersion", Integer.toString(NettyExecutorProtocol.CURRENT_VERSION),
                         "capabilities", NettyExecutorProtocol.encodeCapabilities(
                                 NettyExecutorProtocol.CLIENT_CAPABILITIES

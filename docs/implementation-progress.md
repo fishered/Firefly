@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-07-16。
+最后更新：2026-07-21。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -115,6 +115,12 @@ config/
 
 ```text
 /api/health
+/api/auth/login
+/api/auth/token
+/api/users
+/api/users/{username}
+/api/schedules/preview
+/api/schedules/timezones
 /api/overview
 /api/jobs
 /api/executions
@@ -140,6 +146,11 @@ config/
 - `POST /api/executions/{executionId}/cancel` 支持 OPERATOR/ADMIN 协作式终止；Admin UI 已接入 execution 详情、attempt 轨迹、target 明细、终止和死信重放。
 - Admin 所有非只读请求会写入结构化 `com.firefly.audit.admin` 日志，包含 method、path、RBAC role、HTTP status 和 remote address，不记录 Token 或请求密文。
 - 独立 Admin UI 已放在 `ui/admin`，Node 服务默认监听 `127.0.0.1:9720`，并将浏览器侧 `/api/*` 代理到 Java Admin HTTP API。
+- Admin UI 的新建/编辑任务已接入可视化 Cron 规则生成器和服务端解析预览，支持按秒、分钟、小时、日、周、月及自定义表达式，并展示未来 5 次本地触发时间；时区使用可输入下拉框，通过 JVM IANA `ZoneId` 列表做模糊匹配、键盘选择和提交校验。
+- Admin UI 已增加服务端登录会话：JWT 仅保存在 UI Node 进程内存，浏览器使用 HttpOnly/SameSite Cookie；支持默认 30 分钟空闲过期、JWT 绝对过期、会话倒计时、退出、CSRF 校验、登录失败限流和 `401` 自动返回登录页。
+- Admin 人类账号已与机器客户端拆分：schema v10 增加 `firefly_user`，密码使用随机盐 PBKDF2-HMAC-SHA256；`/api/auth/login` 查表登录，`/api/users` 提供 ADMIN 级 CRUD、`version` CAS、自删/自禁用保护和最后一个启用 Admin 保护。引导账号只在不存在时创建，重启不会覆盖密码。
+- Admin UI 的“账号与安全”页已接入用户列表、新建、角色调整、启停、密码重置和删除；密码摘要不会返回前端，禁用或角色变更会使旧用户 JWT 立即失效。
+- `/api/auth/token` 仅保留给 Starter/Executor 机器客户端。默认 standalone 配置提供显式标注的本地开发 Admin 引导凭据和 Executor client 凭据；cluster 模式拒绝这些固定开发值。
 - 当前 UI 路由包括：
 
 ```text
@@ -197,6 +208,14 @@ UNREGISTER_EXECUTOR
 
 ## 3. 本轮完成
 
+- 主服务增加统一 HS256 JWT 认证：客户端凭据换取短期令牌，Admin API 按 `READER/OPERATOR/ADMIN`
+  授权，Gateway 按 `EXECUTOR` 角色与 `executorNames` 范围校验注册；旧静态 Token 保留兼容。
+- Spring Boot Starter 增加 `firefly.executor.auth.token-url/client-id/client-secret`，自动缓存并提前刷新 JWT，
+  Netty 首次连接、断线重连和启动任务同步共用同一令牌提供器。
+- `@FireflyJob` 不再暴露全局 `id` 和 `handlerName`：Starter 使用 `包名.类名#方法名` 作为稳定执行入口和单计划任务 ID；同一方法多计划使用局部 `key` 派生独立 ID，超长标识使用 SHA-256 摘要稳定缩短。
+- Starter 在 Bean 扫描阶段通过 `ZoneId.of` 校验注解时区并定位到具体业务方法；程序化 `FireflyJobRegistration` 使用相同校验和标准化，非法时区会在业务应用启动期失败，不增加额外默认时区配置或不完整枚举。
+- Admin 增加 Cron 预览和时区搜索 API，UI 在任务创建与编辑时展示未来触发时间并支持时区模糊选择。
+
 - 业务幂等 SDK：`BusinessIdempotencyStore`、三种 key strategy、`IdempotentJobHandler`、非 Spring 注册 API、Spring `NamedJobHandler` 自动发现和 idempotent registration factory。
 - Gateway HA：schema v9 增加 `firefly_executor_instance_location`；注册、心跳、断连维护短租约位置目录；单播、广播、分片按共享目录选址；Gateway 之间使用带令牌和 session fencing 的内部转发。
 - 重试范围：任务定义、Admin API、JDBC 参数、Outbox 不可变快照贯通 `FAILED_TARGETS_ONLY` 和 `ALL_TARGETS`，默认仅重试失败目标。
@@ -214,6 +233,8 @@ UNREGISTER_EXECUTOR
 - Admin Job API 支持 `GET /api/jobs/{jobId}` 单任务查询，重复创建返回 `409`，用于多业务实例并发启动时收敛到唯一任务定义。
 - Executor 优雅停机发送 `UNREGISTER_EXECUTOR` 并等待 Channel/事件线程组关闭；强制终止由 30 秒心跳
   判定、共享位置租约和 Outbox ACK 重投兜底。Admin UI 区分在线绑定与离线记录，并提供完整实例详情。
+- Executor 注册现在会上报执行入口能力集合；Admin API 在实例信息中返回入口列表，任务表单按执行器联动，并只使用所有在线实例共同支持的入口。单入口自动绑定并隐藏，只有多入口才要求选择；任务列表不再暴露内部 Handler。分发、路由、完成、重试、分片数和路由键均增加可聚焦的悬浮说明，非分片模式会锁定分片数为 1。
+- Admin UI 新建执行器的协议已改为受控选择：当前仅允许可工作的 TCP/Netty 传输，展示并禁用尚未完成的 HTTP 以及只能由进程内代码注册的 EMBEDDED，避免自由文本或不可运行的定义进入目录。
 
 ## 4. 仍需上线前验证
 

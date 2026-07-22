@@ -27,7 +27,7 @@ class AdminHttpExecutorInstanceJsonTest {
                 .registeredAt(now.minusSeconds(20))
                 .lastHeartbeatAt(now.minusSeconds(4))
                 .status(ExecutorInstanceStatus.ONLINE)
-                .metadata(Map.of("version", "1.2.0"))
+                .metadata(Map.of("version", "1.2.0", "handlerNames", "billingHandler,refundHandler"))
                 .build();
 
         String json = AdminHttpJson.executors(List.of(), List.of(instance), now, Duration.ofSeconds(30));
@@ -37,6 +37,8 @@ class AdminHttpExecutorInstanceJsonTest {
         assertTrue(json.contains("\"heartbeatTimeoutSeconds\":30"));
         assertTrue(json.contains("\"sessionId\":\"session-1\""));
         assertTrue(json.contains("\"gatewayNodeId\":\"gateway-a\""));
-        assertTrue(json.contains("\"metadata\":{\"version\":\"1.2.0\"}"));
+        assertTrue(json.contains("\"handlers\":[\"billingHandler\",\"refundHandler\"]"));
+        assertTrue(json.contains("\"handlerNames\":\"billingHandler,refundHandler\""));
+        assertTrue(json.contains("\"version\":\"1.2.0\""));
     }
 }

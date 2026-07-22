@@ -27,6 +27,7 @@ public class FireflyNettyExecutorProperties {
     private Duration reconnectInitialDelay = Duration.ofSeconds(1);
     private Duration reconnectMaxDelay = Duration.ofSeconds(30);
     private String authToken = "";
+    private Auth auth = new Auth();
     private String idempotencyDirectory = "";
     private Duration idempotencyRetention = Duration.ofHours(24);
     private boolean tlsEnabled;
@@ -35,4 +36,13 @@ public class FireflyNettyExecutorProperties {
     private String tlsPrivateKeyPassword = "";
     private String tlsTrustCertificates = "";
     private boolean tlsVerifyHostname = true;
+
+    @Getter
+    @Setter
+    public static class Auth {
+        private String tokenUrl = "http://127.0.0.1:9710/api/auth/token";
+        private String clientId = "";
+        private String clientSecret = "";
+        private Duration refreshSkew = Duration.ofSeconds(30);
+    }
 }

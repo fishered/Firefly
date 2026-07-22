@@ -20,7 +20,6 @@ Jobs can also be created at application startup:
 @Component
 class BillingJobs {
     @FireflyJob(
-            id = "billing-daily-job",
             cron = "0 0 2 * * *",
             zoneId = "Asia/Shanghai"
     )
@@ -30,8 +29,11 @@ class BillingJobs {
 }
 ```
 
-The method name is the default handler name. A method may carry multiple
-`@FireflyJob` annotations when the same handler needs multiple schedules.
+The fully qualified class and method name, such as
+`com.example.BillingJobs#billingHandler`, is the automatic entrypoint and job ID.
+No global ID or handler name is required. A method may carry multiple
+`@FireflyJob` annotations when the same entrypoint needs multiple schedules; in
+that case each declaration must provide a unique local `key`.
 Programmatic `FireflyJobRegistration` beans remain available for dynamic cases.
 
 Configure `firefly.executor.job-registration.admin-url` when the Admin API is not

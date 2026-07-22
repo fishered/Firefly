@@ -13,7 +13,9 @@ public record ServerRuntimeOptions(
         JdbcClockOptions jdbcClock,
         NettyExecutorGatewayOptions nettyGateway,
         AdminAuthorizationOptions adminAuthorization,
-        SchedulerEngineOptions schedulerEngine
+        SchedulerEngineOptions schedulerEngine,
+        JwtSecurityOptions jwtSecurity,
+        AdminSecurityOptions adminSecurity
 ) {
     public ServerRuntimeOptions(
             DispatchOutboxOptions dispatchOutbox,
@@ -22,7 +24,8 @@ public record ServerRuntimeOptions(
             NettyExecutorGatewayOptions nettyGateway
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults());
+                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled(),
+                AdminSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions(
@@ -33,7 +36,20 @@ public record ServerRuntimeOptions(
             AdminAuthorizationOptions adminAuthorization
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                adminAuthorization, SchedulerEngineOptions.defaults());
+                adminAuthorization, SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled(),
+                AdminSecurityOptions.disabled());
+    }
+
+    public ServerRuntimeOptions(
+            DispatchOutboxOptions dispatchOutbox,
+            ExecutionMaintenanceOptions executionMaintenance,
+            JdbcClockOptions jdbcClock,
+            NettyExecutorGatewayOptions nettyGateway,
+            AdminAuthorizationOptions adminAuthorization,
+            SchedulerEngineOptions schedulerEngine
+    ) {
+        this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
+                adminAuthorization, schedulerEngine, JwtSecurityOptions.disabled(), AdminSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions {
@@ -43,6 +59,8 @@ public record ServerRuntimeOptions(
         Objects.requireNonNull(nettyGateway, "nettyGateway");
         Objects.requireNonNull(adminAuthorization, "adminAuthorization");
         Objects.requireNonNull(schedulerEngine, "schedulerEngine");
+        Objects.requireNonNull(jwtSecurity, "jwtSecurity");
+        Objects.requireNonNull(adminSecurity, "adminSecurity");
     }
 
     public static ServerRuntimeOptions defaults() {
@@ -52,7 +70,9 @@ public record ServerRuntimeOptions(
                 JdbcClockOptions.defaults(),
                 NettyExecutorGatewayOptions.defaults(),
                 AdminAuthorizationOptions.defaults(),
-                SchedulerEngineOptions.defaults()
+                SchedulerEngineOptions.defaults(),
+                JwtSecurityOptions.disabled(),
+                AdminSecurityOptions.disabled()
         );
     }
 }

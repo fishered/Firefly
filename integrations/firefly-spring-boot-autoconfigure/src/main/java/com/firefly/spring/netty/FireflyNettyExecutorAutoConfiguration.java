@@ -42,6 +42,12 @@ public class FireflyNettyExecutorAutoConfiguration {
     private static final Log log = LogFactory.getLog(FireflyNettyExecutorAutoConfiguration.class);
 
     @Bean
+    @ConditionalOnMissingBean
+    public FireflyAccessTokenProvider fireflyAccessTokenProvider(FireflyNettyExecutorProperties properties) {
+        return new FireflyAccessTokenProvider(properties);
+    }
+
+    @Bean
     @ConditionalOnBean(javax.sql.DataSource.class)
     @ConditionalOnMissingBean(BusinessIdempotencyStore.class)
     @ConditionalOnProperty(
@@ -65,6 +71,7 @@ public class FireflyNettyExecutorAutoConfiguration {
             ObjectProvider<NettyJobHandlerRegistration> registrations,
             ObjectProvider<NamedJobHandler> namedHandlers,
             ObjectProvider<ExecutorResultStore> resultStores,
+            FireflyAccessTokenProvider accessTokenProvider,
             Environment environment
     ) {
         ExecutorResultStore resultStore = resultStores.getIfAvailable(() ->
@@ -85,6 +92,7 @@ public class FireflyNettyExecutorAutoConfiguration {
                 .reconnectInitialDelay(properties.getReconnectInitialDelay())
                 .reconnectMaxDelay(properties.getReconnectMaxDelay())
                 .authToken(properties.getAuthToken())
+                .authTokenProvider(accessTokenProvider)
                 .tlsOptions(new NettyTlsOptions(
                         properties.isTlsEnabled(),
                         path(properties.getTlsCertificateChain()),
@@ -106,6 +114,7 @@ public class FireflyNettyExecutorAutoConfiguration {
                 + ", service=" + serviceName(properties, environment)
                 + ", gateways=" + gatewayAddresses(properties)
                 + ", autoStart=" + properties.isAutoStart()
+                + ", authentication=" + (accessTokenProvider.usesClientCredentials() ? "client-credentials" : "static-token")
                 + ", tls=" + properties.isTlsEnabled());
         return client;
     }
@@ -121,13 +130,15 @@ public class FireflyNettyExecutorAutoConfiguration {
             FireflyNettyExecutorProperties executorProperties,
             FireflyJobRegistrationProperties registrationProperties,
             ObjectProvider<FireflyJobRegistration> registrations,
-            NettyExecutorClient executorClient
+            NettyExecutorClient executorClient,
+            FireflyAccessTokenProvider accessTokenProvider
     ) {
         return new FireflyJobRegistrar(
                 executorProperties.getName(),
                 registrationProperties,
                 registrations.orderedStream().toList(),
-                executorClient
+                executorClient,
+                accessTokenProvider
         );
     }
 
