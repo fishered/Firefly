@@ -131,7 +131,7 @@ function showLogin(message = '') {
   root.innerHTML = `
     <main class="login-screen">
       <section class="login-panel" aria-labelledby="login-title">
-        <div class="login-brand"><span class="brand-icon" aria-hidden="true">◆</span><strong>Firefly</strong></div>
+        <div class="login-brand"><img class="brand-logo" src="/firefly-mark.svg" alt=""><strong>Firefly</strong></div>
         <h1 id="login-title">登录管理控制台</h1>
         <form id="login-form">
           <label class="field">用户名<input name="username" value="admin" autocomplete="username" required autofocus></label>

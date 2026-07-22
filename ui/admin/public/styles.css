@@ -61,15 +61,7 @@ button, input, select { font: inherit; }
   color: var(--ink);
 }
 
-.brand-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  color: var(--primary);
-  font-size: 14px;
-  transform: rotate(12deg);
-}
+.brand-logo { width: 26px; height: 26px; flex: 0 0 auto; }
 
 .brand-name {
   font-size: 20px;
