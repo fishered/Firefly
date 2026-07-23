@@ -160,7 +160,7 @@ HA node roles, shard leases, fencing tokens, and JDBC storage are described in [
 
 JDBC store and schema dialect scripts are described in [docs/jdbc-store.md](docs/jdbc-store.md).
 
-Plugin SPI, Admin HTTP, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md). These plugins are not loaded by the server by default and must be enabled explicitly.
+Plugin SPI, external JAR discovery, Admin HTTP, and Prometheus Metrics are described in [docs/plugins.md](docs/plugins.md). Optional plugins are enabled explicitly; Netty is the default Executor transport rather than a regular feature plugin.
 
 Module boundaries and the executor/server split are described in [docs/module-boundaries.md](docs/module-boundaries.md).
 

@@ -4,7 +4,7 @@ import com.firefly.cluster.NodeRegistry;
 import com.firefly.cluster.NodeStatus;
 import com.firefly.cluster.ShardManager;
 import com.firefly.execution.ExecutionRepository;
-import com.firefly.executor.netty.NettyExecutorGateway;
+import com.firefly.executor.RemoteExecutorTransport;
 import com.firefly.plugin.NodeDrainStatus;
 import com.firefly.plugin.NodeDrainStatusProvider;
 import com.firefly.store.JobRepository;
@@ -26,7 +26,7 @@ final class NodeDrainMonitor implements NodeDrainStatusProvider, AutoCloseable {
     private final ShardManager shardManager;
     private final JobRepository jobRepository;
     private final ExecutionRepository executionRepository;
-    private final NettyExecutorGateway gateway;
+    private final RemoteExecutorTransport gateway;
     private final Clock clock;
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "firefly-node-drain");
@@ -40,7 +40,7 @@ final class NodeDrainMonitor implements NodeDrainStatusProvider, AutoCloseable {
             ShardManager shardManager,
             JobRepository jobRepository,
             ExecutionRepository executionRepository,
-            NettyExecutorGateway gateway,
+            RemoteExecutorTransport gateway,
             Clock clock
     ) {
         this.localNodeId = Objects.requireNonNull(localNodeId, "localNodeId");

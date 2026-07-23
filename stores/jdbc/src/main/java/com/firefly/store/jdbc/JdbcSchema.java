@@ -22,7 +22,7 @@ import java.util.Set;
  * Initializes and validates JDBC schema by selecting a dialect-specific SQL resource.
  */
 public final class JdbcSchema {
-    public static final int CURRENT_VERSION = 10;
+    public static final int CURRENT_VERSION = 11;
 
     private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.ofEntries(
             Map.entry("firefly_schema_version", Set.of("version", "installed_at")),
@@ -61,6 +61,9 @@ public final class JdbcSchema {
             )),
             Map.entry("firefly_user", Set.of(
                     "username", "password_hash", "roles", "enabled", "version", "created_at", "updated_at"
+            )),
+            Map.entry("firefly_integration_key", Set.of(
+                    "key_id", "key_hash", "version", "created_at", "updated_at"
             )),
             Map.entry("firefly_job", Set.of(
                     "job_id",

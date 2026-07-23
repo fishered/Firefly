@@ -1,6 +1,6 @@
 # Firefly 数据库结构
 
-当前 schema 版本为 `10`。以下脚本均可用于空库全量初始化，也可由 `initialize-if-empty` 模式重复执行：
+当前 schema 版本为 `11`。以下脚本均可用于空库全量初始化，也可由 `initialize-if-empty` 模式重复执行：
 
 ```text
 stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/h2.sql
@@ -26,6 +26,7 @@ stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/mysql.sql
 | `firefly_audit_log` | Admin 变更的持久化审计记录 |
 | `firefly_job_history` | 任务创建、启停和删除的变更历史 |
 | `firefly_user` | Admin 控制台账号、PBKDF2 密码摘要、角色、启停状态和乐观锁版本 |
+| `firefly_integration_key` | 系统 Integration Key 的 PBKDF2 摘要、轮换版本和更新时间，不保存明文 |
 
 Scheduler 不单独建表。它是 `firefly_node.roles` 中的节点职责，实际调度所有权由 `firefly_shard_lease.owner_node_id` 指向节点。
 
@@ -43,11 +44,16 @@ firefly.jdbc.schema.mode=initialize-if-empty
 firefly.jdbc.schema.mode=validate
 ```
 
-`validate` 只检查，不修改数据库。完成外部迁移后，`firefly_schema_version` 必须包含版本 `10`。
+`validate` 只检查，不修改数据库。完成外部迁移后，`firefly_schema_version` 必须包含版本 `11`。
 
 `firefly_user` 保存人类管理员账号，不保存 Executor/Starter 的客户端凭据。密码使用带随机盐的
 PBKDF2-HMAC-SHA256 摘要；创建、改密、角色调整、启停和删除由 `/api/users` 管理，并使用 `version`
 做 CAS。引导账号只在用户名不存在时创建，后续重启和配置变更不会覆盖数据库中的密码。
+
+`firefly_integration_key` 是集群共享的单例凭据，只保存带随机盐的 PBKDF2 摘要。Admin 通过
+`GET /api/integration-key` 查看配置状态，通过 `POST /api/integration-key` 生成或轮换；明文只在轮换响应
+中出现一次。Gateway 注册和 Starter 启动任务同步读取同一数据库摘要，因此所有 API/Gateway 节点
+使用一致的凭据状态。
 
 PostgreSQL 和 MySQL 初始化会先获取数据库级迁移锁，避免多个节点并发执行 DDL。PostgreSQL 使用 advisory lock，MySQL 使用 `GET_LOCK`。
 

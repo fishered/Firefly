@@ -17,9 +17,13 @@ public interface SchedulerCatalog {
 
     List<ExecutorDefinition> listExecutors();
 
+    boolean deleteExecutor(String name);
+
     void saveJobGroup(JobGroupDefinition group);
 
     Optional<JobGroupDefinition> findJobGroup(String groupId);
+
+    List<JobGroupDefinition> listJobGroups();
 
     void saveJob(JobDefinition definition);
 

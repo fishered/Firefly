@@ -34,15 +34,26 @@ class AdminHttpRbacTest {
                 .jobRepository(jobs)
                 .nodeRegistry(new InMemoryNodeRegistry())
                 .schedulerCatalog(new InMemorySchedulerCatalog())
+                .pluginStatusProvider(() -> java.util.List.of(new com.firefly.plugin.FireflyPluginDescriptor(
+                        "metrics-prometheus", "Prometheus Metrics", "1.0.0", "Metrics endpoint",
+                        "com.firefly.MetricsPlugin", "CLASSPATH", "ACTIVE"
+                )))
                 .build());
         try {
             assertEquals(200, request(port, "/api/overview", "GET", "reader", "").statusCode());
+            HttpResponse<String> plugins = request(port, "/api/plugins", "GET", "reader", "");
+            assertEquals(200, plugins.statusCode());
+            org.junit.jupiter.api.Assertions.assertTrue(plugins.body().contains("metrics-prometheus"));
             assertEquals(403, request(port, "/api/jobs/job-1", "PATCH", "reader", "{\"enabled\":false}").statusCode());
             assertEquals(200, request(port, "/api/jobs/job-1", "PATCH", "operator", "{\"enabled\":false}").statusCode());
             assertEquals(403, request(port, "/api/executor-definitions", "POST", "operator",
                     "{\"name\":\"orders\"}").statusCode());
             assertEquals(201, request(port, "/api/executor-definitions", "POST", "admin",
                     "{\"name\":\"orders\"}").statusCode());
+            assertEquals(403, request(port, "/api/executor-definitions/orders", "DELETE", "operator", "")
+                    .statusCode());
+            assertEquals(200, request(port, "/api/executor-definitions/orders", "DELETE", "admin", "")
+                    .statusCode());
             assertEquals(401, request(port, "/api/overview", "GET", "wrong", "").statusCode());
             assertEquals(200, request(port, "/api/health", "GET", "", "").statusCode());
         } finally {

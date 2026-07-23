@@ -214,7 +214,10 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 : NettyExecutorProtocol.SERVER_CAPABILITIES.stream()
                 .filter(clientCapabilities::contains)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        if (!authorized(payload.getOrDefault("authToken", ""), executorName)) {
+        String integrationKey = payload.getOrDefault(
+                "integrationKey", payload.getOrDefault("authToken", "")
+        );
+        if (!authorized(integrationKey, executorName)) {
             rejectRegistration(context, "AUTHENTICATION_FAILED", "executor authentication failed");
             return;
         }

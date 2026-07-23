@@ -15,6 +15,7 @@ import com.firefly.executor.ExecutorInstanceLocation;
 import com.firefly.executor.InMemoryExecutorInstanceDirectory;
 import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.executor.RemoteDispatchResult;
+import com.firefly.executor.RemoteExecutorTransport;
 import com.firefly.execution.ExecutionRecord;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
@@ -43,7 +44,7 @@ import java.util.UUID;
 /**
  * Netty server used by the scheduler side to accept executor long connections.
  */
-public final class NettyExecutorGateway implements AutoCloseable {
+public final class NettyExecutorGateway implements RemoteExecutorTransport {
     private final int port;
     private final ExecutorRegistry executorRegistry;
     private final NettyExecutorConnectionRegistry connectionRegistry;

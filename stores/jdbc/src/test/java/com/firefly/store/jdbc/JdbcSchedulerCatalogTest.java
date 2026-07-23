@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcSchedulerCatalogTest {
@@ -30,6 +31,10 @@ class JdbcSchedulerCatalogTest {
         assertTrue(executor.protocols().contains(ExecutorProtocol.TCP));
         assertEquals("billing", executor.metadata().get("owner"));
         assertEquals("billing-executor", catalog.listExecutors().getFirst().name());
+
+        assertTrue(catalog.deleteExecutor("billing-executor"));
+        assertFalse(catalog.findExecutor("billing-executor").isPresent());
+        assertFalse(catalog.deleteExecutor("billing-executor"));
     }
 
     @Test
@@ -46,6 +51,7 @@ class JdbcSchedulerCatalogTest {
                 .handlerName("run").schedule(new CronSchedule("0 0 1 * * *")).build());
 
         assertEquals("billing-executor", catalog.findJobGroup("billing").orElseThrow().executorName());
+        assertEquals("billing", catalog.listJobGroups().getFirst().id());
         assertEquals("billing-daily", catalog.findJob("billing-daily").orElseThrow().id());
         assertEquals(1, catalog.listJobsByGroup("billing").size());
     }

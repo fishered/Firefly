@@ -327,6 +327,18 @@ final class ServerOptionsTest {
     }
 
     @Test
+    void acceptsExternalPluginIdsAndExposesTheirConfiguration() {
+        ServerOptions options = ServerOptions.parse(new String[]{
+                "--firefly.plugins=acme-alerts",
+                "--firefly.plugin.acme-alerts.endpoint=http://127.0.0.1:9999"
+        }, Map.of());
+
+        assertEquals(Set.of(new ServerPlugin("acme-alerts")), options.plugins());
+        assertEquals("http://127.0.0.1:9999", options.pluginConfiguration()
+                .pluginProperty("acme-alerts", "endpoint").orElseThrow());
+    }
+
+    @Test
     void rejectsCoordinationTimeoutThatIsNotShorterThanTheLease() {
         assertThrows(
                 IllegalArgumentException.class,
@@ -387,10 +399,6 @@ final class ServerOptionsTest {
                 Map.entry("FIREFLY_ADMIN_HTTP_ADMIN_TOKEN", "admin"),
                 Map.entry("FIREFLY_SECURITY_JWT_ENABLED", "true"),
                 Map.entry("FIREFLY_SECURITY_JWT_SECRET", "01234567890123456789012345678901"),
-                Map.entry("FIREFLY_SECURITY_JWT_CLIENTS", "billing"),
-                Map.entry("FIREFLY_SECURITY_JWT_CLIENT_BILLING_SECRET", "billing-secret"),
-                Map.entry("FIREFLY_SECURITY_JWT_CLIENT_BILLING_ROLES", "executor"),
-                Map.entry("FIREFLY_SECURITY_JWT_CLIENT_BILLING_EXECUTOR_NAMES", "billing-executor"),
                 Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_TLS_ENABLED", "true"),
                 Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_TLS_CERTIFICATE_CHAIN", certificate.toString()),
                 Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_TLS_PRIVATE_KEY", privateKey.toString()),
@@ -402,10 +410,6 @@ final class ServerOptionsTest {
         assertEquals("operator", options.runtimeOptions().adminAuthorization().operatorToken());
         assertEquals("admin", options.runtimeOptions().adminAuthorization().adminToken());
         assertTrue(options.runtimeOptions().jwtSecurity().enabled());
-        assertEquals(java.util.Set.of(com.firefly.security.FireflyRole.EXECUTOR),
-                options.runtimeOptions().jwtSecurity().clients().get("billing").roles());
-        assertEquals(java.util.Set.of("billing-executor"),
-                options.runtimeOptions().jwtSecurity().clients().get("billing").executorNames());
         assertTrue(options.runtimeOptions().nettyGateway().tls().enabled());
         assertEquals(certificate.toAbsolutePath().normalize(),
                 options.runtimeOptions().nettyGateway().tls().certificateChain());
@@ -424,11 +428,10 @@ final class ServerOptionsTest {
         ServerOptions options = ServerOptions.parse(new String[]{"--firefly.config=" + config}, Map.of());
 
         assertFalse(options.runtimeOptions().jwtSecurity().enabled());
-        assertTrue(options.runtimeOptions().jwtSecurity().clients().isEmpty());
     }
 
     @Test
-    void reportsTheExactMissingJwtClientSecretProperty(@TempDir Path tempDir) throws IOException {
+    void ignoresRemovedMachineJwtClientProperties(@TempDir Path tempDir) throws IOException {
         Path config = tempDir.resolve("firefly-server.properties");
         Files.writeString(config, """
                 firefly.security.jwt.enabled=true
@@ -438,10 +441,10 @@ final class ServerOptionsTest {
                 firefly.security.jwt.client.admin.roles=ADMIN
                 """);
 
-        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
-                ServerOptions.parse(new String[]{"--firefly.config=" + config}, Map.of()));
-
-        assertTrue(failure.getMessage().contains("firefly.security.jwt.client.admin.secret"));
+        ServerOptions options = ServerOptions.parse(
+                new String[]{"--firefly.config=" + config}, Map.of()
+        );
+        assertTrue(options.runtimeOptions().jwtSecurity().enabled());
     }
 
     @Test
@@ -456,9 +459,6 @@ final class ServerOptionsTest {
                 firefly.jdbc.dialect=h2
                 firefly.security.jwt.enabled=true
                 firefly.security.jwt.secret=firefly-local-development-signing-secret-unsafe-change-me
-                firefly.security.jwt.clients=admin
-                firefly.security.jwt.client.admin.secret=local-admin-secret
-                firefly.security.jwt.client.admin.roles=ADMIN
                 """);
 
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->

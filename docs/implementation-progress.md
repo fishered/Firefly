@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-07-21。
+最后更新：2026-07-23。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -116,7 +116,7 @@ config/
 ```text
 /api/health
 /api/auth/login
-/api/auth/token
+/api/integration-key
 /api/users
 /api/users/{username}
 /api/schedules/preview
@@ -133,12 +133,14 @@ config/
 /api/outbox/batch-requeue
 /api/executors
 /api/executor-definitions/{executorName}/isolate
+DELETE /api/executor-definitions/{executorName}
 /api/nodes
 /api/nodes/{nodeId}/drain
 /api/nodes/{nodeId}/drain-status
 /api/nodes/{nodeId}/offline
 /api/jobs/{jobId}/history
 /api/audit
+/api/plugins
 ```
 
 - `GET /api/executions/{executionId}` 已返回父 execution、target 明细、instance/gateway、ACK/完成时间和 QUORUM carry target 标识，供 UI 与运维脚本定位跨 Gateway 重投、部分成功和结转成功目标。
@@ -148,35 +150,61 @@ config/
 - 独立 Admin UI 已放在 `ui/admin`，Node 服务默认监听 `127.0.0.1:9720`，并将浏览器侧 `/api/*` 代理到 Java Admin HTTP API。
 - Admin UI 的新建/编辑任务已接入可视化 Cron 规则生成器和服务端解析预览，支持按秒、分钟、小时、日、周、月及自定义表达式，并展示未来 5 次本地触发时间；时区使用可输入下拉框，通过 JVM IANA `ZoneId` 列表做模糊匹配、键盘选择和提交校验。
 - Admin UI 已增加服务端登录会话：JWT 仅保存在 UI Node 进程内存，浏览器使用 HttpOnly/SameSite Cookie；支持默认 30 分钟空闲过期、JWT 绝对过期、会话倒计时、退出、CSRF 校验、登录失败限流和 `401` 自动返回登录页。
-- Admin 人类账号已与机器客户端拆分：schema v10 增加 `firefly_user`，密码使用随机盐 PBKDF2-HMAC-SHA256；`/api/auth/login` 查表登录，`/api/users` 提供 ADMIN 级 CRUD、`version` CAS、自删/自禁用保护和最后一个启用 Admin 保护。引导账号只在不存在时创建，重启不会覆盖密码。
+- Admin 人类账号由 schema v10 的 `firefly_user` 持久化，密码使用随机盐 PBKDF2-HMAC-SHA256；`/api/auth/login` 查表登录，`/api/users` 提供 ADMIN 级 CRUD、`version` CAS、自删/自禁用保护和最后一个启用 Admin 保护。引导账号只在不存在时创建，重启不会覆盖密码。
 - Admin UI 的“账号与安全”页已接入用户列表、新建、角色调整、启停、密码重置和删除；密码摘要不会返回前端，禁用或角色变更会使旧用户 JWT 立即失效。
-- `/api/auth/token` 仅保留给 Starter/Executor 机器客户端。默认 standalone 配置提供显式标注的本地开发 Admin 引导凭据和 Executor client 凭据；cluster 模式拒绝这些固定开发值。
-- 当前 UI 路由包括：
+- schema v11 增加 `firefly_integration_key`。Starter/Executor 不再使用机器 JWT、client secret、角色或 executor scope；Gateway 注册和启动任务同步统一校验 Integration Key。数据库只保存 PBKDF2 摘要，`POST /api/integration-key` 轮换时明文只返回一次。
+- Integration Key 仅能注册 Executor，以及查询、创建、更新启动任务定义，不能触发任务或调用用户、节点和其他运维 API。Admin UI 已提供状态、版本、更新时间、生成/轮换和一次性复制。
+- Admin UI 已提供中文、英文切换，语言选择保存在浏览器本地；导航、表格、表单、对话框、提示、错误和动态状态均使用同一翻译入口，切换语言不会重新请求业务数据。
+- UI 数据加载已按页面拆分，页面切换优先显示缓存并只请求当前页面依赖的接口；5 秒新鲜度窗口避免重复读取，并发的相同 GET 请求会自动合并。手动刷新和写操作完成后仍会强制读取最新数据。
+- Node UI 服务在内存中缓存静态资源并生成内容 ETag，支持浏览器 `304`；API 代理改为流式转发响应，安全方法不再读取无意义的请求体。
+- 当前 UI 页面模块包括：
 
 ```text
-/
-/jobs
-/executors
-/nodes
+总览
+任务
+执行器
+执行记录
+节点与集群
+插件
+配置
 ```
 
 ### 插件与指标
 
 - `plugins/plugin-api` 已提供 `FireflyPlugin`、`FireflyPluginContext` 和 `FireflyPluginManager`。
+- 插件 ID 已从封闭枚举改为开放值；server 可通过 `firefly.plugins` 选择 classpath 或
+  `firefly.plugins.directory` 外部 JAR 中的 SPI 插件。外部插件使用 `ServiceLoader` 发现，可读取
+  `firefly.plugin.<id>.*` 只读配置；缺失、重复或实例化失败会阻止节点启动，关闭顺序与启动顺序相反。
+- `plugins/plugin-api` 已加入 Maven 发布清单，第三方插件无需依赖 server 或 Netty 模块。
+- 插件已提供稳定运行时描述信息：ID、显示名、版本、说明、实现类、来源和生命周期状态。`GET /api/plugins` 返回当前节点快照，Admin UI 的插件页展示已加载、运行中、外部插件统计及完整注册表。
+- 插件页保持只读。插件启停属于节点启动事务，当前不提供绕过 Bootstrap 生命周期的页面热切换；插件升级继续使用滚动重启。
 - `plugins/metrics-prometheus` 已提供 Prometheus 文本指标插件。
 - 当前指标还包括 per-shard due backlog、Executor 活跃连接、注册拒绝、断线、投递次数耗尽、调度/ACK/执行延迟、lease 续租失败和数据库时钟状态；`config/prometheus/firefly-alerts.yml` 提供可直接加载的告警规则。
+
+### 启动与关闭生命周期
+
+- Bootstrap 已引入 `StartupTransaction`：每个成功启动的组件立即登记回滚动作，后续任一步失败时严格逆序释放插件、端口、Gateway、后台线程、worker pool、数据库时钟和节点注册。
+- 节点新增 `STARTING` 状态。启动阶段会写入节点记录并维持心跳，但不会进入在线节点列表、竞争 shard lease、接收 Executor 注册或领取 Outbox；所有端口、插件、Worker 和 Scheduler 启动成功后，才通过 `NodeRegistry.markOnline` 发布为 `ONLINE`。
+- Admin 端口冲突回归测试验证：即使 Netty Gateway 已先绑定成功，后续 Admin HTTP 绑定失败也会立即释放 Netty 端口，并将 JDBC 节点记录回滚为 `OFFLINE`。
+- 正常关闭使用聚合清理器，即使某个组件关闭失败，也会继续释放其余资源，最后统一抛出包含 suppressed failures 的异常。
+- `config/firefly-server.properties` 已收敛为本地节点身份、安全凭据、共享分片契约和监听端口；删除了被插件列表重复启用的 Metrics 开关、加载器会忽略的空值占位，以及完全等同代码默认值的 Outbox、维护、时钟、TLS 和跨 Gateway 调优项。高级参数继续保留在部署文档中。
 
 ### 远程执行器
 
 - `transports/netty` 已提供 gateway、client、连接注册表、JSON codec 和消息模型。
+- Netty Gateway 已实现核心的 `RemoteExecutorTransport` 中立接口；Bootstrap、节点排空和插件上下文不再持有
+  Netty 具体类型。Netty 仍是当前发行版默认且唯一装配的远程传输，而不是可随意关闭的普通功能插件。
 - 执行器模型已拆为两层：`ExecutorDefinition` 是可在 Admin API/UI 手动创建、可启停、可持久化的逻辑能力；`ExecutorInstance` 是服务通过 Netty 连接注册的运行实例。
 - 多个服务实例以相同的 `executorName` 注册，即共同绑定到一个逻辑执行器并参与负载分发；同一服务只有在确实提供不同能力时，才应以不同的 `executorName` 注册。
-- `/api/executor-definitions` 支持定义查询与手动创建；`/api/executors` 同时返回逻辑定义和所有已观察到的运行实例，离线实例保留状态记录而不会删除定义。
+- `/api/executor-definitions` 支持定义查询、手动创建和受约束删除；`/api/executors` 同时返回逻辑定义和所有已观察到的运行实例，离线实例保留状态记录而不会删除定义。
+- 删除仅作用于逻辑执行器定义并要求 ADMIN 权限。仍被任务或任务组引用、仍有心跳有效的在线实例时返回 `409`；离线实例历史不阻止删除。删除写入 Admin 审计，UI 提供确认、错误原因和成功后刷新。
+- 开启 `firefly.executor.registration.auto-create-definition` 时，业务服务后续重新注册可能重新创建同名定义；需要长期阻止注册时应先隔离，并在受控集群关闭自动创建。
 - JDBC 增加 `firefly_executor` 表，用于共享执行器定义；心跳与连接状态保持在 gateway 内存注册表，断链立即标记离线，因此不会产生每次心跳写数据库的压力。
 - `firefly.executor.registration.auto-create-definition` 控制 Netty 首次注册未知执行器时是否自动创建定义。独立模式默认 `true` 方便接入；集群生产环境建议设为 `false`，先由管理端创建定义再允许注册。
 - 任务分发已支持 `UNICAST`、`BROADCAST`、`SHARDING`；实例路由已支持 `ROUND_ROBIN`、`RANDOM`、`CONSISTENT_HASH`。广播按在线实例快照生成子执行，分片按 `shardCount` 生成带分片参数的子执行。
 - Executor 实例身份已拆为稳定的 `instanceId` 和连接级 `sessionId`。同一实例的新会话会替换旧会话，旧连接的心跳和离线事件不能覆盖新连接状态。
 - Netty Executor 客户端支持同时连接多个 Gateway 地址；初始不可用或运行中断线的 Gateway 会按带抖动的指数退避重连。
+- Executor 客户端只有完成 `REGISTERED` 协议握手后才会重置重连退避；TCP 建连、断连和重连计划降为 DEBUG，同一 Gateway 的相同注册拒绝原因只记录一次 WARN，成功注册后才清除告警抑制状态，避免认证配置错误时每秒刷日志。
 - Scheduler runtime 已直接识别持久化的远程任务，不再依赖创建任务的 API 节点临时注册内存 Handler，因此多 Scheduler 节点都能读取并分发远程任务。
 - 当前消息类型包括：
 
@@ -208,10 +236,10 @@ UNREGISTER_EXECUTOR
 
 ## 3. 本轮完成
 
-- 主服务增加统一 HS256 JWT 认证：客户端凭据换取短期令牌，Admin API 按 `READER/OPERATOR/ADMIN`
-  授权，Gateway 按 `EXECUTOR` 角色与 `executorNames` 范围校验注册；旧静态 Token 保留兼容。
-- Spring Boot Starter 增加 `firefly.executor.auth.token-url/client-id/client-secret`，自动缓存并提前刷新 JWT，
-  Netty 首次连接、断线重连和启动任务同步共用同一令牌提供器。
+- 主服务 HS256 JWT 只用于数据库 Admin 用户的页面会话与 `READER/OPERATOR/ADMIN` 授权；机器客户端
+  Token 端点和 `firefly.security.jwt.client.*` 配置已移除。
+- Spring Boot Starter 收敛为 `firefly.executor.integration-key`，Netty 首次连接、断线重连和启动任务同步
+  共用同一个系统密钥，不再配置 token URL、client ID、client secret 或 Admin Token。
 - `@FireflyJob` 不再暴露全局 `id` 和 `handlerName`：Starter 使用 `包名.类名#方法名` 作为稳定执行入口和单计划任务 ID；同一方法多计划使用局部 `key` 派生独立 ID，超长标识使用 SHA-256 摘要稳定缩短。
 - Starter 在 Bean 扫描阶段通过 `ZoneId.of` 校验注解时区并定位到具体业务方法；程序化 `FireflyJobRegistration` 使用相同校验和标准化，非法时区会在业务应用启动期失败，不增加额外默认时区配置或不完整枚举。
 - Admin 增加 Cron 预览和时区搜索 API，UI 在任务创建与编辑时展示未来触发时间并支持时区模糊选择。
@@ -221,7 +249,7 @@ UNREGISTER_EXECUTOR
 - 重试范围：任务定义、Admin API、JDBC 参数、Outbox 不可变快照贯通 `FAILED_TARGETS_ONLY` 和 `ALL_TARGETS`，默认仅重试失败目标。
 - 协议兼容：协议升级到 v2、最低兼容 v1，`CANCELLATION` 变为可选协商能力，已有新旧客户端混合与能力降级测试。
 - 持久化审计：schema v9 增加 `firefly_audit_log` 与 `firefly_job_history`，Admin mutation 保存 actor、role、resource、outcome、before/after 和时间。
-- 运维 API：批量取消、批量死信重放、按 `rootExecutionId` 查询 attempt 链、节点排空/下线、Executor 隔离、任务变更历史；Admin UI 已增加重试范围、隔离和节点操作入口。
+- 运维 API：批量取消、批量死信重放、按 `rootExecutionId` 查询 attempt 链、节点排空/下线、Executor 隔离与受约束删除、任务变更历史；Admin UI 已增加重试范围、隔离、删除和节点操作入口。
 - Executor 隔离会禁用逻辑定义、阻止新派发，并通知各 Gateway 关闭已有连接。
 - 完整排空生命周期已接通：`DRAINING` 节点停止新 Outbox claim、拒绝新 Executor 注册，等待持久化投递和活动 target 归零后断开空闲连接并自动转为 `OFFLINE`；进度 API 返回逐项计数。
 - Gateway 内部请求使用 HMAC 时间戳和 nonce 防重放，限制请求体大小，并输出转发延迟、attempt、success、failure 指标和告警。
@@ -233,7 +261,7 @@ UNREGISTER_EXECUTOR
 - Admin Job API 支持 `GET /api/jobs/{jobId}` 单任务查询，重复创建返回 `409`，用于多业务实例并发启动时收敛到唯一任务定义。
 - Executor 优雅停机发送 `UNREGISTER_EXECUTOR` 并等待 Channel/事件线程组关闭；强制终止由 30 秒心跳
   判定、共享位置租约和 Outbox ACK 重投兜底。Admin UI 区分在线绑定与离线记录，并提供完整实例详情。
-- Executor 注册现在会上报执行入口能力集合；Admin API 在实例信息中返回入口列表，任务表单按执行器联动，并只使用所有在线实例共同支持的入口。单入口自动绑定并隐藏，只有多入口才要求选择；任务列表不再暴露内部 Handler。分发、路由、完成、重试、分片数和路由键均增加可聚焦的悬浮说明，非分片模式会锁定分片数为 1。
+- Executor 注册现在会上报执行入口能力集合；Admin API 在实例信息中返回入口列表，任务表单按执行器联动，并只使用所有在线实例共同支持的入口。执行入口由表单自动绑定并以只读文本展示，不提供手工下拉选择；任务列表不再暴露内部 Handler。分发、路由、完成、重试、分片数和路由键均增加可聚焦的悬浮说明，非分片模式会锁定分片数为 1。
 - Admin UI 新建执行器的协议已改为受控选择：当前仅允许可工作的 TCP/Netty 传输，展示并禁用尚未完成的 HTTP 以及只能由进程内代码注册的 EMBEDDED，避免自由文本或不可运行的定义进入目录。
 
 ## 4. 仍需上线前验证

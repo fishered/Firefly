@@ -162,7 +162,7 @@ HA 节点角色、shard lease、fencing token 和 JDBC 存储见 [docs/ha-cluste
 
 JDBC store 和 schema 方言脚本见 [docs/jdbc-store.md](docs/jdbc-store.md)。
 
-插件体系、Admin HTTP 和 Prometheus Metrics 见 [docs/plugins.md](docs/plugins.md)。这些插件默认不随 server 加载，需要通过配置显式启用。
+插件体系、外部 JAR SPI、Admin HTTP 和 Prometheus Metrics 见 [docs/plugins.md](docs/plugins.md)。可选插件通过配置显式启用；Netty 是默认 Executor transport，不属于普通功能插件。
 
 模块边界和 executor/server 拆分方向见 [docs/module-boundaries.md](docs/module-boundaries.md)。
 

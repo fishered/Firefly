@@ -14,6 +14,19 @@ Configure `firefly.executor.name` and annotate methods on regular Spring beans.
 The transport client, handler discovery, job synchronization, reconnection,
 heartbeats, and lifecycle are auto-configured.
 
+```yaml
+firefly:
+  executor:
+    name: billing-executor
+    gateway-addresses:
+      - 127.0.0.1:9700
+    integration-key: ${FIREFLY_INTEGRATION_KEY}
+```
+
+Generate the Integration Key once from the Firefly Admin console. The same key
+authenticates Gateway registration and optional startup job synchronization;
+the Starter does not need a machine account, client ID, or client secret.
+
 Jobs can also be created at application startup:
 
 ```java

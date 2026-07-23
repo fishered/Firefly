@@ -1,8 +1,7 @@
 package com.firefly.security;
 
-/** Capabilities carried by a Firefly access token. */
+/** Admin console capabilities carried by a human user access token. */
 public enum FireflyRole {
-    EXECUTOR,
     READER,
     OPERATOR,
     ADMIN;

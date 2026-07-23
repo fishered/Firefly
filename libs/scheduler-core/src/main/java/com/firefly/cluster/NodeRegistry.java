@@ -17,6 +17,10 @@ public interface NodeRegistry {
 
     boolean markOffline(String nodeId);
 
+    default boolean markOnline(String nodeId) {
+        return false;
+    }
+
     default boolean markDraining(String nodeId) {
         return false;
     }

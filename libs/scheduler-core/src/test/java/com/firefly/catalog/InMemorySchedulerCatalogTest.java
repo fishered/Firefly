@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.time.ZoneId;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemorySchedulerCatalogTest {
@@ -34,6 +35,11 @@ class InMemorySchedulerCatalogTest {
 
         assertTrue(catalog.findExecutor("billing-executor").isPresent());
         assertEquals("billing-executor", catalog.findJobGroup("billing").orElseThrow().executorName());
+        assertEquals("billing", catalog.listJobGroups().getFirst().id());
         assertEquals("billing-daily", catalog.listJobsByGroup("billing").getFirst().id());
+
+        assertTrue(catalog.deleteExecutor("billing-executor"));
+        assertFalse(catalog.findExecutor("billing-executor").isPresent());
+        assertFalse(catalog.deleteExecutor("billing-executor"));
     }
 }

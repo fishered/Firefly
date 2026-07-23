@@ -4,6 +4,7 @@ import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.security.AdminUser;
 import com.firefly.security.FireflyRole;
 import com.firefly.security.InMemoryAdminUserRepository;
+import com.firefly.security.InMemoryIntegrationKeyRepository;
 import com.firefly.security.JwtService;
 import com.firefly.security.Pbkdf2PasswordHasher;
 import com.firefly.store.InMemoryJobRepository;
@@ -30,6 +31,7 @@ class AdminHttpUserAuthenticationTest {
         int port = freePort();
         Instant now = Instant.now();
         InMemoryAdminUserRepository users = new InMemoryAdminUserRepository();
+        InMemoryIntegrationKeyRepository integrationKeys = new InMemoryIntegrationKeyRepository();
         users.create(new AdminUser(
                 "admin", new Pbkdf2PasswordHasher().hash("correct-password".toCharArray()),
                 Set.of(FireflyRole.ADMIN), true, 0, now, now
@@ -37,16 +39,26 @@ class AdminHttpUserAuthenticationTest {
         JwtService jwt = new JwtService("01234567890123456789012345678901", "firefly",
                 Duration.ofHours(1), Clock.systemUTC());
         AdminHttpPlugin plugin = new AdminHttpPlugin(new AdminHttpOptions(
-                "127.0.0.1", port, Duration.ofSeconds(30), "", Map.of(), jwt, Map.of()
+                "127.0.0.1", port, Duration.ofSeconds(30), "", Map.of(), jwt
         ));
         plugin.start(FireflyPluginContext.builder()
                 .jobRepository(new InMemoryJobRepository())
                 .adminUserRepository(users)
+                .integrationKeyRepository(integrationKeys)
                 .build());
         try {
             assertEquals(401, request(port, "/api/auth/login", "POST", "",
                     "{\"username\":\"admin\",\"password\":\"wrong-password\"}").statusCode());
             String token = login(port, "admin", "correct-password");
+
+            assertEquals(200, request(port, "/api/integration-key", "GET", token, "").statusCode());
+            HttpResponse<String> rotated = request(port, "/api/integration-key", "POST", token, "");
+            assertEquals(200, rotated.statusCode());
+            String integrationKey = AdminHttpJson.object(rotated.body()).get("integrationKey");
+            assertTrue(integrationKey.startsWith("ffk_"));
+            HttpResponse<String> keyStatus = request(port, "/api/integration-key", "GET", token, "");
+            assertTrue(keyStatus.body().contains("\"configured\":true"));
+            assertFalse(keyStatus.body().contains(integrationKey));
 
             HttpResponse<String> created = request(port, "/api/users", "POST", token,
                     "{\"username\":\"operator\",\"password\":\"operator-password\","
@@ -57,6 +69,7 @@ class AdminHttpUserAuthenticationTest {
                     "{\"username\":\"operator\",\"password\":\"operator-password\","
                             + "\"roles\":\"OPERATOR\"}").statusCode());
             String operatorToken = login(port, "operator", "operator-password");
+            assertEquals(403, request(port, "/api/integration-key", "POST", operatorToken, "").statusCode());
 
             HttpResponse<String> listed = request(port, "/api/users", "GET", token, "");
             assertEquals(200, listed.statusCode());

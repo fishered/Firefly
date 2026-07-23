@@ -40,6 +40,16 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
     }
 
     @Override
+    public String displayName() {
+        return "Prometheus Metrics";
+    }
+
+    @Override
+    public String description() {
+        return "Prometheus-compatible scheduler and cluster metrics endpoint";
+    }
+
+    @Override
     public void start(FireflyPluginContext context) {
         this.context = Objects.requireNonNull(context, "context");
         try {

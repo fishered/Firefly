@@ -1,6 +1,7 @@
 package com.firefly.spring.netty;
 
 import com.firefly.executor.netty.NettyExecutorClient;
+import com.firefly.executor.netty.AuthTokenProvider;
 import com.firefly.executor.netty.NettyJobHandlerRegistration;
 import com.firefly.executor.netty.ExecutorResultStore;
 import com.firefly.executor.netty.FileExecutorResultStore;
@@ -43,8 +44,8 @@ public class FireflyNettyExecutorAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public FireflyAccessTokenProvider fireflyAccessTokenProvider(FireflyNettyExecutorProperties properties) {
-        return new FireflyAccessTokenProvider(properties);
+    public AuthTokenProvider fireflyIntegrationKeyProvider(FireflyNettyExecutorProperties properties) {
+        return AuthTokenProvider.fixed(properties.getIntegrationKey());
     }
 
     @Bean
@@ -71,7 +72,7 @@ public class FireflyNettyExecutorAutoConfiguration {
             ObjectProvider<NettyJobHandlerRegistration> registrations,
             ObjectProvider<NamedJobHandler> namedHandlers,
             ObjectProvider<ExecutorResultStore> resultStores,
-            FireflyAccessTokenProvider accessTokenProvider,
+            AuthTokenProvider integrationKeyProvider,
             Environment environment
     ) {
         ExecutorResultStore resultStore = resultStores.getIfAvailable(() ->
@@ -91,8 +92,8 @@ public class FireflyNettyExecutorAutoConfiguration {
                 .heartbeatInterval(properties.getHeartbeatInterval())
                 .reconnectInitialDelay(properties.getReconnectInitialDelay())
                 .reconnectMaxDelay(properties.getReconnectMaxDelay())
-                .authToken(properties.getAuthToken())
-                .authTokenProvider(accessTokenProvider)
+                .authToken(properties.getIntegrationKey())
+                .authTokenProvider(integrationKeyProvider)
                 .tlsOptions(new NettyTlsOptions(
                         properties.isTlsEnabled(),
                         path(properties.getTlsCertificateChain()),
@@ -114,7 +115,7 @@ public class FireflyNettyExecutorAutoConfiguration {
                 + ", service=" + serviceName(properties, environment)
                 + ", gateways=" + gatewayAddresses(properties)
                 + ", autoStart=" + properties.isAutoStart()
-                + ", authentication=" + (accessTokenProvider.usesClientCredentials() ? "client-credentials" : "static-token")
+                + ", authentication=integration-key"
                 + ", tls=" + properties.isTlsEnabled());
         return client;
     }
@@ -131,14 +132,14 @@ public class FireflyNettyExecutorAutoConfiguration {
             FireflyJobRegistrationProperties registrationProperties,
             ObjectProvider<FireflyJobRegistration> registrations,
             NettyExecutorClient executorClient,
-            FireflyAccessTokenProvider accessTokenProvider
+            AuthTokenProvider integrationKeyProvider
     ) {
         return new FireflyJobRegistrar(
                 executorProperties.getName(),
                 registrationProperties,
                 registrations.orderedStream().toList(),
                 executorClient,
-                accessTokenProvider
+                integrationKeyProvider
         );
     }
 

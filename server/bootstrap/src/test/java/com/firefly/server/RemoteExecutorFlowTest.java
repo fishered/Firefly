@@ -53,10 +53,23 @@ final class RemoteExecutorFlowTest {
             );
             assertEquals(201, definition.statusCode());
 
+            HttpResponse<String> rotated = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create("http://127.0.0.1:" + adminPort + "/api/integration-key"))
+                            .POST(HttpRequest.BodyPublishers.noBody())
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString()
+            );
+            assertEquals(200, rotated.statusCode());
+            String marker = "\"integrationKey\":\"";
+            int keyStart = rotated.body().indexOf(marker) + marker.length();
+            String integrationKey = rotated.body().substring(keyStart, rotated.body().indexOf('"', keyStart));
+
             try (NettyExecutorClient client = NettyExecutorClient.builder()
                      .schedulerHost("127.0.0.1")
                      .schedulerPort(gatewayPort)
                      .executorName("test-executor")
+                     .authToken(integrationKey)
                      .serviceName("test-service")
                      .heartbeatInterval(Duration.ofSeconds(1))
                      .build()

@@ -2,6 +2,7 @@ package com.firefly.server;
 
 import com.firefly.cluster.SchedulerCoordinationOptions;
 import com.firefly.cluster.SchedulerShardConfig;
+import com.firefly.plugin.FireflyPluginConfiguration;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,8 +34,8 @@ public record ServerOptions(
         SchedulerCoordinationOptions schedulerCoordination,
         boolean executorDefinitionAutoCreate,
         String adminApiToken,
-        String executorAuthToken,
-        ServerRuntimeOptions runtimeOptions
+        ServerRuntimeOptions runtimeOptions,
+        FireflyPluginConfiguration pluginConfiguration
 ) {
     private static final int DEFAULT_ADMIN_HTTP_PORT = 9710;
     private static final int DEFAULT_PROMETHEUS_METRICS_PORT = 9711;
@@ -55,8 +56,8 @@ public record ServerOptions(
         schedulerShards = Objects.requireNonNull(schedulerShards, "schedulerShards");
         schedulerCoordination = Objects.requireNonNull(schedulerCoordination, "schedulerCoordination");
         runtimeOptions = Objects.requireNonNull(runtimeOptions, "runtimeOptions");
+        pluginConfiguration = Objects.requireNonNull(pluginConfiguration, "pluginConfiguration");
         adminApiToken = adminApiToken == null ? "" : adminApiToken.trim();
-        executorAuthToken = executorAuthToken == null ? "" : executorAuthToken.trim();
         if (nodeMode == ServerNodeMode.CLUSTER && !store.jdbcEnabled()) {
             throw new IllegalArgumentException("firefly.node.mode=cluster requires firefly.store.type=jdbc");
         }
@@ -65,7 +66,7 @@ public record ServerOptions(
                 || runtimeOptions.adminSecurity().usesDevelopmentCredentials())) {
             throw new IllegalArgumentException(
                     "firefly.node.mode=cluster rejects bundled development security credentials; "
-                            + "configure the JWT secret, every client secret, and Admin bootstrap password"
+                            + "configure the JWT secret and Admin bootstrap password"
             );
         }
         if (adminHttpEnabled != nodeRoles.contains(ServerNodeRole.API)) {
@@ -119,7 +120,8 @@ public record ServerOptions(
                 prometheusMetricsEnabled, prometheusMetricsHost, prometheusMetricsPort,
                 nettyExecutorGatewayEnabled, nettyExecutorGatewayPort, store,
                 SchedulerShardConfig.defaults(), SchedulerCoordinationOptions.defaults(),
-                executorDefinitionAutoCreate, "", "", ServerRuntimeOptions.defaults());
+                executorDefinitionAutoCreate, "", ServerRuntimeOptions.defaults(),
+                FireflyPluginConfiguration.empty());
     }
 
     public ServerOptions(
@@ -133,7 +135,7 @@ public record ServerOptions(
                 prometheusMetricsEnabled, prometheusMetricsHost, prometheusMetricsPort,
                 nettyExecutorGatewayEnabled, nettyExecutorGatewayPort, store,
                 SchedulerShardConfig.defaults(), SchedulerCoordinationOptions.defaults(), executorDefinitionAutoCreate,
-                adminApiToken, "", ServerRuntimeOptions.defaults());
+                adminApiToken, ServerRuntimeOptions.defaults(), FireflyPluginConfiguration.empty());
     }
 
     public static ServerOptions parse(String[] args) {
@@ -248,9 +250,18 @@ public record ServerOptions(
                         nodeMode == ServerNodeMode.STANDALONE
                 ),
                 stringOption(flags, env, config, "firefly.admin-http.api-token", "FIREFLY_ADMIN_HTTP_API_TOKEN", ""),
-                stringOption(flags, env, config, "firefly.executor.auth-token", "FIREFLY_EXECUTOR_AUTH_TOKEN", ""),
-                runtimeOptions(flags, env, config)
+                runtimeOptions(flags, env, config),
+                new FireflyPluginConfiguration(effectiveProperties(config, flags), env)
         );
+    }
+
+    private static Map<String, String> effectiveProperties(
+            Map<String, String> config,
+            Map<String, String> flags
+    ) {
+        java.util.HashMap<String, String> effective = new java.util.HashMap<>(config);
+        effective.putAll(flags);
+        return Map.copyOf(effective);
     }
 
     private static ServerRuntimeOptions runtimeOptions(
@@ -382,49 +393,12 @@ public record ServerOptions(
         boolean enabled = booleanOption(flags, env, config,
                 "firefly.security.jwt.enabled", "FIREFLY_SECURITY_JWT_ENABLED", false);
         if (!enabled) return JwtSecurityOptions.disabled();
-        String clientsValue = stringOption(flags, env, config,
-                "firefly.security.jwt.clients", "FIREFLY_SECURITY_JWT_CLIENTS", "");
-        Map<String, com.firefly.security.JwtClient> clients = new java.util.LinkedHashMap<>();
-        for (String rawClientId : clientsValue.split(",")) {
-            String clientId = rawClientId.trim();
-            if (clientId.isEmpty()) continue;
-            String propertyPrefix = "firefly.security.jwt.client." + clientId + ".";
-            String envPrefix = "FIREFLY_SECURITY_JWT_CLIENT_"
-                    + clientId.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "_") + "_";
-            java.util.Set<com.firefly.security.FireflyRole> roles = java.util.Arrays.stream(
-                            stringOption(flags, env, config, propertyPrefix + "roles", envPrefix + "ROLES", "")
-                                    .split(","))
-                    .map(String::trim).filter(value -> !value.isEmpty())
-                    .map(value -> com.firefly.security.FireflyRole.valueOf(value.toUpperCase(java.util.Locale.ROOT)))
-                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
-            java.util.Set<String> executorNames = java.util.Arrays.stream(
-                            stringOption(flags, env, config, propertyPrefix + "executor-names",
-                                    envPrefix + "EXECUTOR_NAMES", "").split(","))
-                    .map(String::trim).filter(value -> !value.isEmpty())
-                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
-            String clientSecret = stringOption(
-                    flags, env, config, propertyPrefix + "secret", envPrefix + "SECRET", ""
-            );
-            if (clientSecret.isBlank()) {
-                throw new IllegalArgumentException(propertyPrefix + "secret must not be blank when JWT is enabled");
-            }
-            if (roles.isEmpty()) {
-                throw new IllegalArgumentException(propertyPrefix + "roles must not be empty when JWT is enabled");
-            }
-            clients.put(clientId, new com.firefly.security.JwtClient(
-                    clientId,
-                    clientSecret,
-                    roles,
-                    executorNames
-            ));
-        }
         return new JwtSecurityOptions(
                 enabled,
                 stringOption(flags, env, config, "firefly.security.jwt.secret", "FIREFLY_SECURITY_JWT_SECRET", ""),
                 stringOption(flags, env, config, "firefly.security.jwt.issuer", "FIREFLY_SECURITY_JWT_ISSUER", "firefly"),
                 durationOption(flags, env, config, "firefly.security.jwt.access-token-ttl",
-                        "FIREFLY_SECURITY_JWT_ACCESS_TOKEN_TTL", Duration.ofHours(1)),
-                clients
+                        "FIREFLY_SECURITY_JWT_ACCESS_TOKEN_TTL", Duration.ofHours(1))
         );
     }
 

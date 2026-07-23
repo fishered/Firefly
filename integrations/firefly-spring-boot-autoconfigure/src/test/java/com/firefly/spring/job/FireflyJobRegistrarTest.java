@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FireflyJobRegistrarTest {
     @Test
-    void createsMissingDeclaredJobWithExecutorAndAdminToken() throws Exception {
+    void createsMissingDeclaredJobWithExecutorAndIntegrationKey() throws Exception {
         AtomicReference<String> body = new AtomicReference<>();
         AtomicReference<String> token = new AtomicReference<>();
         HttpServer server = server(exchange -> {
@@ -28,13 +28,12 @@ class FireflyJobRegistrarTest {
                 return;
             }
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            token.set(exchange.getRequestHeaders().getFirst("X-Firefly-Token"));
+            token.set(exchange.getRequestHeaders().getFirst("X-Firefly-Integration-Key"));
             respond(exchange, 201, "{\"status\":\"created\"}");
         });
         NettyExecutorClient client = client();
         try {
             FireflyJobRegistrationProperties properties = properties(server);
-            properties.setAdminToken("operator-secret");
             FireflyJobRegistrar registrar = new FireflyJobRegistrar(
                     "billing-executor",
                     properties,
@@ -45,12 +44,13 @@ class FireflyJobRegistrarTest {
                             .zoneId("Asia/Shanghai")
                             .parameter("tenant", "primary")
                             .build()),
-                    client
+                    client,
+                    com.firefly.executor.netty.AuthTokenProvider.fixed("ffk_test-key")
             );
 
             registrar.synchronizeJobs();
 
-            assertEquals("operator-secret", token.get());
+            assertEquals("ffk_test-key", token.get());
             assertTrue(body.get().contains("\"id\":\"billing-daily\""));
             assertTrue(body.get().contains("\"executorName\":\"billing-executor\""));
             assertTrue(body.get().contains("\"handlerName\":\"billingHandler\""));

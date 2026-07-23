@@ -9,6 +9,10 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="auth-pending">
+  <div class="language-control" role="group" aria-label="语言">
+    <button type="button" data-locale="zh-CN">中</button>
+    <button type="button" data-locale="en-US">EN</button>
+  </div>
   <aside class="sidebar">
     <div class="brand">
       <img class="brand-logo" src="/firefly-mark.svg" alt="">
@@ -49,6 +53,7 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
+  <script src="/i18n.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

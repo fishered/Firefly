@@ -13,7 +13,6 @@ import java.time.Duration;
 public class FireflyJobRegistrationProperties {
     private boolean enabled = true;
     private String adminUrl = "http://127.0.0.1:9710";
-    private String adminToken = "";
     private boolean updateExisting;
     private boolean failFast;
     private int maxAttempts = 3;

@@ -94,6 +94,22 @@ final class AdminHttpJson {
         return json.append("]}").toString();
     }
 
+    static String plugins(List<com.firefly.plugin.FireflyPluginDescriptor> plugins) {
+        StringBuilder json = new StringBuilder("{\"plugins\":[");
+        for (int index = 0; index < plugins.size(); index++) {
+            com.firefly.plugin.FireflyPluginDescriptor plugin = plugins.get(index);
+            if (index > 0) json.append(',');
+            json.append("{\"id\":\"").append(escape(plugin.id()))
+                    .append("\",\"displayName\":\"").append(escape(plugin.displayName()))
+                    .append("\",\"version\":\"").append(escape(plugin.version()))
+                    .append("\",\"description\":\"").append(escape(plugin.description()))
+                    .append("\",\"implementationClass\":\"").append(escape(plugin.implementationClass()))
+                    .append("\",\"source\":\"").append(escape(plugin.source()))
+                    .append("\",\"status\":\"").append(escape(plugin.status())).append("\"}");
+        }
+        return json.append("]}").toString();
+    }
+
     static String jobPayload(ScheduledJobRecord job) {
         return jobs(List.of(job));
     }

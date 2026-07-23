@@ -96,6 +96,20 @@ public final class JdbcSchedulerCatalog implements SchedulerCatalog {
     }
 
     @Override
+    public boolean deleteExecutor(String name) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     delete from firefly_executor
+                     where executor_name = ?
+                     """)) {
+            statement.setString(1, name);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new JdbcException("failed to delete executor definition", e);
+        }
+    }
+
+    @Override
     public void saveJobGroup(JobGroupDefinition group) {
         Objects.requireNonNull(group, "group");
         try (Connection connection = dataSource.getConnection()) {
@@ -136,6 +150,25 @@ public final class JdbcSchedulerCatalog implements SchedulerCatalog {
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to find job group", e);
+        }
+    }
+
+    @Override
+    public List<JobGroupDefinition> listJobGroups() {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select group_id, group_name, executor_name, metadata, enabled
+                     from firefly_job_group
+                     order by group_id
+                     """);
+             ResultSet resultSet = statement.executeQuery()) {
+            List<JobGroupDefinition> groups = new ArrayList<>();
+            while (resultSet.next()) {
+                groups.add(mapGroup(resultSet));
+            }
+            return List.copyOf(groups);
+        } catch (SQLException e) {
+            throw new JdbcException("failed to list job groups", e);
         }
     }
 

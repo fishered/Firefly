@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** Minimal HS256 JWT issuer and verifier used by both HTTP and Netty boundaries. */
+/** Minimal HS256 JWT issuer and verifier for Admin user sessions. */
 public final class JwtService {
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder DECODER = Base64.getUrlDecoder();
@@ -44,21 +44,14 @@ public final class JwtService {
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
     }
 
-    public String issue(JwtClient client) {
-        return issue(client.clientId(), client.roles(), client.executorNames(), "client", -1);
-    }
-
     public String issueUser(String subject, Set<FireflyRole> roles, long identityVersion) {
-        return issue(subject, roles, Set.of(), "user", identityVersion);
+        return issue(subject, roles, identityVersion);
     }
 
-    private String issue(
-            String subject, Set<FireflyRole> roles, Set<String> executorNames,
-            String identityType, long identityVersion
-    ) {
+    private String issue(String subject, Set<FireflyRole> roles, long identityVersion) {
         if (subject == null || subject.isBlank()) throw new IllegalArgumentException("JWT subject must not be blank");
         if (roles == null || roles.isEmpty()) throw new IllegalArgumentException("JWT roles must not be empty");
-        if (executorNames == null) throw new IllegalArgumentException("JWT executorNames must not be null");
+        if (identityVersion < 0) throw new IllegalArgumentException("JWT identityVersion must not be negative");
         Instant now = clock.instant();
         Map<String, Object> claims = new LinkedHashMap<>();
         claims.put("iss", issuer);
@@ -66,10 +59,8 @@ public final class JwtService {
         claims.put("iat", now.getEpochSecond());
         claims.put("exp", now.plus(accessTokenTtl).getEpochSecond());
         claims.put("jti", java.util.UUID.randomUUID().toString());
-        claims.put("identityType", identityType);
-        if (identityVersion >= 0) claims.put("identityVersion", identityVersion);
+        claims.put("identityVersion", identityVersion);
         claims.put("roles", roles.stream().map(Enum::name).sorted().toList());
-        claims.put("executorNames", executorNames.stream().sorted().toList());
         try {
             String unsigned = encode(HEADER) + "." + encode(JSON.writeValueAsBytes(claims));
             return unsigned + "." + encode(sign(unsigned));
@@ -100,14 +91,8 @@ public final class JwtService {
             Set<FireflyRole> roles = strings(claims, "roles").stream()
                     .map(FireflyRole::valueOf).collect(Collectors.toUnmodifiableSet());
             if (roles.isEmpty()) throw new IllegalArgumentException("JWT has no roles");
-            Object identityType = claims.getOrDefault("identityType", "client");
-            if (!(identityType instanceof String type)) throw new IllegalArgumentException("invalid JWT identityType");
-            Object identityVersion = claims.getOrDefault("identityVersion", -1);
-            if (!(identityVersion instanceof Number version)) {
-                throw new IllegalArgumentException("invalid JWT identityVersion");
-            }
-            return new FireflyPrincipal(text(claims, "sub"), roles,
-                    Set.copyOf(strings(claims, "executorNames")), issuedAt, expiresAt, type, version.longValue());
+            long identityVersion = number(claims, "identityVersion");
+            return new FireflyPrincipal(text(claims, "sub"), roles, issuedAt, expiresAt, identityVersion);
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {

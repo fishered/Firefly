@@ -42,14 +42,20 @@ const state = {
   executorHeartbeatTimeoutSeconds: 30,
   executorServerTime: null,
   nodes: sampleNodes,
-  users: []
+  users: [],
+  integrationKey: null,
+  plugins: []
 };
+
+const viewLoadedAt = new Map();
+const pendingRequests = new Map();
+const VIEW_CACHE_MS = 5000;
 
 const jobFieldHelp = {
   executorName: ['执行器是承载任务的逻辑服务池，可由一个或多个服务实例共同注册。'],
   handlerName: [
     '执行入口由 Starter 根据“完整类名#方法名”自动注册，普通情况下不需要手工维护。',
-    '一个执行器只有一个可用入口时会自动绑定；只有存在多个入口时才需要选择。'
+    '任务表单只展示自动绑定的入口，不提供手工选择。'
   ],
   dispatchMode: [
     'UNICAST：选择一个在线实例，任务只执行一次。',
@@ -86,6 +92,21 @@ document.querySelectorAll('.nav').forEach(button => {
   button.addEventListener('click', () => setView(button.dataset.view));
 });
 document.querySelectorAll('[data-logout]').forEach(button => button.addEventListener('click', logout));
+document.querySelectorAll('[data-locale]').forEach(button => {
+  button.addEventListener('click', () => window.FireflyI18n.setLocale(button.dataset.locale));
+});
+document.addEventListener('firefly:locale-change', () => {
+  const view = state.currentView || 'overview';
+  document.getElementById('page-title').textContent = views[view].title;
+  renderActions(view);
+  if (state.session) {
+    renderView(view);
+    updateSessionSummary();
+  } else if (document.body.classList.contains('auth-required')) {
+    showLogin();
+  }
+  window.FireflyI18n.localize(document.body);
+});
 
 let sessionTimer = null;
 
@@ -220,11 +241,12 @@ async function setView(view) {
   badge.textContent = views[view].badge ?? '';
   badge.classList.toggle('hidden', !views[view].badge);
   renderActions(view);
-  await refreshView(false);
+  renderView(view);
+  await refreshView(false, false);
 }
 
-async function refreshView(notify = true) {
-  await loadAllData();
+async function refreshView(notify = true, force = true) {
+  await loadViewData(state.currentView, force);
   renderView(state.currentView);
   if (notify) toast('已刷新');
 }
@@ -251,13 +273,23 @@ function renderActions(view) {
     actions.querySelector('button').addEventListener('click', () => openUserDialog());
     return;
   }
-  actions.innerHTML = view === 'overview' ? `<span class="muted">●</span><span class="muted">?</span>` : '';
+  actions.innerHTML = '';
 }
 
-async function loadAllData() {
-  await Promise.allSettled([
-    loadOverview(), loadJobs(), loadExecutions(), loadDeadDispatches(), loadExecutors(), loadNodes(), loadUsers()
-  ]);
+async function loadViewData(view, force) {
+  const loadedAt = viewLoadedAt.get(view) ?? 0;
+  if (!force && Date.now() - loadedAt < VIEW_CACHE_MS) return;
+  const loaders = {
+    overview: [loadOverview],
+    jobs: [loadJobs, loadExecutors],
+    executors: [loadExecutors],
+    executions: [loadExecutions, loadDeadDispatches],
+    nodes: [loadNodes],
+    plugins: [loadPlugins],
+    settings: [loadUsers, loadIntegrationKey]
+  }[view] ?? [];
+  await Promise.allSettled(loaders.map(loader => loader()));
+  viewLoadedAt.set(view, Date.now());
 }
 
 async function loadUiConfig() {
@@ -340,6 +372,23 @@ async function loadUsers() {
   }
 }
 
+async function loadIntegrationKey() {
+  try {
+    state.integrationKey = await api('/api/integration-key');
+  } catch {
+    state.integrationKey = null;
+  }
+}
+
+async function loadPlugins() {
+  try {
+    const data = await api('/api/plugins');
+    state.plugins = normalizeList(data, 'plugins');
+  } catch {
+    state.plugins = [];
+  }
+}
+
 function renderView(view) {
   const root = document.getElementById('view-root');
   if (view === 'overview') root.innerHTML = overviewPage();
@@ -347,7 +396,7 @@ function renderView(view) {
   if (view === 'executors') root.innerHTML = executorsPage();
   if (view === 'executions') root.innerHTML = executionsPage();
   if (view === 'nodes') root.innerHTML = nodesPage();
-  if (view === 'plugins') root.innerHTML = placeholderPage('插件管理页面正在接入 Admin API');
+  if (view === 'plugins') root.innerHTML = pluginsPage();
   if (view === 'settings') root.innerHTML = usersPage();
   bindViewActions(view);
 }
@@ -431,11 +480,9 @@ function overviewPage() {
         <h2 class="chart-title">✣ 已加载插件</h2>
         <div class="divider"></div>
         <div class="metrics-list">
-          ${pluginRow('admin-web', true)}
-          ${pluginRow('metrics-prometheus', true)}
-          ${pluginRow('executor-gateway-netty', true)}
-          ${pluginRow('jdbc-store', true)}
-          ${pluginRow('alert-email', false)}
+          ${(state.plugins.length ? state.plugins : [
+            { id: 'admin-http', status: 'ACTIVE' }, { id: 'metrics-prometheus', status: 'ACTIVE' }
+          ]).map(plugin => pluginRow(plugin.id, plugin.status === 'ACTIVE')).join('')}
         </div>
       </article>
     </section>
@@ -484,11 +531,7 @@ function executorsPage() {
   const averageHeartbeatAge = online.length
     ? Math.round(online.reduce((sum, item) => sum + Number(item.heartbeatAgeSeconds ?? 0), 0) / online.length)
     : 0;
-  const definitions = state.executorDefinitions.length
-    ? state.executorDefinitions
-    : [...new Set(executors.map(item => item.executorName))].map(name => ({
-        name, description: '-', protocols: ['TCP'], enabled: true
-      }));
+  const definitions = state.executorDefinitions ?? [];
   return `
     <section class="summary-strip">
       ${statCard('逻辑执行器', definitions.length, '个', '已注册定义', '▤', 'primary')}
@@ -515,6 +558,7 @@ function executorsPage() {
               `<div class="job-actions">
                 <button class="link-button" type="button" data-executor-instances="${escapeHtml(definition.name)}">查看实例</button>
                 ${definition.enabled === false ? '' : `<button class="link-button danger" type="button" data-isolate-executor="${escapeHtml(definition.name)}">隔离</button>`}
+                <button class="icon-button danger" type="button" title="删除执行器定义" aria-label="删除执行器定义" data-delete-executor="${escapeHtml(definition.name)}">&#10005;</button>
               </div>`
             ]);
           }).join('') || emptyRow(7, '暂无执行器定义')}</tbody>
@@ -790,6 +834,18 @@ async function isolateExecutor(executorName) {
   } catch (error) { toast(error.message); }
 }
 
+async function deleteExecutor(executorName) {
+  const warning = `确认删除执行器定义“${executorName}”？\n\n仍有任务、任务组或在线实例时会拒绝删除。若服务端允许自动创建，业务服务重新注册后可能再次创建同名定义。`;
+  if (!window.confirm(warning)) return;
+  try {
+    await api(`/api/executor-definitions/${encodeURIComponent(executorName)}`, { method: 'DELETE' });
+    await refreshView(false);
+    toast(`执行器已删除：${executorName}`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 async function updateNode(nodeId, operation) {
   try {
     await api(`/api/nodes/${encodeURIComponent(nodeId)}/${operation}`, { method: 'POST' });
@@ -887,6 +943,32 @@ function metricRow(label, value) {
 
 function pluginRow(name, enabled) {
   return `<div class="plugin-row"><span class="plugin-name"><span class="muted">♜</span>${escapeHtml(name)}</span><span class="${enabled ? 'success' : 'muted'}"><span class="dot"></span>${enabled ? 'enabled' : 'disabled'}</span></div>`;
+}
+
+function pluginsPage() {
+  const active = state.plugins.filter(plugin => plugin.status === 'ACTIVE').length;
+  const external = state.plugins.filter(plugin => plugin.source === 'EXTERNAL').length;
+  const rows = state.plugins.map(plugin => tableRow([
+    `<div class="plugin-identity"><span class="plugin-glyph">✣</span><div><strong>${escapeHtml(plugin.displayName || plugin.id)}</strong><small>${escapeHtml(plugin.description || plugin.id)}</small></div></div>`,
+    code(plugin.id),
+    code(plugin.version || 'development'),
+    statusText(plugin.source || 'CLASSPATH', plugin.source === 'EXTERNAL' ? 'warning' : 'muted'),
+    `<span class="implementation-name" title="${escapeHtml(plugin.implementationClass || '')}">${escapeHtml(plugin.implementationClass || '-')}</span>`,
+    statusText(plugin.status || 'LOADED', plugin.status === 'ACTIVE' ? 'success' : 'muted')
+  ])).join('');
+  return `
+    <section class="summary-strip plugin-summary">
+      ${statCard('已加载插件', state.plugins.length, '个', '当前节点运行时', '✣', 'primary')}
+      ${statCard('运行中', active, '个', '生命周期已启动', '●', 'yellow', active === state.plugins.length ? 'success' : 'warning')}
+      ${statCard('外部插件', external, '个', '从插件目录发现', '↗', 'gray', 'muted')}
+    </section>
+    <section class="table-card plugin-registry">
+      <div class="table-toolbar"><div><strong>插件注册表</strong><span class="table-count">共 ${state.plugins.length} 条</span></div><span class="muted">插件随节点启动和停止</span></div>
+      <div class="table-scroll"><table>
+        <thead><tr>${headers(['插件', '插件 ID', '版本', '来源', '实现类', '状态'])}</tr></thead>
+        <tbody>${rows || emptyRow(6, '当前节点没有加载插件')}</tbody>
+      </table></div>
+    </section>`;
 }
 
 function headers(items) {
@@ -1035,36 +1117,38 @@ function executorSelect(value = '') {
 
 function handlerSelect(executorName, value = '') {
   const handlers = handlerNamesForExecutor(executorName);
-  if (value && !handlers.includes(value)) handlers.unshift(value);
-  const options = handlers.map(handler =>
-    `<option value="${escapeHtml(handler)}" ${handler === value ? 'selected' : ''}>${escapeHtml(handler)}</option>`
-  ).join('');
-  return `<label class="field ${handlers.length === 1 ? 'automatic-handler-field' : ''}" data-field="handlerName">${fieldLabel('执行入口', jobFieldHelp.handlerName)}<select name="handlerName" required>${options || '<option value="">执行器尚未上报可用入口</option>'}</select></label>`;
+  const selected = value || handlers[0] || '';
+  const display = selected || '执行器尚未上报可用入口';
+  return `<label class="field" data-field="handlerName">${fieldLabel('执行入口', jobFieldHelp.handlerName)}<span class="readonly-field" data-handler-display>${escapeHtml(display)}</span><input type="hidden" name="handlerName" value="${escapeHtml(selected)}"></label>`;
 }
 
 function bindJobDestinationFields(form) {
   const executor = form.elements.executorName;
   const handler = form.elements.handlerName;
+  const display = form.querySelector('[data-handler-display]');
   executor?.addEventListener('change', () => {
     const handlers = handlerNamesForExecutor(executor.value);
-    handler.innerHTML = handlers.length
-      ? handlers.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
-      : '<option value="">执行器尚未上报可用入口</option>';
-    if (handlers.length === 1) handler.value = handlers[0];
-    handler.closest('[data-field="handlerName"]')?.classList.toggle('automatic-handler-field', handlers.length === 1);
+    handler.value = handlers[0] || '';
+    display.textContent = handler.value || '执行器尚未上报可用入口';
   });
 }
 
 function bindJobPolicyFields(form) {
   const dispatch = form.elements.dispatchMode;
   const routing = form.elements.routingStrategy;
+  const completion = form.elements.completionPolicy;
   const shardCount = form.elements.shardCount;
+  const routingKey = form.elements.routingKey;
   const sync = () => {
     const sharding = dispatch.value === 'SHARDING';
     const targeted = dispatch.value !== 'BROADCAST';
     const keyed = sharding || routing.value === 'CONSISTENT_HASH';
-    shardCount.readOnly = !sharding;
+    shardCount.disabled = !sharding;
     if (!sharding) shardCount.value = '1';
+    routing.disabled = !targeted;
+    completion.disabled = dispatch.value === 'UNICAST';
+    if (completion.disabled) completion.value = 'ALL_SUCCESS';
+    routingKey.disabled = !keyed;
     form.querySelector('[data-field="shardCount"]')?.classList.toggle('context-muted', !sharding);
     form.querySelector('[data-field="routingStrategy"]')?.classList.toggle('context-muted', !targeted);
     form.querySelector('[data-field="completionPolicy"]')?.classList.toggle('context-muted', dispatch.value === 'UNICAST');
@@ -1353,7 +1437,7 @@ async function createJob(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const submit = form.querySelector('button[type="submit"]');
-  const body = Object.fromEntries(new FormData(form).entries());
+  const body = jobFormBody(form);
   body.name = body.name || body.id;
   submit.disabled = true;
   try {
@@ -1370,6 +1454,15 @@ async function createJob(event) {
   } finally {
     submit.disabled = false;
   }
+}
+
+function jobFormBody(form) {
+  const body = Object.fromEntries(new FormData(form).entries());
+  ['routingStrategy', 'completionPolicy', 'shardCount', 'routingKey'].forEach(name => {
+    const field = form.elements[name];
+    if (field) body[name] = field.value;
+  });
+  return body;
 }
 
 async function createExecutor(event) {
@@ -1467,6 +1560,18 @@ async function request(path, options) {
     headers.set('X-Firefly-CSRF', state.session.csrfToken);
   }
   requestOptions.headers = headers;
+  const requestKey = method === 'GET' ? `${method}:${path}` : '';
+  if (requestKey && pendingRequests.has(requestKey)) return pendingRequests.get(requestKey);
+  const operation = performRequest(path, requestOptions, method);
+  if (requestKey) pendingRequests.set(requestKey, operation);
+  try {
+    return await operation;
+  } finally {
+    if (requestKey) pendingRequests.delete(requestKey);
+  }
+}
+
+async function performRequest(path, requestOptions, method) {
   const response = await fetch(path, requestOptions);
   updateSessionFromResponse(response);
   const text = await response.text();
@@ -1480,7 +1585,13 @@ async function request(path, options) {
     if (response.status === 401 && path.startsWith('/api/')) {
       showLogin('会话已过期，请重新登录');
     }
-    const message = data?.message ?? data?.error ?? `HTTP ${response.status}`;
+    const errorMessages = {
+      executor_not_found: '执行器定义不存在或已被删除',
+      executor_has_jobs: `该执行器仍被 ${Number(data?.jobCount ?? 0)} 个任务引用，请先迁移或删除任务`,
+      executor_has_job_groups: `该执行器仍被 ${Number(data?.jobGroupCount ?? 0)} 个任务组引用，请先调整任务组`,
+      executor_has_online_instances: `该执行器仍有 ${Number(data?.onlineInstances ?? 0)} 个在线实例，请先隔离或停止实例`
+    };
+    const message = data?.message ?? errorMessages[data?.error] ?? data?.error ?? `HTTP ${response.status}`;
     throw new Error(message);
   }
   return data;
@@ -1536,7 +1647,7 @@ function formatDate(value) {
 
 function toast(message) {
   const element = document.getElementById('toast');
-  element.textContent = message;
+  element.textContent = window.FireflyI18n.translate(message);
   element.classList.add('show');
   clearTimeout(element.hideTimer);
   element.hideTimer = setTimeout(() => element.classList.remove('show'), 2600);
@@ -1631,6 +1742,9 @@ function bindViewActions(view) {
     document.querySelectorAll('[data-isolate-executor]').forEach(button => {
       button.addEventListener('click', () => isolateExecutor(button.dataset.isolateExecutor));
     });
+    document.querySelectorAll('[data-delete-executor]').forEach(button => {
+      button.addEventListener('click', () => deleteExecutor(button.dataset.deleteExecutor));
+    });
     document.querySelectorAll('[data-executor-instances]').forEach(button => {
       button.addEventListener('click', () => openExecutorInstancesDialog(button.dataset.executorInstances));
     });
@@ -1642,6 +1756,7 @@ function bindViewActions(view) {
     });
   }
   if (view === 'settings') {
+    document.querySelector('[data-rotate-integration-key]')?.addEventListener('click', rotateIntegrationKey);
     document.querySelectorAll('[data-user-edit]').forEach(button => {
       button.addEventListener('click', () => openUserDialog(
         state.users.find(user => user.username === button.dataset.userEdit)
@@ -1670,6 +1785,18 @@ function usersPage() {
     ]);
   }).join('');
   return `
+    <section class="table-card integration-key-panel">
+      <div class="table-toolbar">
+        <div><strong>Integration Key</strong><span class="table-count">服务集成凭据</span></div>
+        <button class="btn primary" type="button" data-rotate-integration-key>${state.integrationKey?.configured ? '轮换密钥' : '生成密钥'}</button>
+      </div>
+      <div class="key-status-grid">
+        <div><span class="muted">状态</span><strong>${state.integrationKey?.configured ? '已配置' : '未配置'}</strong></div>
+        <div><span class="muted">版本</span><strong>${state.integrationKey?.version ?? '-'}</strong></div>
+        <div><span class="muted">更新时间</span><strong>${formatDate(state.integrationKey?.updatedAt)}</strong></div>
+      </div>
+      <p class="muted key-note">用于 Executor 注册和启动任务同步。服务端仅保存摘要，密钥明文只在生成时展示一次。</p>
+    </section>
     <section class="summary-strip">
       ${statCard('管理账号', state.users.length, '个', '持久化账号', '▤', 'primary')}
       ${statCard('启用账号', state.users.filter(user => user.enabled).length, '个', '可登录控制台', '●', 'yellow', 'success')}
@@ -1682,6 +1809,39 @@ function usersPage() {
         <tbody>${rows || emptyRow(7, '暂无账号或当前用户没有 ADMIN 权限')}</tbody>
       </table></div>
     </section>`;
+}
+
+async function rotateIntegrationKey() {
+  const action = state.integrationKey?.configured ? '轮换' : '生成';
+  if (!window.confirm(`${action} Integration Key？现有服务需要更新配置后重新连接。`)) return;
+  try {
+    const result = await api('/api/integration-key', { method: 'POST' });
+    state.integrationKey = { configured: true, version: result.version, updatedAt: result.updatedAt };
+    renderView('settings');
+    showIntegrationKey(result.integrationKey);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function showIntegrationKey(value) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="integration-key-title">
+      <section class="modal compact-modal">
+        <div class="modal-header"><h2 id="integration-key-title">Integration Key</h2><button class="btn icon" type="button" data-close aria-label="关闭">×</button></div>
+        <div class="modal-body">
+          <p>请立即配置到集成服务。关闭后无法再次查看，只能重新轮换。</p>
+          <div class="generated-key"><code>${escapeHtml(value)}</code><button class="icon-button" type="button" data-copy-key title="复制密钥" aria-label="复制密钥">&#10697;</button></div>
+        </div>
+        <div class="modal-footer"><button class="btn primary" type="button" data-close>我已保存</button></div>
+      </section>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  root.querySelector('[data-copy-key]').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(value);
+    toast('Integration Key 已复制');
+  });
 }
 
 function openUserDialog(user = null) {
@@ -1855,7 +2015,7 @@ function openJobEditDialog(job) {
 async function submitJobEdit(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const body = Object.fromEntries(new FormData(form).entries());
+  const body = jobFormBody(form);
   const jobId = body.id;
   delete body.id;
   const submit = form.querySelector('button[type="submit"]');

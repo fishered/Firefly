@@ -60,6 +60,8 @@ public final class NettyExecutorClient implements AutoCloseable {
     private EventLoopGroup group;
     private final Map<GatewayEndpoint, Channel> channels = new ConcurrentHashMap<>();
     private final Map<GatewayEndpoint, AtomicInteger> reconnectAttempts = new ConcurrentHashMap<>();
+    private final Map<GatewayEndpoint, String> registrationFailures = new ConcurrentHashMap<>();
+    private final Set<GatewayEndpoint> registeredGateways = ConcurrentHashMap.newKeySet();
     private final Set<GatewayEndpoint> connecting = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closing = new AtomicBoolean();
     private Bootstrap bootstrap;
@@ -154,7 +156,7 @@ public final class NettyExecutorClient implements AutoCloseable {
             return;
         }
         closing.set(false);
-        log.info(() -> "starting Firefly executor client: executor=" + executorName
+        log.fine(() -> "starting Firefly executor client: executor=" + executorName
                 + ", instanceId=" + instanceId
                 + ", service=" + serviceName
                 + ", gateways=" + gatewayEndpoints);
@@ -188,7 +190,9 @@ public final class NettyExecutorClient implements AutoCloseable {
                                         codec,
                                         clock,
                                         executionRegistry,
-                                        NettyExecutorClient.this::disconnected
+                                        NettyExecutorClient.this::disconnected,
+                                        NettyExecutorClient.this::registered,
+                                        NettyExecutorClient.this::registrationRejected
                                 ));
                     }
                 });
@@ -202,7 +206,7 @@ public final class NettyExecutorClient implements AutoCloseable {
     }
 
     public int connectedGatewayCount() {
-        return (int) channels.values().stream().filter(Channel::isActive).count();
+        return registeredGateways.size();
     }
 
     @Override
@@ -210,7 +214,7 @@ public final class NettyExecutorClient implements AutoCloseable {
         if (!closing.compareAndSet(false, true)) {
             return;
         }
-        log.info(() -> "stopping Firefly executor client: executor=" + executorName
+        log.fine(() -> "stopping Firefly executor client: executor=" + executorName
                 + ", instanceId=" + instanceId);
         java.util.List<ChannelFuture> closeFutures = channels.values().stream()
                 .map(channel -> {
@@ -219,6 +223,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                 })
                 .toList();
         channels.clear();
+        registeredGateways.clear();
         closeFutures.stream()
                 .filter(future -> !future.channel().eventLoop().inEventLoop())
                 .forEach(future -> future.awaitUninterruptibly(5, TimeUnit.SECONDS));
@@ -227,7 +232,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                     .awaitUninterruptibly(5, TimeUnit.SECONDS);
         }
         workerPool.shutdownNow();
-        log.info(() -> "Firefly executor client stopped: executor=" + executorName
+        log.fine(() -> "Firefly executor client stopped: executor=" + executorName
                 + ", instanceId=" + instanceId);
     }
 
@@ -240,13 +245,12 @@ public final class NettyExecutorClient implements AutoCloseable {
             connecting.remove(endpoint);
             if (completed.isSuccess()) {
                 channels.put(endpoint, future.channel());
-                reconnectAttempts.computeIfAbsent(endpoint, ignored -> new AtomicInteger()).set(0);
-                log.info(() -> "connected to Firefly gateway: executor=" + executorName
+                log.fine(() -> "connected to Firefly gateway: executor=" + executorName
                         + ", instanceId=" + instanceId
                         + ", gateway=" + endpoint);
             } else {
                 Throwable cause = future.cause();
-                log.warning(() -> "failed to connect to Firefly gateway: executor=" + executorName
+                log.fine(() -> "failed to connect to Firefly gateway: executor=" + executorName
                         + ", gateway=" + endpoint
                         + ", reason=" + (cause == null ? "unknown" : cause.getMessage()));
                 scheduleReconnect(endpoint);
@@ -263,12 +267,50 @@ public final class NettyExecutorClient implements AutoCloseable {
                 .findFirst()
                 .ifPresent(entry -> {
                     if (channels.remove(entry.getKey(), disconnectedChannel)) {
-                        log.warning(() -> "disconnected from Firefly gateway: executor=" + executorName
+                        registeredGateways.remove(entry.getKey());
+                        log.fine(() -> "disconnected from Firefly gateway: executor=" + executorName
                                 + ", instanceId=" + instanceId
                                 + ", gateway=" + entry.getKey());
                         scheduleReconnect(entry.getKey());
                     }
                 });
+    }
+
+    private void registered(Channel channel) {
+        endpointFor(channel).ifPresent(endpoint -> {
+            registeredGateways.add(endpoint);
+            registrationFailures.remove(endpoint);
+            reconnectAttempts.computeIfAbsent(endpoint, ignored -> new AtomicInteger()).set(0);
+        });
+    }
+
+    private void registrationRejected(Channel channel, String reason) {
+        endpointFor(channel).ifPresentOrElse(endpoint -> {
+            String previous = registrationFailures.put(endpoint, reason);
+            if (!reason.equals(previous)) {
+                log.warning(() -> "executor registration rejected: executor=" + executorName
+                        + ", gateway=" + endpoint + ", reason=" + reason);
+            } else {
+                log.fine(() -> "executor registration remains rejected: executor=" + executorName
+                        + ", gateway=" + endpoint + ", reason=" + reason);
+            }
+        }, () -> log.fine(() -> "executor registration rejected before endpoint tracking: executor="
+                + executorName + ", remote=" + channel.remoteAddress() + ", reason=" + reason));
+    }
+
+    private java.util.Optional<GatewayEndpoint> endpointFor(Channel channel) {
+        java.util.Optional<GatewayEndpoint> tracked = channels.entrySet().stream()
+                .filter(entry -> entry.getValue().equals(channel))
+                .map(Map.Entry::getKey)
+                .findFirst();
+        if (tracked.isPresent() || !(channel.remoteAddress() instanceof java.net.InetSocketAddress remote)) {
+            return tracked;
+        }
+        return gatewayEndpoints.stream()
+                .filter(endpoint -> endpoint.port() == remote.getPort())
+                .filter(endpoint -> endpoint.host().equalsIgnoreCase(remote.getHostString())
+                        || endpoint.host().equals(remote.getAddress().getHostAddress()))
+                .findFirst();
     }
 
     private void scheduleReconnect(GatewayEndpoint endpoint) {
@@ -282,7 +324,7 @@ public final class NettyExecutorClient implements AutoCloseable {
         long capped = Math.min(maximumMillis, exponential);
         long jitter = capped == 0 ? 0 : java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(1, capped / 5));
         long delayMillis = capped + jitter;
-        log.info(() -> "scheduled Firefly gateway reconnect: executor=" + executorName
+        log.fine(() -> "scheduled Firefly gateway reconnect: executor=" + executorName
                 + ", gateway=" + endpoint
                 + ", attempt=" + (attempt + 1)
                 + ", delayMs=" + delayMillis);

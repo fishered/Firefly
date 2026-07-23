@@ -10,30 +10,28 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JwtServiceTest {
     private static final String SECRET = "01234567890123456789012345678901";
 
     @Test
-    void issuesAndVerifiesRolesAndExecutorScope() {
+    void issuesAndVerifiesAdminUserIdentity() {
         Instant now = Instant.parse("2026-07-21T08:00:00Z");
         JwtService service = service(now);
 
-        FireflyPrincipal principal = service.verify(service.issue(new JwtClient(
-                "billing", "client-secret", Set.of(FireflyRole.EXECUTOR), Set.of("billing-executor")
-        )));
+        FireflyPrincipal principal = service.verify(service.issueUser(
+                "admin", Set.of(FireflyRole.ADMIN), 3
+        ));
 
-        assertEquals("billing", principal.subject());
-        assertTrue(principal.allowsExecutor("billing-executor"));
-        assertEquals(Set.of(FireflyRole.EXECUTOR), principal.roles());
+        assertEquals("admin", principal.subject());
+        assertEquals(3, principal.identityVersion());
+        assertEquals(Set.of(FireflyRole.ADMIN), principal.roles());
     }
 
     @Test
     void rejectsExpiredAndTamperedTokens() {
-        String token = service(Instant.parse("2026-07-21T08:00:00Z")).issue(new JwtClient(
-                "admin", "client-secret", Set.of(FireflyRole.ADMIN), Set.of("*")
-        ));
+        String token = service(Instant.parse("2026-07-21T08:00:00Z"))
+                .issueUser("admin", Set.of(FireflyRole.ADMIN), 0);
 
         assertThrows(IllegalArgumentException.class, () ->
                 service(Instant.parse("2026-07-21T09:00:01Z")).verify(token));

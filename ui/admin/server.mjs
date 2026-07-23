@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +17,7 @@ const sessions = new Map();
 const loginAttempts = new Map();
 const publicDir = fileURLToPath(new URL('./public/', import.meta.url));
 const startedAt = new Date().toISOString();
+const staticFiles = new Map();
 
 setInterval(cleanupExpiredState, 60_000).unref();
 
@@ -59,7 +61,7 @@ createServer(async (req, res) => {
       await proxyApi(req, res, url);
       return;
     }
-    await serveStatic(url, res);
+    await serveStatic(req, url, res);
   } catch (error) {
     respondJson(res, 500, { error: 'admin_ui_error', message: String(error?.message ?? error) });
   }
@@ -179,7 +181,7 @@ async function proxyApi(req, res, url) {
     return;
   }
   const upstreamUrl = new URL(`${url.pathname}${url.search}`, `${apiBase}/`);
-  const body = await readBody(req);
+  const body = safeMethod(req.method) ? Buffer.alloc(0) : await readBody(req);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), apiTimeoutMs);
 
@@ -190,15 +192,16 @@ async function proxyApi(req, res, url) {
       body: body.length === 0 || req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
       signal: controller.signal
     });
-    const responseBody = Buffer.from(await response.arrayBuffer());
     if (response.status === 401) invalidateSession(session.id);
     res.writeHead(response.status, securityHeaders({
       'Content-Type': response.headers.get('content-type') ?? 'application/octet-stream',
       'Cache-Control': 'no-store',
+      ...(response.headers.get('content-length') ? { 'Content-Length': response.headers.get('content-length') } : {}),
       ...sessionResponseHeaders(session),
       ...(response.status === 401 ? { 'Set-Cookie': clearSessionCookie() } : {})
     }));
-    res.end(responseBody);
+    if (response.body) Readable.fromWeb(response.body).pipe(res);
+    else res.end();
   } catch (error) {
     const code = error?.name === 'AbortError' ? 'admin_api_timeout' : 'admin_api_unreachable';
     respondJson(res, 502, {
@@ -211,23 +214,41 @@ async function proxyApi(req, res, url) {
   }
 }
 
-async function serveStatic(url, res) {
+async function serveStatic(req, url, res) {
   const requestedPath = url.pathname === '/' ? '/index.html' : url.pathname;
   const file = safePublicPath(requestedPath);
   try {
-    const content = await readFile(file);
+    const resource = await staticResource(file);
+    if (req.headers['if-none-match'] === resource.etag) {
+      res.writeHead(304, securityHeaders({ ETag: resource.etag }));
+      res.end();
+      return;
+    }
     res.writeHead(200, securityHeaders({
       'Content-Type': contentTypes.get(extname(file)) ?? 'application/octet-stream',
-      'Cache-Control': extname(file) === '.html' ? 'no-store' : 'no-cache'
+      'Cache-Control': extname(file) === '.html' ? 'no-store' : 'public, max-age=3600',
+      ETag: resource.etag
     }));
-    res.end(content);
+    res.end(resource.content);
   } catch {
-    const content = await readFile(resolve(publicDir, 'index.html'));
+    const resource = await staticResource(resolve(publicDir, 'index.html'));
     res.writeHead(200, securityHeaders({
       'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store'
     }));
-    res.end(content);
+    res.end(resource.content);
   }
+}
+
+async function staticResource(file) {
+  let resource = staticFiles.get(file);
+  if (resource) return resource;
+  const content = await readFile(file);
+  resource = {
+    content,
+    etag: `"${createHash('sha256').update(content).digest('base64url')}"`
+  };
+  staticFiles.set(file, resource);
+  return resource;
 }
 
 function safePublicPath(pathname) {

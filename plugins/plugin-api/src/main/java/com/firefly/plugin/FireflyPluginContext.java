@@ -10,6 +10,7 @@ import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.audit.AuditRepository;
 import com.firefly.store.JobHistoryRepository;
 import com.firefly.security.AdminUserRepository;
+import com.firefly.security.IntegrationKeyRepository;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -35,6 +36,9 @@ public final class FireflyPluginContext {
     private final ExecutorIsolationDispatcher executorIsolationDispatcher;
     private final NodeDrainStatusProvider nodeDrainStatusProvider;
     private final AdminUserRepository adminUserRepository;
+    private final IntegrationKeyRepository integrationKeyRepository;
+    private final PluginStatusProvider pluginStatusProvider;
+    private final FireflyPluginConfiguration configuration;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -53,6 +57,9 @@ public final class FireflyPluginContext {
         this.executorIsolationDispatcher = builder.executorIsolationDispatcher;
         this.nodeDrainStatusProvider = builder.nodeDrainStatusProvider;
         this.adminUserRepository = builder.adminUserRepository;
+        this.integrationKeyRepository = builder.integrationKeyRepository;
+        this.pluginStatusProvider = builder.pluginStatusProvider;
+        this.configuration = builder.configuration;
     }
 
     public static Builder builder() {
@@ -123,6 +130,18 @@ public final class FireflyPluginContext {
         return Optional.ofNullable(adminUserRepository);
     }
 
+    public Optional<IntegrationKeyRepository> integrationKeyRepository() {
+        return Optional.ofNullable(integrationKeyRepository);
+    }
+
+    public Optional<PluginStatusProvider> pluginStatusProvider() {
+        return Optional.ofNullable(pluginStatusProvider);
+    }
+
+    public FireflyPluginConfiguration configuration() {
+        return configuration;
+    }
+
     public static final class Builder {
         private Clock clock = Clock.systemUTC();
         private JobRepository jobRepository;
@@ -140,6 +159,9 @@ public final class FireflyPluginContext {
         private ExecutorIsolationDispatcher executorIsolationDispatcher;
         private NodeDrainStatusProvider nodeDrainStatusProvider;
         private AdminUserRepository adminUserRepository;
+        private IntegrationKeyRepository integrationKeyRepository;
+        private PluginStatusProvider pluginStatusProvider;
+        private FireflyPluginConfiguration configuration = FireflyPluginConfiguration.empty();
 
         private Builder() {
         }
@@ -226,6 +248,21 @@ public final class FireflyPluginContext {
 
         public Builder adminUserRepository(AdminUserRepository repository) {
             this.adminUserRepository = Objects.requireNonNull(repository, "adminUserRepository");
+            return this;
+        }
+
+        public Builder integrationKeyRepository(IntegrationKeyRepository repository) {
+            this.integrationKeyRepository = Objects.requireNonNull(repository, "integrationKeyRepository");
+            return this;
+        }
+
+        public Builder pluginStatusProvider(PluginStatusProvider provider) {
+            this.pluginStatusProvider = Objects.requireNonNull(provider, "pluginStatusProvider");
+            return this;
+        }
+
+        public Builder configuration(FireflyPluginConfiguration configuration) {
+            this.configuration = Objects.requireNonNull(configuration, "configuration");
             return this;
         }
 

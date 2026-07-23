@@ -39,7 +39,7 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
             NettyExecutorClient executorClient
     ) {
         this(executorName, properties, registrations, executorClient,
-                AuthTokenProvider.fixed(properties.getAdminToken()));
+                AuthTokenProvider.fixed(""));
     }
 
     public FireflyJobRegistrar(
@@ -169,12 +169,9 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .timeout(positive(properties.getRequestTimeout(), "requestTimeout"))
                 .header("Accept", "application/json");
-        String legacyToken = properties.getAdminToken();
         String token = authTokenProvider.accessToken();
-        if (legacyToken != null && !legacyToken.isBlank()) {
-            request.header("X-Firefly-Token", legacyToken);
-        } else if (token != null && !token.isBlank()) {
-            request.header("Authorization", "Bearer " + token);
+        if (token != null && !token.isBlank()) {
+            request.header("X-Firefly-Integration-Key", token);
         }
         return request;
     }

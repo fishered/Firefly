@@ -101,6 +101,11 @@ public final class JdbcNodeRegistry implements NodeRegistry {
     }
 
     @Override
+    public boolean markOnline(String nodeId) {
+        return updateStatus(nodeId, NodeStatus.ONLINE);
+    }
+
+    @Override
     public boolean markDraining(String nodeId) {
         return updateStatus(nodeId, NodeStatus.DRAINING);
     }

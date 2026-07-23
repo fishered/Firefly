@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -32,6 +33,8 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     private final Clock clock;
     private final NettyExecutorExecutionRegistry executionRegistry;
     private final Consumer<io.netty.channel.Channel> disconnectListener;
+    private final Consumer<io.netty.channel.Channel> registrationListener;
+    private final BiConsumer<io.netty.channel.Channel, String> registrationRejectionListener;
     private io.netty.util.concurrent.ScheduledFuture<?> heartbeatTask;
 
     NettyExecutorClientHandler(
@@ -48,6 +51,29 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             NettyExecutorExecutionRegistry executionRegistry,
             Consumer<io.netty.channel.Channel> disconnectListener
     ) {
+        this(
+                executorName, instanceId, sessionId, authToken, serviceName, heartbeatInterval,
+                handlerRegistry, workerPool, codec, clock, executionRegistry, disconnectListener,
+                ignored -> { }, (ignored, reason) -> { }
+        );
+    }
+
+    NettyExecutorClientHandler(
+            String executorName,
+            String instanceId,
+            String sessionId,
+            String authToken,
+            String serviceName,
+            Duration heartbeatInterval,
+            JobHandlerRegistry handlerRegistry,
+            ExecutorService workerPool,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            NettyExecutorExecutionRegistry executionRegistry,
+            Consumer<io.netty.channel.Channel> disconnectListener,
+            Consumer<io.netty.channel.Channel> registrationListener,
+            BiConsumer<io.netty.channel.Channel, String> registrationRejectionListener
+    ) {
         this.executorName = executorName;
         this.instanceId = instanceId;
         this.sessionId = sessionId;
@@ -60,6 +86,8 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
         this.clock = clock;
         this.executionRegistry = executionRegistry;
         this.disconnectListener = disconnectListener;
+        this.registrationListener = registrationListener;
+        this.registrationRejectionListener = registrationRejectionListener;
     }
 
     @Override
@@ -71,6 +99,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
                         "executorName", executorName,
                         "instanceId", instanceId,
                         "sessionId", sessionId,
+                        "integrationKey", authToken,
                         "authToken", authToken,
                         "serviceName", serviceName,
                         "handlerNames", handlerRegistry.names().stream().sorted()
@@ -97,15 +126,20 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     protected void channelRead0(ChannelHandlerContext context, String frame) {
         NettyExecutorMessage message = codec.decode(frame.trim());
         if (message.type() == NettyExecutorMessageType.REGISTER_REJECTED) {
-            log.warning("executor registration rejected: " + message.payload().getOrDefault("reason", "unknown"));
+            registrationRejectionListener.accept(
+                    context.channel(), message.payload().getOrDefault("reason", "unknown")
+            );
             context.close();
             return;
         }
         if (message.type() == NettyExecutorMessageType.REGISTERED) {
             if (!validRegistrationResponse(message.payload())) {
-                log.warning("executor registration response has an incompatible protocol contract");
+                registrationRejectionListener.accept(
+                        context.channel(), "gateway returned an incompatible protocol contract"
+                );
                 context.close();
             } else {
+                registrationListener.accept(context.channel());
                 log.info(() -> "registered with Firefly gateway: executor=" + executorName
                         + ", instanceId=" + instanceId
                         + ", sessionId=" + sessionId

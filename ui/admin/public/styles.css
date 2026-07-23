@@ -32,6 +32,33 @@ body {
   font: 14px/1.45 "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif;
 }
 
+.language-control {
+  position: fixed;
+  z-index: 1200;
+  top: 14px;
+  right: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, 36px);
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 2px 10px rgb(15 23 42 / 8%);
+}
+
+.language-control button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 12px/1 inherit;
+  cursor: pointer;
+}
+
+.language-control button.active { background: var(--primary); color: #fff; }
+.language-control button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
 .auth-pending .sidebar,
 .auth-pending .page { visibility: hidden; }
 .auth-required .sidebar,
@@ -133,12 +160,14 @@ button, input, select { font: inherit; }
 .session-summary { min-width: 0; flex: 1 1 auto; }
 .session-summary > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logout-button {
+  flex: 0 0 auto;
   padding: 5px;
   border: 0;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   font-size: 12px;
+  white-space: nowrap;
 }
 .logout-button:hover { color: #b91c1c; }
 
@@ -166,7 +195,7 @@ button, input, select { font: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 110px 0 24px;
   border-bottom: 1px solid var(--line);
   background: #fff;
 }
@@ -292,6 +321,13 @@ select:focus,
 button:focus-visible {
   outline: 2px solid rgba(15, 118, 110, .28);
   outline-offset: 2px;
+}
+
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+  background: #f8fafc;
+  color: #94a3b8;
 }
 
 .btn {
@@ -882,7 +918,20 @@ td.code {
 .field.context-muted { opacity: .48; }
 .field.context-muted input,
 .field.context-muted select { background: #f8fafc; }
-.automatic-handler-field { display: none; }
+.readonly-field {
+  height: 38px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 .schedule-cron-field { grid-column: 1 / 2; }
 .timezone-field { position: relative; }
@@ -1063,7 +1112,7 @@ td.code {
     min-height: var(--header);
     align-items: flex-start;
     flex-direction: column;
-    padding: 14px 16px;
+    padding: 14px 100px 14px 16px;
   }
   .topbar-actions { width: 100%; justify-content: space-between; }
   .mobile-logout { display: inline-flex; }
@@ -1087,4 +1136,24 @@ td.code {
     scroll-behavior: auto !important;
     transition: none !important;
   }
+}
+.integration-key-panel { margin-bottom: 16px; }
+.key-status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 18px 20px 8px; }
+.key-status-grid > div { display: grid; gap: 6px; min-width: 0; }
+.key-status-grid strong { overflow-wrap: anywhere; }
+.key-note { margin: 8px 20px 18px; }
+.generated-key { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--line); background: var(--soft); }
+.generated-key code { flex: 1; min-width: 0; overflow-wrap: anywhere; user-select: all; }
+@media (max-width: 720px) { .key-status-grid { grid-template-columns: 1fr; } }
+
+.plugin-registry table { min-width: 900px; }
+.plugin-identity { display: flex; align-items: center; gap: 10px; min-width: 190px; }
+.plugin-identity > div { display: grid; gap: 2px; }
+.plugin-identity small { max-width: 280px; color: var(--muted); font-size: 12px; }
+.plugin-glyph { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #99f6e4; border-radius: 6px; background: #f0fdfa; color: var(--primary); }
+.implementation-name { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, "SFMono-Regular", monospace; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .language-control { top: 12px; right: 12px; }
+  .plugin-summary { grid-template-columns: 1fr; }
 }

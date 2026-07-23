@@ -21,6 +21,11 @@
       "description": "Firefly gateway addresses in host:port form. The client connects to every configured gateway."
     },
     {
+      "name": "firefly.executor.integration-key",
+      "defaultValue": "",
+      "description": "Cluster-wide Integration Key used for Gateway registration and optional startup job synchronization."
+    },
+    {
       "name": "firefly.executor.instance-id",
       "description": "Stable identity of this service replica. Configure a value unique per replica to replace an old session immediately after restart."
     },
@@ -78,11 +83,6 @@
       "name": "firefly.executor.job-registration.admin-url",
       "defaultValue": "http://127.0.0.1:9710",
       "description": "Base URL of the Firefly Admin API used for startup job registration."
-    },
-    {
-      "name": "firefly.executor.job-registration.admin-token",
-      "defaultValue": "",
-      "description": "Admin API token used for startup job registration. Creating a job requires an ADMIN role token."
     },
     {
       "name": "firefly.executor.job-registration.update-existing",

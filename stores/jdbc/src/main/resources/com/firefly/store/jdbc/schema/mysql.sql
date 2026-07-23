@@ -197,6 +197,14 @@ create table if not exists firefly_user (
     index idx_firefly_user_enabled (enabled, username)
 );
 
+create table if not exists firefly_integration_key (
+    key_id varchar(64) primary key,
+    key_hash varchar(512) not null,
+    version bigint not null,
+    created_at timestamp(6) not null,
+    updated_at timestamp(6) not null
+);
+
 insert into firefly_schema_version (version, installed_at)
 select 2, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 2);
@@ -232,3 +240,7 @@ where not exists (select 1 from firefly_schema_version where version = 9);
 insert into firefly_schema_version (version, installed_at)
 select 10, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 10);
+
+insert into firefly_schema_version (version, installed_at)
+select 11, current_timestamp
+where not exists (select 1 from firefly_schema_version where version = 11);

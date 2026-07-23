@@ -2,21 +2,24 @@ package com.firefly.server;
 
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-public enum ServerPlugin {
-    ADMIN_HTTP("admin-http"),
-    METRICS_PROMETHEUS("metrics-prometheus");
+/** A configured plugin id. Built-in ids are constants; external ids remain open-ended. */
+public record ServerPlugin(String id) {
+    private static final Pattern ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9._-]*");
 
-    private final String id;
+    public static final ServerPlugin ADMIN_HTTP = new ServerPlugin("admin-http");
+    public static final ServerPlugin METRICS_PROMETHEUS = new ServerPlugin("metrics-prometheus");
 
-    ServerPlugin(String id) {
-        this.id = id;
-    }
-
-    public String id() {
-        return id;
+    public ServerPlugin {
+        Objects.requireNonNull(id, "id");
+        id = normalize(id);
+        if (!ID_PATTERN.matcher(id).matches()) {
+            throw new IllegalArgumentException("invalid server plugin id: " + id);
+        }
     }
 
     public static Set<ServerPlugin> parseList(String value) {
@@ -31,13 +34,19 @@ public enum ServerPlugin {
     }
 
     public static ServerPlugin parse(String value) {
-        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        String normalized = normalize(value);
         if ("admin-web".equals(normalized)) {
             return ADMIN_HTTP;
         }
-        return Arrays.stream(values())
-                .filter(plugin -> plugin.id.equals(normalized))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("unsupported server plugin: " + value));
+        if (ADMIN_HTTP.id.equals(normalized)) return ADMIN_HTTP;
+        if (METRICS_PROMETHEUS.id.equals(normalized)) return METRICS_PROMETHEUS;
+        return new ServerPlugin(normalized);
+    }
+
+    private static String normalize(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("server plugin id must not be blank");
+        }
+        return value.trim().toLowerCase(Locale.ROOT);
     }
 }

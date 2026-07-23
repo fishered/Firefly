@@ -5,8 +5,13 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.time.Duration;
+import java.time.Clock;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -78,6 +83,71 @@ class NettyExecutorClientHaTest {
             assertTrue(gateway.connectionRegistry().list("billing-executor").isEmpty());
         } finally {
             client.close();
+        }
+    }
+
+    @Test
+    void repeatedRegistrationRejectionWarnsOnceAndKeepsBackoffState() throws Exception {
+        int gatewayPort = freePort();
+        NettyExecutorGateway gateway = new NettyExecutorGateway(
+                gatewayPort,
+                new com.firefly.executor.InMemoryExecutorRegistry(),
+                new NettyExecutorConnectionRegistry(),
+                Clock.systemUTC(),
+                new com.firefly.catalog.InMemorySchedulerCatalog(),
+                true,
+                "local",
+                new com.firefly.execution.InMemoryExecutionRepository(),
+                (executionId, acknowledgedAt) -> { },
+                "expected-token"
+        );
+        java.util.logging.Logger logger = java.util.logging.Logger.getLogger(NettyExecutorClient.class.getName());
+        Level previousLevel = logger.getLevel();
+        boolean previousParentHandlers = logger.getUseParentHandlers();
+        CopyOnWriteArrayList<LogRecord> records = new CopyOnWriteArrayList<>();
+        Handler recorder = new Handler() {
+            @Override
+            public void publish(LogRecord record) {
+                records.add(record);
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        recorder.setLevel(Level.ALL);
+        logger.setLevel(Level.ALL);
+        logger.setUseParentHandlers(false);
+        logger.addHandler(recorder);
+
+        gateway.start();
+        try (gateway;
+             NettyExecutorClient client = NettyExecutorClient.builder()
+                     .gatewayAddresses(List.of("127.0.0.1:" + gatewayPort))
+                     .executorName("billing-executor")
+                     .serviceName("billing-service")
+                     .authToken("wrong-token")
+                     .reconnectInitialDelay(Duration.ofMillis(10))
+                     .reconnectMaxDelay(Duration.ofMillis(40))
+                     .build()) {
+            client.start();
+            await(() -> records.stream().anyMatch(record -> record.getMessage().contains("attempt=2")),
+                    Duration.ofSeconds(3));
+
+            long warnings = records.stream()
+                    .filter(record -> record.getLevel().intValue() >= Level.WARNING.intValue())
+                    .filter(record -> record.getMessage().contains("executor registration rejected"))
+                    .count();
+            assertEquals(1, warnings);
+            assertEquals(0, client.connectedGatewayCount());
+        } finally {
+            logger.removeHandler(recorder);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousParentHandlers);
         }
     }
 

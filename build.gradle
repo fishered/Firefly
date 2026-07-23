@@ -38,6 +38,7 @@ subprojects {
 
 def publishedProjects = [
         ":libs:scheduler-core",
+        ":plugins:plugin-api",
         ":transports:netty",
         ":clients:executor-netty",
         ":integrations:firefly-spring-boot-autoconfigure",

@@ -20,7 +20,7 @@ public record AdminUser(
         }
         if (passwordHash == null || passwordHash.isBlank()) throw new IllegalArgumentException("passwordHash must not be blank");
         roles = Set.copyOf(Objects.requireNonNull(roles, "roles"));
-        if (roles.isEmpty() || roles.contains(FireflyRole.EXECUTOR)) {
+        if (roles.isEmpty()) {
             throw new IllegalArgumentException("Admin user roles must contain READER, OPERATOR, or ADMIN");
         }
         if (version < 0) throw new IllegalArgumentException("version must not be negative");

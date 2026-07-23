@@ -57,6 +57,16 @@ public final class InMemoryNodeRegistry implements NodeRegistry {
     }
 
     @Override
+    public boolean markOnline(String nodeId) {
+        synchronized (lock) {
+            FireflyNode current = nodes.get(nodeId);
+            if (current == null) return false;
+            nodes.put(nodeId, copyWith(current, current.lastHeartbeatAt(), NodeStatus.ONLINE));
+            return true;
+        }
+    }
+
+    @Override
     public boolean markDraining(String nodeId) {
         synchronized (lock) {
             FireflyNode current = nodes.get(nodeId);

@@ -29,6 +29,11 @@ final class JdbcSchemaTest {
              ResultSet resultSet = connection.getMetaData().getTables(null, null, "FIREFLY_JOB", null)) {
             assertTrue(resultSet.next());
         }
+        try (Connection connection = dataSource.getConnection();
+             ResultSet resultSet = connection.getMetaData().getTables(
+                     null, null, "FIREFLY_INTEGRATION_KEY", null)) {
+            assertTrue(resultSet.next());
+        }
     }
 
     @Test
@@ -263,9 +268,9 @@ final class JdbcSchemaTest {
 
     @Test
     void loadsDialectScripts() {
-        assertEquals(37, JdbcSchemaScript.load(JdbcDialect.H2).size());
-        assertEquals(37, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
-        assertEquals(26, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
+        assertEquals(39, JdbcSchemaScript.load(JdbcDialect.H2).size());
+        assertEquals(39, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
+        assertEquals(28, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
     }
 
     private DataSource rawH2DataSource() {

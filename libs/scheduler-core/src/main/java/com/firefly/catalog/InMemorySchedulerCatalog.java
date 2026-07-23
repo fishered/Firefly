@@ -45,6 +45,13 @@ public final class InMemorySchedulerCatalog implements SchedulerCatalog {
     }
 
     @Override
+    public boolean deleteExecutor(String name) {
+        synchronized (lock) {
+            return executors.remove(name) != null;
+        }
+    }
+
+    @Override
     public void saveJobGroup(JobGroupDefinition group) {
         Objects.requireNonNull(group, "group");
         synchronized (lock) {
@@ -56,6 +63,15 @@ public final class InMemorySchedulerCatalog implements SchedulerCatalog {
     public Optional<JobGroupDefinition> findJobGroup(String groupId) {
         synchronized (lock) {
             return Optional.ofNullable(groups.get(groupId));
+        }
+    }
+
+    @Override
+    public List<JobGroupDefinition> listJobGroups() {
+        synchronized (lock) {
+            return groups.values().stream()
+                    .sorted(Comparator.comparing(JobGroupDefinition::id))
+                    .toList();
         }
     }
 
