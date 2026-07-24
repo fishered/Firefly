@@ -1,119 +1,350 @@
-# Firefly
+<p align="center">
+  <img src="ui/admin/public/firefly-mark.svg" width="88" alt="Firefly Logo">
+</p>
 
-[English](README_EN.md)
+<h1 align="center">Firefly</h1>
 
-Firefly 是一个基于 Java 21 的轻量级定时调度服务。
+<p align="center">
+  面向 Java 21 的轻量级分布式任务调度平台。<br>
+  关注准时调度、可靠投递、弹性执行器、高可用与低成本集成。
+</p>
 
-萤火虫会在黑暗中带来星点光亮与希望。Firefly 也希望做类似的事情：在正确的时间点亮正确的任务，让调度系统保持轻量、清晰、可靠，并为后续的分布式能力留下自然的生长空间。
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-0f766e">
+  <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
+  <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
+</p>
 
-## 项目定位
+<p align="center">
+  <a href="https://fishered.github.io/firefly-home/">官方网站</a> ·
+  <a href="https://fishered.github.io/firefly-home/guide/quick-start">快速开始</a> ·
+  <a href="https://fishered.github.io/firefly-home/guide/integration">集成文档</a> ·
+  <a href="https://fishered.github.io/firefly-home/reference/admin-api">Admin API</a> ·
+  <a href="README_EN.md">English</a>
+</p>
 
-Firefly 关注三个核心目标：
+---
 
-- **时区正确**：任务显式声明 IANA `ZoneId`，cron 按任务本地时间计算，运行态游标统一使用 UTC `Instant`。
-- **核心轻量**：`scheduler-core` 保持纯 Java，不依赖 Spring、Guice、HTTP、数据库或特定运行时。
-- **易于扩展**：存储、执行器协议、管理 API、集群能力都可以作为独立模块逐步演进。
+## Firefly 是什么
+
+Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责计算触发时间并生成可靠投递记录，Gateway 负责维护执行器长连接和路由，业务服务只需引入 Starter 并声明任务方法。API、Gateway、Scheduler 可以运行在同一进程，也可以按角色拆分为多个节点。
+
+它适合以下场景：
+
+- Spring Boot 服务中的周期任务和后台作业
+- 需要广播、分片、选举单次执行或多实例路由的任务
+- 需要执行记录、失败重试、超时、取消和审计的调度平台
+- 依赖 PostgreSQL 共享状态并要求节点故障接管的调度集群
+- 希望保留轻量核心，同时按需启用管理 API、Metrics 和外部插件的系统
 
 ## 核心能力
 
-- Java 21
-- Gradle 多模块构建
-- Gradle Wrapper 固定构建环境
-- `libs/scheduler-core` 纯 Java 调度核心
-- `server` 模块使用 Guice 做对象装配
-- 传统 Java 项目的嵌入式集成门面
-- Spring Boot Starter 自动装配入口
-- Netty 长连接远程执行器基础实现
-- JDBC 持久化存储：任务定义、nextFireTime CAS、节点注册、心跳、shard lease、fencing token
-- 插件 SPI：可选组件通过独立插件接入，不硬编码到调度核心
-- Admin HTTP API 与独立 Node Admin UI：管理接口和运维页面分离
-- Prometheus Metrics 插件：独立 `/metrics` 文本指标端点
-- Server CLI 占位模块
-- 内存版任务仓库
-- 任务级 IANA 时区支持
-- 6 位 cron：秒 分 时 日 月 周
-- fixed-rate 调度
-- misfire 策略：`SKIP`、`FIRE_ONCE`、`CATCH_UP`
-- 并发策略：`ALLOW`、`FORBID`
-- 本地任务处理器注册表
-- 单元测试覆盖 cron、时区、DST、仓库 CAS、misfire 行为和 Guice 装配
+| 领域 | 能力 |
+| --- | --- |
+| 时间语义 | 6 位 Cron、fixed-rate、任务级 IANA `ZoneId`、DST 处理、UTC `Instant` 游标 |
+| 补偿策略 | `SKIP`、`FIRE_ONCE`、`CATCH_UP`，支持补偿次数上限和 misfire grace |
+| 并发控制 | `ALLOW`、`FORBID`，避免同一任务不受控地重叠执行 |
+| 分发模式 | `UNICAST`、`BROADCAST`、`SHARDING` |
+| 路由策略 | `ROUND_ROBIN`、`RANDOM`、`CONSISTENT_HASH` |
+| 完成策略 | `ALL_SUCCESS`、`ANY_SUCCESS`、`QUORUM` |
+| 失败处理 | 发送 ACK、超时、业务重试、失败目标重试、死信与手动重放 |
+| 高可用 | 节点心跳、Scheduler 分片、租约、fencing token、数据库时钟校准 |
+| 可靠投递 | execution 与事务 Outbox 同库持久化，Gateway 按角色领取并回写结果 |
+| 执行器 | Netty 长连接、多 Gateway、自动重连、心跳、优雅注销、实例隔离 |
+| 集成 | 单一 Spring Boot Starter、注解任务发现、启动任务同步、传统 Java 嵌入式 API |
+| 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
+| 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
 
-## 项目结构
+## 架构
 
-```text
-firefly
-├── libs
-│   └── scheduler-core     # 纯调度核心，不依赖 Guice/Spring
-├── server                 # 启动入口和 Guice 装配
-├── integrations
-│   ├── embedded           # 传统 Java / 非 Spring 集成
-│   ├── firefly-spring-boot-starter
-│   ├── spring-boot-starter
-│   └── server-cli
-├── executors
-│   └── netty              # 远程执行器长连接实现
-├── stores
-│   └── jdbc               # JDBC 任务仓库和 HA 协调存储
-├── plugins
-│   ├── plugin-api         # 插件 SPI 和生命周期管理
-│   └── metrics-prometheus # Prometheus 文本指标插件
-├── docs
-│   ├── deployment.md      # 镜像构建和容器部署
-│   ├── integration.md     # 集成方案
-│   ├── ha-cluster.md
-│   ├── netty-executor.md
-│   ├── plugins.md
-│   ├── scheduler-center.md
-│   └── timezone.md        # 时区和 DST 语义
-├── skills                 # 项目专属协作规则
-├── gradle/wrapper
-├── build.gradle
-├── settings.gradle
-├── gradlew
-└── gradlew.bat
+```mermaid
+flowchart LR
+    UI["Admin UI<br/>Node.js"] -->|HTTP| API
+    APP["业务服务<br/>Spring Boot Starter"] -->|任务同步| API
+    APP <-->|Netty 注册 / 调度 / 结果| GW
+
+    subgraph CLUSTER["Firefly 节点或集群"]
+        API["API<br/>管理与认证"]
+        SCH["Scheduler<br/>时间计算与分片"]
+        GW["Gateway<br/>连接与路由"]
+        SCH -->|生成 execution + outbox| DB
+        GW -->|领取 outbox / 保存结果| DB
+        API -->|任务、执行器与运维操作| DB
+    end
+
+    DB[("PostgreSQL / H2")]
+    METRICS["Prometheus"] <-->|scrape| CLUSTER
 ```
 
-推荐按能力边界继续扩展目录：
+默认 standalone 节点同时承担 `API`、`GATEWAY`、`SCHEDULER` 三个角色。集群模式下，多个节点共享 PostgreSQL，并通过分片租约和 fencing token 防止旧节点继续提交过期结果。
 
-```text
-transports/http
-apis/admin-http
-plugins/xxx
-```
+## 五分钟本地启动
 
-## 快速开始
-
-环境要求：
+### 环境要求
 
 - JDK 21
+- Node.js 18 或更高版本，用于运行 Admin UI
+- Docker Desktop，可选
+- PostgreSQL，可选；首次体验推荐 H2
 
-运行测试：
+### 1. 获取项目并运行测试
+
+```powershell
+git clone https://github.com/fishered/Firefly.git
+cd Firefly
+.\gradlew.bat test
+```
+
+Linux 或 macOS：
 
 ```bash
 ./gradlew test
 ```
 
-Windows：
+### 2. 使用 H2 启动 Firefly Server
 
 ```powershell
-.\gradlew.bat test
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=h2"
 ```
 
-运行 demo server：
-
-```bash
-./gradlew :server:launcher:run
-```
-
-Windows：
+H2 profile 使用 `./data/firefly` 文件存储，默认关闭 JWT，适合本地开发。只做临时验证时也可以使用 memory profile：
 
 ```powershell
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=memory"
+```
+
+memory profile 在进程退出后丢失全部数据。
+
+希望启动后立即看到内置示例任务，可以同时启用 demo：
+
+```powershell
+.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=h2 --firefly.demo.enabled=true"
+```
+
+### 3. 启动 Admin UI
+
+打开第二个终端：
+
+```powershell
+cd ui\admin
+npm start
+```
+
+访问以下地址：
+
+| 服务 | 地址 | 用途 |
+| --- | --- | --- |
+| Admin UI | <http://127.0.0.1:9720> | 任务、执行器、执行记录、节点、插件和配置 |
+| Admin API | <http://127.0.0.1:9710/api/health> | 管理 API 与健康检查 |
+| Metrics | <http://127.0.0.1:9711/metrics> | Prometheus 文本指标 |
+| Executor Gateway | `127.0.0.1:9700` | 业务执行器 Netty 连接 |
+
+H2 和 memory 默认关闭认证，Admin UI 会直接创建带 CSRF 和空闲超时保护的本地会话。`pg` profile 默认开启认证；新数据库初始化账号为 `admin/admin`，首次登录后应立即修改密码。
+
+## 使用 PostgreSQL
+
+PostgreSQL 是生产部署和集群模式的推荐共享存储。启动 Server 前设置：
+
+```powershell
+$env:FIREFLY_CONFIG_PROFILE='pg'
+$env:FIREFLY_STORE_TYPE='jdbc'
+$env:FIREFLY_JDBC_URL='jdbc:postgresql://127.0.0.1:5432/firefly'
+$env:FIREFLY_JDBC_USERNAME='postgres'
+$env:FIREFLY_JDBC_PASSWORD='your-database-password'
+$env:FIREFLY_JDBC_DIALECT='postgresql'
+$env:FIREFLY_JDBC_SCHEMA_MODE='initialize-if-empty'
+$env:FIREFLY_SECURITY_JWT_SECRET='replace-with-a-long-random-secret'
+
 .\gradlew.bat :server:launcher:run
 ```
 
-在项目根目录启动时会自动加载 `config/firefly-server.properties`。当前默认 profile 是 `pg`，会启用 Admin HTTP、Prometheus Metrics、Netty executor gateway，并使用本地 PostgreSQL 持久化；demo 任务仍然默认关闭。
+Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任务、执行记录和密钥不会在普通重启时被覆盖。
 
-节点职责由 `firefly.node.roles` 指定。默认配置是单进程全角色：
+配置优先级为：
+
+```text
+命令行参数 > 环境变量 > profile 配置 > 主配置文件 > 代码默认值
+```
+
+内置 profile：
+
+| Profile | 存储 | 默认认证 | 适用场景 |
+| --- | --- | --- | --- |
+| `pg` | PostgreSQL JDBC | 开启 | 持久化部署、集群和高可用 |
+| `h2` | 本地 H2 文件 | 关闭 | 本地开发、功能验证 |
+| `memory` | 进程内存 | 关闭 | 单元测试、短时实验 |
+
+## Docker 部署
+
+仓库提供两个独立镜像：
+
+| 镜像 | 容器端口 | 职责 |
+| --- | --- | --- |
+| `firefly/firefly-server:1.0.0` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.0.0` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+
+准备配置并启动：
+
+```powershell
+Copy-Item .env.example .env
+# 根据数据库位置修改 .env 中的 FIREFLY_JDBC_URL、用户名、密码和 JWT secret
+docker compose up -d --build
+docker compose ps
+```
+
+数据库地址取决于部署位置：
+
+| PostgreSQL 位置 | JDBC 主机名示例 |
+| --- | --- |
+| Compose 中名为 `postgres` 的服务 | `jdbc:postgresql://postgres:5432/firefly` |
+| Docker Desktop 宿主机 | `jdbc:postgresql://host.docker.internal:5432/firefly` |
+| 同一 Docker 网络中的独立容器 | 使用该容器的服务名或网络别名 |
+| 外部数据库 | 使用容器可达的 DNS 名称或 IP |
+
+容器中的 `127.0.0.1` 指向容器自身，不能用来访问宿主机 PostgreSQL。
+
+常用命令：
+
+```powershell
+docker compose logs -f firefly-server
+docker compose logs -f firefly-admin-ui
+docker compose restart firefly-server firefly-admin-ui
+docker compose down
+```
+
+完整说明见[部署文档](https://fishered.github.io/firefly-home/guide/deployment)。
+
+## Spring Boot 快速集成
+
+### 1. 安装当前版本到 Maven Local
+
+在开发仓库执行：
+
+```powershell
+.\gradlew.bat publishToMavenLocal
+```
+
+### 2. 引入唯一 Starter
+
+```xml
+<dependency>
+    <groupId>com.firefly</groupId>
+    <artifactId>firefly-spring-boot-starter</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+业务项目只需要这个 Starter。Netty 客户端、处理器发现、任务同步、心跳、重连和 Spring 生命周期均由自动配置完成。
+
+### 3. 生成 Integration Key
+
+打开 Admin UI 的“配置”页面，生成 Integration Key。明文只返回一次，服务端只保存摘要。该密钥只用于：
+
+- Executor 向 Gateway 注册
+- Starter 在启动时查询、创建或更新声明式任务
+
+Integration Key 不能执行 Admin 用户管理、手动触发、节点排空等管理操作。
+
+### 4. 配置业务服务
+
+```yaml
+spring:
+  application:
+    name: billing-service
+
+firefly:
+  executor:
+    name: billing-executor
+    gateway-addresses:
+      - 127.0.0.1:9700
+    integration-key: ${FIREFLY_INTEGRATION_KEY}
+    job-registration:
+      admin-url: http://127.0.0.1:9710
+      update-existing: false
+      fail-fast: false
+```
+
+生产环境可以配置多个 Gateway 地址。Executor 会同时维护连接，并在断线后指数退避重连和重新注册。
+
+### 5. 声明任务
+
+```java
+import com.firefly.domain.ExecutionContext;
+import com.firefly.spring.annotation.FireflyJob;
+import org.springframework.stereotype.Component;
+
+@Component
+public class BillingJobs {
+
+    @FireflyJob(
+            name = "每日账单处理",
+            cron = "0 0 2 * * *",
+            zoneId = "Asia/Shanghai",
+            parameters = {
+                    "tenant=primary",
+                    "source=billing-service"
+            }
+    )
+    public void billingHandler(ExecutionContext context) {
+        System.out.println("jobId=" + context.jobId());
+        System.out.println("executionId=" + context.executionId());
+        System.out.println("parameters=" + context.parameters());
+    }
+}
+```
+
+Starter 使用全限定类名和方法名自动生成入口与任务 ID，例如：
+
+```text
+com.example.billing.BillingJobs#billingHandler
+```
+
+因此不需要手工维护全局任务 ID 或处理器名称。任务方法必须返回 `void`，并使用以下任一签名：
+
+```java
+public void billingHandler()
+
+public void billingHandler(ExecutionContext context)
+```
+
+`ExecutionContext` 提供 `executionId`、`rootExecutionId`、重试次数、任务 ID、时间点和参数。业务副作用应以 `rootExecutionId` 或稳定业务键实现幂等。
+
+## 其他集成入口
+
+| 场景 | 模块或命令 | 说明 |
+| --- | --- | --- |
+| 传统 Java 嵌入式调度 | `integrations:embedded` | 在当前 JVM 中创建 `FireflyScheduler` 并注册任务与处理器 |
+| 嵌入式最小示例 | `.\gradlew.bat :examples:embedded-basic:run` | 不依赖 Spring 或远程 Gateway |
+| 原生 Netty Executor | `clients:executor-netty` | 适合自行管理客户端生命周期的 Java 服务 |
+| Netty 最小示例 | `.\gradlew.bat :examples:netty-executor-basic:run` | 连接已启动的 `127.0.0.1:9700` Gateway |
+
+Spring Boot 是业务服务的推荐接入方式；Embedded 更适合单进程应用和测试，原生 Netty Client 适合需要完全控制 Executor 生命周期的框架集成。
+
+## 一次任务如何执行
+
+```mermaid
+sequenceDiagram
+    participant App as Spring Boot Executor
+    participant API as Firefly API
+    participant Scheduler
+    participant DB as JDBC Store
+    participant Gateway
+
+    App->>Gateway: 使用 Integration Key 注册实例
+    App->>API: 同步 @FireflyJob 任务定义
+    Scheduler->>DB: 领取分片并扫描到期任务
+    Scheduler->>DB: 原子写入 execution 与 outbox
+    Gateway->>DB: 领取可投递 outbox
+    Gateway->>App: 发送执行请求
+    App-->>Gateway: ACK 与执行结果
+    Gateway->>DB: 更新 target、execution 与 outbox
+```
+
+任务重试会产生新的 attempt；`rootExecutionId` 在同一重试链中保持稳定。广播和分片默认只重试失败、超时或缺失目标，也可以显式配置 `ALL_TARGETS`。
+
+## 节点角色与高可用
+
+单节点默认配置：
 
 ```properties
 firefly.node.mode=standalone
@@ -121,154 +352,98 @@ firefly.node.name=firefly-standalone
 firefly.node.roles=api,gateway,scheduler
 ```
 
-`cluster` 模式必须使用 JDBC 共享存储，并且每个节点需要唯一的 `firefly.node.name`。
+集群模式要求：
 
-启用 5 秒 demo 任务：
+- 所有节点共享同一个 PostgreSQL 数据库
+- 每个节点使用唯一的 `firefly.node.name`
+- 所有节点使用一致的 shard count、JWT secret 和集群协议配置
+- Executor 配置多个 Gateway，或使用可达的负载均衡入口
+- 滚动下线前先执行节点排空，停止领取新任务并释放 Scheduler 分片
+- 业务处理器仍需对外部副作用实现幂等
+
+第一阶段推荐部署三个全角色节点：
+
+```properties
+firefly.node.mode=cluster
+firefly.node.name=firefly-node-1
+firefly.node.roles=api,gateway,scheduler
+```
+
+分片租约和 fencing token 用于避免旧 Scheduler 在失去所有权后继续推进任务；Outbox 的 claim owner 与 attempt fencing 用于避免投递租约过期后的迟到写入覆盖新节点状态。
+
+完整约束见 [JDBC 与 HA](https://fishered.github.io/firefly-home/features/ha-cluster)。
+
+## 项目结构
+
+```text
+firefly/
+├── libs/scheduler-core                  # 纯 Java 调度模型与核心算法
+├── server/runtime                       # Scheduler、Outbox、协调器运行时
+├── server/bootstrap                     # 配置解析、模块装配与生命周期
+├── server/launcher                      # 独立 Server 启动入口
+├── stores/jdbc                          # PostgreSQL、H2、MySQL schema 与仓储
+├── transports/netty                     # Gateway 协议、路由与跨 Gateway 转发
+├── clients/executor-netty               # 业务侧 Executor 客户端
+├── integrations/firefly-spring-boot-*   # Spring Boot Starter 与自动配置
+├── integrations/embedded                # 非 Spring 嵌入式集成
+├── apis/admin-http                      # Admin HTTP API
+├── ui/admin                             # 独立 Node Admin UI
+├── plugins/plugin-api                   # 插件 SPI 与生命周期
+├── plugins/metrics-prometheus           # Prometheus Metrics 插件
+├── examples                             # 最小集成示例
+└── config                               # 主配置与 pg/h2/memory profiles
+```
+
+调度核心不依赖 Spring、HTTP、Netty 或具体数据库。传输、存储、管理 API、UI 和 Metrics 通过独立模块组合。
+
+## 在线文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [快速开始](https://fishered.github.io/firefly-home/guide/quick-start) | 本地运行 Server、Admin UI 和示例任务 |
+| [集成方式](https://fishered.github.io/firefly-home/guide/integration) | Spring Boot、传统 Java、Executor 接入 |
+| [部署说明](https://fishered.github.io/firefly-home/guide/deployment) | Docker、镜像、节点角色和生产部署 |
+| [配置参考](https://fishered.github.io/firefly-home/reference/configuration) | Server、Scheduler、Gateway、JDBC 和安全配置 |
+| [组件总览](https://fishered.github.io/firefly-home/features/) | 模块边界和运行时组件 |
+| [调度核心](https://fishered.github.io/firefly-home/features/scheduler-core) | Cron、时区、misfire、并发和状态推进 |
+| [调度中心模型](https://fishered.github.io/firefly-home/features/scheduler-center) | 任务、执行器、实例与持久化边界 |
+| [Netty 执行器](https://fishered.github.io/firefly-home/features/netty-executor) | 注册、心跳、路由、重连和协议兼容 |
+| [JDBC 与 HA](https://fishered.github.io/firefly-home/features/ha-cluster) | 分片、租约、fencing、Outbox 和高可用 |
+| [插件体系](https://fishered.github.io/firefly-home/features/plugins) | 内置插件和外部插件加载 |
+| [Admin API](https://fishered.github.io/firefly-home/reference/admin-api) | 管理接口与操作权限 |
+| [Metrics](https://fishered.github.io/firefly-home/reference/metrics) | Prometheus 指标与监控建议 |
+| [数据库结构](https://fishered.github.io/firefly-home/reference/database-schema) | 全量 schema 和表职责 |
+
+## 验证与开发
+
+运行全部 Java 测试：
 
 ```powershell
-.\gradlew.bat :server:launcher:run --args="--firefly.demo.enabled=true"
+.\gradlew.bat test --no-daemon --no-parallel
 ```
 
-切换到 H2 本地文件存储：
+检查 Admin UI：
 
 ```powershell
-.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=h2"
+cd ui\admin
+npm run check
 ```
 
-切换到内存存储：
+构建 Server 分发包：
 
 ```powershell
-.\gradlew.bat :server:launcher:run --args="--firefly.config.profile=memory"
+.\gradlew.bat :server:launcher:installDist
 ```
 
-配置主文件位于 `config/firefly-server.properties`，差异化配置位于 `config/profiles/*.properties`。命令行参数和环境变量会覆盖配置文件中的值。
+构建 Docker 镜像：
 
-## 集成方式
-
-- 传统 Java 项目：使用 `integrations:embedded`，通过 `FireflyScheduler.create()` 嵌入。
-- Spring Boot 项目：使用 `integrations:spring-boot-starter`，声明 `FireflyJobRegistration` Bean。
-- 远程业务执行器：使用 `transports:netty`，业务服务主动连接调度中心 gateway，不需要业务侧开放监听端口。
-- 独立 server：`integrations:server-cli` 已保留入口，后续承载配置文件加载和独立进程运行。
-
-详细说明见 [docs/integration.md](docs/integration.md)。
-
-## 调度中心模型
-
-任务组、执行器、服务实例注册、心跳在线状态、持久化边界和远程触发协议见 [docs/scheduler-center.md](docs/scheduler-center.md)。
-
-Netty 远程执行器接入见 [docs/netty-executor.md](docs/netty-executor.md)。
-
-HA 节点角色、shard lease、fencing token 和 JDBC 存储见 [docs/ha-cluster.md](docs/ha-cluster.md)。
-
-JDBC store 和 schema 方言脚本见 [docs/jdbc-store.md](docs/jdbc-store.md)。
-
-插件体系、外部 JAR SPI、Admin HTTP 和 Prometheus Metrics 见 [docs/plugins.md](docs/plugins.md)。可选插件通过配置显式启用；Netty 是默认 Executor transport，不属于普通功能插件。
-
-模块边界和 executor/server 拆分方向见 [docs/module-boundaries.md](docs/module-boundaries.md)。
-
-镜像构建和容器节点角色配置见 [docs/deployment.md](docs/deployment.md)。
-
-示例程序见 [docs/examples.md](docs/examples.md)。
-
-## 任务示例
-
-```java
-JobDefinition job = JobDefinition.builder()
-        .id("demo-print-every-5s")
-        .name("Demo print every five seconds")
-        .handlerName("demoPrinter")
-        .schedule(new CronSchedule("*/5 * * * * *"))
-        .zoneId(ZoneId.of("Asia/Shanghai"))
-        .misfirePolicy(MisfirePolicy.FIRE_ONCE)
-        .misfireGrace(Duration.ofSeconds(2))
-        .concurrencyPolicy(ConcurrencyPolicy.FORBID)
-        .maxCatchUpCount(3)
-        .timeout(Duration.ofSeconds(10))
-        .enabled(true)
-        .build();
+```powershell
+docker build -t firefly/firefly-server:1.0.0 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.0.0 -f ui/admin/Dockerfile ui/admin
 ```
 
-## 时区语义
+提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。
 
-每个 cron 任务都有自己的显式 `ZoneId`。
+---
 
-```java
-JobDefinition job = JobDefinition.builder()
-        .id("new-york-daily-report")
-        .name("New York Daily Report")
-        .handlerName("reportHandler")
-        .schedule(new CronSchedule("0 0 9 * * *"))
-        .zoneId(ZoneId.of("America/New_York"))
-        .build();
-```
-
-这表示 `0 0 9 * * *` 会在纽约本地时间 09:00 执行，不依赖调度服务部署机器的默认时区。
-
-Firefly 的时间规则：
-
-- 运行态调度游标统一使用 UTC `Instant` 存储。
-- cron 表达式按 `JobDefinition.zoneId` 对应的本地时间计算。
-- 使用 IANA 时区，例如 `Asia/Shanghai`、`America/New_York`、`Europe/Berlin`。
-- 对需要遵循夏令时规则的业务调度，避免使用 `+08:00` 这类固定 offset。
-- 不使用 `ZoneId.systemDefault()` 表达任务语义。
-
-DST 行为：
-
-- 春季跳时导致不存在的本地时间会被跳过。
-- 秋季回拨导致重复出现的本地时间可以触发两次，分别对应两个真实 UTC 时刻。
-
-更多说明见 [docs/timezone.md](docs/timezone.md)。
-
-## 设计原则
-
-- **显式优先**：任务时间、misfire 策略、并发策略都应显式表达。
-- **核心克制**：调度核心只处理调度语义，不绑定 Web、存储、远程调用或 IOC 容器。
-- **模块演进**：新能力优先放进独立模块，通过接口连接核心。
-- **可测试性**：时间计算、仓储一致性、执行策略都应能用单元测试稳定验证。
-
-## 持续优化方向
-
-1. 轻量 HTTP 管理 API。
-2. JSON/YAML 任务定义加载。
-3. 执行历史和 token-aware runtime state。
-4. 执行历史和状态流转。
-5. 远程执行器鉴权、TLS、路由策略。
-6. 调度分片与本地 TimingIndex 加载。
-7. tracing 和更完整的插件发现机制。
-
-## 名字
-
-Firefly 的意思是“萤火虫”。
-
-它轻、小、安静，却能在需要的时候准时发光。未来当调度节点分布在不同机器、不同地域、不同业务服务中时，每个节点都像一点微光，共同组成一个稳定、有秩序的任务网络。
-
-## Admin API 与 UI 约定
-
-Admin HTTP 是可选管理 API，Admin UI 是独立 Node 服务。页面资源不放进 scheduler core，也不随 Admin HTTP jar 内嵌。
-
-- Java 入口：apis/admin-http/src/main/java/com/firefly/api/admin/http/AdminHttpPlugin.java
-- Node UI：ui/admin
-- 页面路由：/、/jobs、/executors、/nodes
-- JSON 接口：/api/health、/api/overview、/api/jobs、/api/executors、/api/nodes
-
-默认启动方式是先启动 Firefly server，再进入 `ui/admin` 执行 `npm start`。Node UI 默认监听 `127.0.0.1:9720`，并将 `/api/*` 代理到 `FIREFLY_ADMIN_API`，默认值为 `http://127.0.0.1:9710`。
-
-不要把完整 HTML 页面内嵌到 Java text block 中；新增管理接口进入 `apis/admin-http`，前端页面与 Node 服务进入 `ui/admin`。
-
-## 目标模块边界
-
-Firefly 后续按运行时、API、UI、传输和客户端拆分模块：
-
-`	ext
-libs/scheduler-core        调度核心，纯 Java
-server                     运行时装配、启动、生命周期
-apis/admin-model          Admin DTO 和 ViewModel
-apis/admin-http           Admin HTTP API
-ui/admin                  Node 前端工程
-plugins/plugin-api        插件 SPI
-plugins/metrics-prometheus Prometheus 指标插件
-transports/netty          Netty 协议与传输
-clients/executor-netty    业务侧执行器 SDK
-`
-
-原则上，Admin UI 作为独立 Node 前端演进；Admin API 属于 server/API 层。`apis/admin-http` 和 `ui/admin` 是长期分离的 API/UI 模块。
+Firefly 的目标不是堆叠调度概念，而是让任务在正确的时间被可靠地交给正确的执行实例，并让部署、集成和故障恢复保持清晰。

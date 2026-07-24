@@ -62,11 +62,10 @@ public record ServerOptions(
             throw new IllegalArgumentException("firefly.node.mode=cluster requires firefly.store.type=jdbc");
         }
         if (nodeMode == ServerNodeMode.CLUSTER
-                && (runtimeOptions.jwtSecurity().usesDevelopmentCredentials()
-                || runtimeOptions.adminSecurity().usesDevelopmentCredentials())) {
+                && runtimeOptions.jwtSecurity().usesDevelopmentCredentials()) {
             throw new IllegalArgumentException(
                     "firefly.node.mode=cluster rejects bundled development security credentials; "
-                            + "configure the JWT secret and Admin bootstrap password"
+                            + "configure the JWT secret"
             );
         }
         if (adminHttpEnabled != nodeRoles.contains(ServerNodeRole.API)) {
@@ -375,15 +374,7 @@ public record ServerOptions(
                         durationOption(flags, env, config, "firefly.scheduler.max-idle-wakeup",
                                 "FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", Duration.ofMillis(500))
                 ),
-                jwtSecurityOptions(flags, env, config),
-                new AdminSecurityOptions(
-                        stringOption(flags, env, config,
-                                "firefly.security.admin.bootstrap-username",
-                                "FIREFLY_SECURITY_ADMIN_BOOTSTRAP_USERNAME", ""),
-                        stringOption(flags, env, config,
-                                "firefly.security.admin.bootstrap-password",
-                                "FIREFLY_SECURITY_ADMIN_BOOTSTRAP_PASSWORD", "")
-                )
+                jwtSecurityOptions(flags, env, config)
         );
     }
 

@@ -18,3 +18,4 @@ target/
 Thumbs.db
 .DS_Store
 
+.env

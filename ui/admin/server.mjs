@@ -38,7 +38,7 @@ createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/ui/auth/session') {
-      sessionStatus(req, res);
+      await sessionStatus(req, res);
       return;
     }
     if (url.pathname === '/ui/auth/logout') {
@@ -55,6 +55,10 @@ createServer(async (req, res) => {
         sessionIdleTimeoutSeconds: Math.floor(sessionIdleTimeoutMs / 1000),
         startedAt
       });
+      return;
+    }
+    if (url.pathname === '/ui/health') {
+      respondJson(res, 200, { status: 'UP', service: 'firefly-admin-ui', startedAt });
       return;
     }
     if (url.pathname.startsWith('/api/')) {
@@ -122,15 +126,58 @@ async function login(req, res) {
   }
 }
 
-function sessionStatus(req, res) {
+async function sessionStatus(req, res) {
   if (req.method !== 'GET') {
     respondJson(res, 405, { error: 'method_not_allowed' });
     return;
   }
-  const session = authenticatedSession(req, res, false, true);
-  if (!session) return;
+  let session = currentSession(req);
+  if (!session && !await adminAuthenticationEnabled()) {
+    session = createLocalSession();
+    respondJson(res, 200, sessionView(session), {
+      'Set-Cookie': sessionCookie(session.id, Math.floor((session.expiresAt - Date.now()) / 1000))
+    });
+    return;
+  }
+  if (!session) {
+    respondJson(res, 200, { authenticated: false }, { 'Set-Cookie': clearSessionCookie() });
+    return;
+  }
   touchSession(session);
   respondJson(res, 200, sessionView(session), sessionResponseHeaders(session));
+}
+
+async function adminAuthenticationEnabled() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), apiTimeoutMs);
+  try {
+    const response = await fetch(new URL('/api/auth/config', `${apiBase}/`), {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal
+    });
+    if (!response.ok) return true;
+    const body = await response.json().catch(() => ({}));
+    return body.enabled !== false;
+  } catch {
+    return true;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function createLocalSession() {
+  const now = Date.now();
+  const session = {
+    id: randomBytes(32).toString('base64url'),
+    csrfToken: randomBytes(24).toString('base64url'),
+    subject: 'local-admin',
+    accessToken: '',
+    createdAt: now,
+    lastAccessAt: now,
+    expiresAt: now + Math.max(sessionIdleTimeoutMs, 24 * 60 * 60 * 1000)
+  };
+  sessions.set(session.id, session);
+  return session;
 }
 
 function logout(req, res) {
@@ -271,24 +318,32 @@ function proxyHeaders(req, session) {
   }
   if (apiToken) {
     headers['X-Firefly-Token'] = apiToken;
-  } else {
+  } else if (session.accessToken) {
     headers.Authorization = `Bearer ${session.accessToken}`;
   }
   return headers;
 }
 
 function authenticatedSession(req, res, touch, allowAnonymous = false) {
-  const id = cookies(req.headers.cookie ?? '')[sessionCookieName];
-  const session = id ? sessions.get(id) : null;
-  const now = Date.now();
-  if (!session || session.expiresAt <= now || session.lastAccessAt + sessionIdleTimeoutMs <= now) {
-    if (session) invalidateSession(session.id);
+  const session = currentSession(req);
+  if (!session) {
     respondJson(res, allowAnonymous ? 200 : 401,
       allowAnonymous ? { authenticated: false } : { error: 'ui_session_expired' },
       { 'Set-Cookie': clearSessionCookie() });
     return null;
   }
   if (touch) touchSession(session);
+  return session;
+}
+
+function currentSession(req) {
+  const id = cookies(req.headers.cookie ?? '')[sessionCookieName];
+  const session = id ? sessions.get(id) : null;
+  const now = Date.now();
+  if (!session || session.expiresAt <= now || session.lastAccessAt + sessionIdleTimeoutMs <= now) {
+    if (session) invalidateSession(session.id);
+    return null;
+  }
   return session;
 }
 
@@ -299,6 +354,7 @@ function touchSession(session) {
 function sessionView(session) {
   return {
     authenticated: true,
+    authenticationEnabled: Boolean(session.accessToken),
     subject: session.subject,
     csrfToken: session.csrfToken,
     createdAt: new Date(session.createdAt).toISOString(),

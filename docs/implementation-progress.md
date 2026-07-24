@@ -150,13 +150,15 @@ DELETE /api/executor-definitions/{executorName}
 - 独立 Admin UI 已放在 `ui/admin`，Node 服务默认监听 `127.0.0.1:9720`，并将浏览器侧 `/api/*` 代理到 Java Admin HTTP API。
 - Admin UI 的新建/编辑任务已接入可视化 Cron 规则生成器和服务端解析预览，支持按秒、分钟、小时、日、周、月及自定义表达式，并展示未来 5 次本地触发时间；时区使用可输入下拉框，通过 JVM IANA `ZoneId` 列表做模糊匹配、键盘选择和提交校验。
 - Admin UI 已增加服务端登录会话：JWT 仅保存在 UI Node 进程内存，浏览器使用 HttpOnly/SameSite Cookie；支持默认 30 分钟空闲过期、JWT 绝对过期、会话倒计时、退出、CSRF 校验、登录失败限流和 `401` 自动返回登录页。
-- Admin 人类账号由 schema v10 的 `firefly_user` 持久化，密码使用随机盐 PBKDF2-HMAC-SHA256；`/api/auth/login` 查表登录，`/api/users` 提供 ADMIN 级 CRUD、`version` CAS、自删/自禁用保护和最后一个启用 Admin 保护。引导账号只在不存在时创建，重启不会覆盖密码。
+- Admin 人类账号由 `firefly_user` 持久化，密码使用 PBKDF2-HMAC-SHA256；全量 schema 初始化幂等创建默认账号 `admin/admin`，运行时不再读取 bootstrap 用户配置。`/api/auth/login` 查表登录，`/api/users` 提供 ADMIN 级 CRUD、`version` CAS、自删/自禁用保护和最后一个启用 Admin 保护。
+- `pg` profile 默认启用 JWT，`h2` 和 `memory` 默认关闭；Admin UI 会读取 `/api/auth/config`，认证关闭时自动创建带 CSRF 和空闲超时保护的本地会话，不再要求无意义的登录。
 - Admin UI 的“账号与安全”页已接入用户列表、新建、角色调整、启停、密码重置和删除；密码摘要不会返回前端，禁用或角色变更会使旧用户 JWT 立即失效。
 - schema v11 增加 `firefly_integration_key`。Starter/Executor 不再使用机器 JWT、client secret、角色或 executor scope；Gateway 注册和启动任务同步统一校验 Integration Key。数据库只保存 PBKDF2 摘要，`POST /api/integration-key` 轮换时明文只返回一次。
 - Integration Key 仅能注册 Executor，以及查询、创建、更新启动任务定义，不能触发任务或调用用户、节点和其他运维 API。Admin UI 已提供状态、版本、更新时间、生成/轮换和一次性复制。
 - Admin UI 已提供中文、英文切换，语言选择保存在浏览器本地；导航、表格、表单、对话框、提示、错误和动态状态均使用同一翻译入口，切换语言不会重新请求业务数据。
 - UI 数据加载已按页面拆分，页面切换优先显示缓存并只请求当前页面依赖的接口；5 秒新鲜度窗口避免重复读取，并发的相同 GET 请求会自动合并。手动刷新和写操作完成后仍会强制读取最新数据。
 - Node UI 服务在内存中缓存静态资源并生成内容 ETag，支持浏览器 `304`；API 代理改为流式转发响应，安全方法不再读取无意义的请求体。
+- Docker 部署已拆为 `firefly-server` 和 `firefly-admin-ui` 两个独立镜像；Compose 同时编排 PostgreSQL，运行配置集中在 `.env`，支持从源码构建或从私有仓库直接拉取。两个应用容器均使用非 root 用户和健康检查，前端通过容器 DNS 代理 Admin API。
 - 当前 UI 页面模块包括：
 
 ```text

@@ -1,5 +1,6 @@
 package com.firefly.security;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -7,6 +8,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class InMemoryAdminUserRepository implements AdminUserRepository {
     private final ConcurrentHashMap<String, AdminUser> users = new ConcurrentHashMap<>();
+
+    public InMemoryAdminUserRepository() {
+        AdminUser admin = DefaultAdminUser.at(Instant.EPOCH);
+        users.put(admin.username(), admin);
+    }
 
     @Override
     public Optional<AdminUser> find(String username) {

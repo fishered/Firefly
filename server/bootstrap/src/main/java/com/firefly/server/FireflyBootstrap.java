@@ -84,8 +84,7 @@ public final class FireflyBootstrap implements AutoCloseable {
     }
 
     public static FireflyBootstrap start(ServerOptions options) {
-        if (options.runtimeOptions().jwtSecurity().usesDevelopmentCredentials()
-                || options.runtimeOptions().adminSecurity().usesDevelopmentCredentials()) {
+        if (options.runtimeOptions().jwtSecurity().usesDevelopmentCredentials()) {
             log.warning("Firefly is using bundled local-development security credentials; "
                     + "replace them before any non-local deployment");
         }
@@ -112,7 +111,6 @@ public final class FireflyBootstrap implements AutoCloseable {
                     injector.getInstance(java.util.concurrent.ExecutorService.class);
             startup.add("worker pool", workerPool);
 
-            bootstrapAdminUser(assembly.adminUserRepository(), options.runtimeOptions().adminSecurity(), runtimeClock);
             registerNode(nodeRegistry, options, runtimeClock, NodeStatus.STARTING);
             startup.add("node registration", () -> nodeRegistry.markOffline(options.nodeName()));
             java.util.function.BooleanSupplier acceptingNewWork = () -> nodeRegistry.find(options.nodeName())
@@ -317,32 +315,6 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new com.firefly.store.jdbc.JdbcAdminUserRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource)
         );
-    }
-
-    private static void bootstrapAdminUser(
-            com.firefly.security.AdminUserRepository repository,
-            AdminSecurityOptions options,
-            java.time.Clock clock
-    ) {
-        if (!options.bootstrapEnabled()) return;
-        String username = options.bootstrapUsername();
-        if (repository.find(username).isPresent()) {
-            log.info("Admin bootstrap account already exists: " + username);
-            return;
-        }
-        Instant now = clock.instant();
-        char[] password = options.bootstrapPassword().toCharArray();
-        String passwordHash;
-        try {
-            passwordHash = new com.firefly.security.Pbkdf2PasswordHasher().hash(password);
-        } finally {
-            java.util.Arrays.fill(password, '\0');
-        }
-        boolean created = repository.create(new com.firefly.security.AdminUser(
-                username, passwordHash, Set.of(com.firefly.security.FireflyRole.ADMIN), true, 0, now, now
-        ));
-        if (created) log.info("Admin bootstrap account created: " + username);
-        else log.info("Admin bootstrap account was created concurrently: " + username);
     }
 
     private static void registerNode(

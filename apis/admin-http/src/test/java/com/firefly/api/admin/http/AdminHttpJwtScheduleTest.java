@@ -4,13 +4,10 @@ import com.firefly.catalog.InMemorySchedulerCatalog;
 import com.firefly.domain.ExecutorDefinition;
 import com.firefly.domain.ExecutorProtocol;
 import com.firefly.plugin.FireflyPluginContext;
-import com.firefly.security.AdminUser;
-import com.firefly.security.FireflyRole;
 import com.firefly.security.InMemoryAdminUserRepository;
 import com.firefly.security.InMemoryIntegrationKeyRepository;
 import com.firefly.security.IntegrationKeyService;
 import com.firefly.security.JwtService;
-import com.firefly.security.Pbkdf2PasswordHasher;
 import com.firefly.store.InMemoryJobRepository;
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +18,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 
@@ -34,12 +30,7 @@ class AdminHttpJwtScheduleTest {
         int port = freePort();
         JwtService jwt = new JwtService("01234567890123456789012345678901", "firefly",
                 Duration.ofHours(1), Clock.systemUTC());
-        Instant now = Instant.now();
         InMemoryAdminUserRepository users = new InMemoryAdminUserRepository();
-        users.create(new AdminUser(
-                "admin", new Pbkdf2PasswordHasher().hash("admin-secret".toCharArray()),
-                Set.of(FireflyRole.ADMIN), true, 0, now, now
-        ));
         InMemoryIntegrationKeyRepository integrationKeys = new InMemoryIntegrationKeyRepository();
         String integrationKey = new IntegrationKeyService(integrationKeys, Clock.systemUTC()).rotate().plaintext();
         InMemorySchedulerCatalog catalog = new InMemorySchedulerCatalog();
@@ -60,7 +51,7 @@ class AdminHttpJwtScheduleTest {
                     .statusCode());
             assertEquals(403, request(port, "/api/users", "GET", integrationKey, "").statusCode());
 
-            String adminToken = login(port, "admin", "admin-secret");
+            String adminToken = login(port, "admin", "admin");
             HttpResponse<String> preview = request(port, "/api/schedules/preview", "POST", adminToken,
                     "{\"cron\":\"0 */5 * * * *\",\"zoneId\":\"Asia/Shanghai\",\"count\":3}");
             assertEquals(200, preview.statusCode());

@@ -40,6 +40,8 @@ Defaults:
 - `FIREFLY_ADMIN_UI_PORT=9720`
 - `FIREFLY_ADMIN_API=http://127.0.0.1:9710`
 - `FIREFLY_ADMIN_API_TIMEOUT_MS=5000`
+- `FIREFLY_ADMIN_SESSION_IDLE_TIMEOUT=30m`
+- `FIREFLY_ADMIN_SESSION_COOKIE_SECURE=false`
 
 Override example:
 
@@ -61,6 +63,20 @@ PowerShell fallback:
 npm.cmd run check
 ```
 
+## Docker
+
+Build the independent UI image:
+
+```powershell
+docker build -t firefly/firefly-admin-ui:1.0.0 -f Dockerfile .
+docker run --rm -p 9720:9720 `
+  -e FIREFLY_ADMIN_API=http://host.docker.internal:9710 `
+  firefly/firefly-admin-ui:1.0.0
+```
+
+The container listens on `0.0.0.0:9720`. `/ui/health` is its liveness endpoint. In Compose,
+use the server service name (`http://firefly-server:9710`) instead of `127.0.0.1`.
+
 ## API Boundary
 
 The UI calls these proxied endpoints:
@@ -70,5 +86,6 @@ The UI calls these proxied endpoints:
 - `/api/jobs`
 - `/api/executors`
 - `/api/nodes`
+- `/api/plugins`
 
 The Node service also exposes `/ui/config` so the browser can display the active proxy target.

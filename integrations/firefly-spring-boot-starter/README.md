@@ -6,7 +6,7 @@ This is the single user-facing Spring Boot integration artifact.
 <dependency>
     <groupId>com.firefly</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 

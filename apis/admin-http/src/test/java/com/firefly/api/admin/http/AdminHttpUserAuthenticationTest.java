@@ -1,12 +1,9 @@
 package com.firefly.api.admin.http;
 
 import com.firefly.plugin.FireflyPluginContext;
-import com.firefly.security.AdminUser;
-import com.firefly.security.FireflyRole;
 import com.firefly.security.InMemoryAdminUserRepository;
 import com.firefly.security.InMemoryIntegrationKeyRepository;
 import com.firefly.security.JwtService;
-import com.firefly.security.Pbkdf2PasswordHasher;
 import com.firefly.store.InMemoryJobRepository;
 import org.junit.jupiter.api.Test;
 
@@ -17,9 +14,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,13 +24,8 @@ class AdminHttpUserAuthenticationTest {
     @Test
     void authenticatesPersistentUsersAndProtectsUserAdministration() throws Exception {
         int port = freePort();
-        Instant now = Instant.now();
         InMemoryAdminUserRepository users = new InMemoryAdminUserRepository();
         InMemoryIntegrationKeyRepository integrationKeys = new InMemoryIntegrationKeyRepository();
-        users.create(new AdminUser(
-                "admin", new Pbkdf2PasswordHasher().hash("correct-password".toCharArray()),
-                Set.of(FireflyRole.ADMIN), true, 0, now, now
-        ));
         JwtService jwt = new JwtService("01234567890123456789012345678901", "firefly",
                 Duration.ofHours(1), Clock.systemUTC());
         AdminHttpPlugin plugin = new AdminHttpPlugin(new AdminHttpOptions(
@@ -47,9 +37,12 @@ class AdminHttpUserAuthenticationTest {
                 .integrationKeyRepository(integrationKeys)
                 .build());
         try {
+            HttpResponse<String> authConfig = request(port, "/api/auth/config", "GET", "", "");
+            assertEquals(200, authConfig.statusCode());
+            assertTrue(authConfig.body().contains("\"enabled\":true"));
             assertEquals(401, request(port, "/api/auth/login", "POST", "",
                     "{\"username\":\"admin\",\"password\":\"wrong-password\"}").statusCode());
-            String token = login(port, "admin", "correct-password");
+            String token = login(port, "admin", "admin");
 
             assertEquals(200, request(port, "/api/integration-key", "GET", token, "").statusCode());
             HttpResponse<String> rotated = request(port, "/api/integration-key", "POST", token, "");

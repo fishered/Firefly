@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AdminHttpRbacTest {
     @Test
@@ -56,6 +57,9 @@ class AdminHttpRbacTest {
                     .statusCode());
             assertEquals(401, request(port, "/api/overview", "GET", "wrong", "").statusCode());
             assertEquals(200, request(port, "/api/health", "GET", "", "").statusCode());
+            HttpResponse<String> authConfig = request(port, "/api/auth/config", "GET", "", "");
+            assertEquals(200, authConfig.statusCode());
+            assertTrue(authConfig.body().contains("\"enabled\":false"));
         } finally {
             plugin.close();
         }

@@ -137,6 +137,9 @@ async function restoreSession() {
 async function activateConsole() {
   document.body.classList.remove('auth-pending', 'auth-required');
   document.getElementById('modal-root').innerHTML = '';
+  document.querySelectorAll('[data-logout]').forEach(button => {
+    button.hidden = state.session?.authenticationEnabled === false;
+  });
   updateSessionSummary();
   clearInterval(sessionTimer);
   sessionTimer = setInterval(updateSessionSummary, 1000);

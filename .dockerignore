@@ -5,4 +5,7 @@ build
 data
 **/build
 **/.gradle
+**/node_modules
+**/npm-debug.log*
 *.iml
+.env

@@ -74,7 +74,7 @@ try (FireflyPluginManager plugins = new FireflyPluginManager(List.of(
 
 ## 外部 JAR 插件
 
-外部插件只需要依赖 `com.firefly:plugin-api:0.1.0-SNAPSHOT`，实现 `FireflyPlugin`，并在 JAR 中增加 JDK SPI 描述文件：
+外部插件只需要依赖 `com.firefly:plugin-api:1.0.0`，实现 `FireflyPlugin`，并在 JAR 中增加 JDK SPI 描述文件：
 
 ```text
 META-INF/services/com.firefly.plugin.FireflyPlugin

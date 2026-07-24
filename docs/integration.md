@@ -182,7 +182,7 @@ Maven 依赖：
 <dependency>
     <groupId>com.firefly</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -309,9 +309,9 @@ firefly.security.jwt.enabled=true
 firefly.security.jwt.secret=${FIREFLY_SECURITY_JWT_SECRET}
 firefly.security.jwt.issuer=firefly
 firefly.security.jwt.access-token-ttl=PT1H
-firefly.security.admin.bootstrap-username=admin
-firefly.security.admin.bootstrap-password=${FIREFLY_ADMIN_BOOTSTRAP_PASSWORD}
 ```
+
+全新 JDBC schema 会初始化默认管理账号 `admin/admin`，首次登录后应立即改密。该账号不再由运行时配置创建。
 
 `ADMIN` 可操作全部 Admin API 和 `/api/users`；`READER` 只读；`OPERATOR` 可触发、启停和取消。
 引导配置只在账号不存在时执行一次，之后修改配置不会重置数据库密码。
@@ -343,7 +343,6 @@ Admin UI: admin / local-admin-secret
 
 ```powershell
 $env:FIREFLY_SECURITY_JWT_SECRET='replace-with-at-least-32-random-bytes'
-$env:FIREFLY_SECURITY_ADMIN_BOOTSTRAP_PASSWORD='replace-with-a-strong-admin-password'
 $env:FIREFLY_INTEGRATION_KEY='ffk_generated-in-admin-console'
 ```
 

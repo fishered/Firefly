@@ -1,135 +1,192 @@
-# Firefly 镜像部署
+# Firefly Docker 部署
 
-Firefly 镜像是通用 server 镜像，不在构建时固化节点身份。节点身份和职责在运行容器时通过环境变量指定。
+Firefly 发布为两个独立镜像：
 
-## 构建镜像
+| 镜像 | 默认容器端口 | 职责 |
+| --- | --- | --- |
+| `firefly/firefly-server` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui` | `9720` | Web 页面、登录会话和 Admin API 反向代理 |
+
+PostgreSQL 是运行依赖，不属于 Firefly 自身镜像。镜像不固化数据库地址、节点名称或密码，相同镜像可以通过
+环境变量运行成单节点、全角色集群节点或专用角色节点。
+
+## 一键启动
+
+仓库根目录已经提供 `docker-compose.yml` 和 `.env.example`：
 
 ```powershell
-docker build -t firefly:local .
+Copy-Item .env.example .env
+docker compose up -d --build
+docker compose ps
 ```
 
-## 单节点运行
+`FIREFLY_CONFIG_PROFILE` 是唯一的存储类型选择器：
+
+```dotenv
+# PostgreSQL
+FIREFLY_CONFIG_PROFILE=pg
+
+# 本地 H2 文件存储
+FIREFLY_CONFIG_PROFILE=h2
+
+# 仅用于临时测试的内存存储
+FIREFLY_CONFIG_PROFILE=memory
+```
+
+使用 `pg` 时保留 `.env` 中的 `FIREFLY_STORE_TYPE` 和 `FIREFLY_JDBC_*` 六项。使用 `h2` 或 `memory` 时删除或注释这六项，Firefly 会直接加载镜像内对应的 profile 默认配置，不需要数据库地址、账号或密码。
+
+生产或共享环境至少修改 `.env` 中的：
+
+```dotenv
+FIREFLY_JDBC_PASSWORD=change-me-database-password
+FIREFLY_SECURITY_JWT_SECRET=change-me-to-a-long-random-signing-secret
+```
+
+启动完成后访问：
+
+```text
+Admin UI:  http://127.0.0.1:9720
+Admin API: http://127.0.0.1:9710/api/health
+Metrics:   http://127.0.0.1:9711/metrics
+Gateway:   127.0.0.1:9700
+```
+
+全新数据库初始化时会创建默认账号 `admin/admin`。初始化 SQL 使用幂等插入，已存在的 admin 用户及其修改后的密码不会被覆盖；首次登录后应立即修改默认密码。`pg` profile 默认开启认证，`h2` 和 `memory` profile 默认关闭认证，可通过 `FIREFLY_SECURITY_JWT_ENABLED` 显式覆盖。认证关闭时 Admin UI 会自动进入本地管理会话，不显示登录页。
+
+首次登录后进入“配置”，生成 Integration Key。业务服务通过该密钥连接 Gateway 并同步注解任务：
+
+```yaml
+firefly:
+  executor:
+    name: billing-executor
+    gateway-addresses:
+      - 127.0.0.1:9700
+    integration-key: ${FIREFLY_INTEGRATION_KEY}
+    job-registration:
+      admin-url: http://127.0.0.1:9710
+```
+
+## 分别构建两个镜像
 
 ```powershell
-docker run --rm --name firefly `
-  -p 9700:9700 `
-  -p 9710:9710 `
-  -p 9711:9711 `
+docker build -t firefly/firefly-server:1.0.0 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.0.0 -f ui/admin/Dockerfile ui/admin
+```
+
+服务镜像使用 Amazon Corretto OpenJDK 21 Alpine 和 Gradle `installDist` 产物，以非 root 用户运行。前端镜像使用 Node 22 Alpine，
+不需要安装第三方 npm 依赖。
+
+## 使用已发布镜像
+
+Compose 默认使用固定镜像名和 `.env` 中的统一版本：
+
+```dotenv
+FIREFLY_VERSION=1.0.0
+```
+
+需要私有仓库时，对镜像重新打标签，并在部署侧 Compose 覆盖文件中替换 `image` 地址；运行配置不再承担镜像仓库选择职责。
+
+只拉取、不在部署机重新构建：
+
+```powershell
+docker compose pull
+docker compose up -d --no-build
+```
+
+也可以分别发布：
+
+```powershell
+docker tag firefly/firefly-server:1.0.0 registry.example.com/firefly/firefly-server:1.0.0
+docker tag firefly/firefly-admin-ui:1.0.0 registry.example.com/firefly/firefly-admin-ui:1.0.0
+docker push registry.example.com/firefly/firefly-server:1.0.0
+docker push registry.example.com/firefly/firefly-admin-ui:1.0.0
+```
+
+## 分别运行容器
+
+已有 PostgreSQL 时可以不使用 Compose：
+
+```powershell
+docker network create firefly
+
+docker run -d --name firefly-server --network firefly `
+  -p 9700:9700 -p 9710:9710 -p 9711:9711 `
   -e FIREFLY_NODE_MODE=standalone `
   -e FIREFLY_NODE_NAME=firefly-standalone `
   -e FIREFLY_NODE_ROLES=api,gateway,scheduler `
-  -e FIREFLY_SCHEDULER_SHARD_COUNT=32 `
-  -e FIREFLY_EXECUTOR_REGISTRATION_AUTO_CREATE_DEFINITION=true `
-  -e FIREFLY_ADMIN_HTTP_HOST=0.0.0.0 `
-  -e FIREFLY_ADMIN_HTTP_API_TOKEN=change-me `
-  -e FIREFLY_METRICS_PROMETHEUS_HOST=0.0.0.0 `
-  -e FIREFLY_CONFIG_PROFILE=memory `
-  firefly:local
-```
-
-## 集群运行
-
-集群模式必须使用共享存储。当前推荐先用 JDBC，例如 PostgreSQL。
-
-```powershell
-docker run --rm --name firefly-node-1 `
-  -p 9700:9700 `
-  -p 9710:9710 `
-  -p 9711:9711 `
-  -e FIREFLY_NODE_MODE=cluster `
-  -e FIREFLY_NODE_NAME=firefly-node-1 `
-  -e FIREFLY_NODE_ROLES=api,gateway,scheduler `
-  -e FIREFLY_SCHEDULER_SHARD_COUNT=32 `
-  -e FIREFLY_SCHEDULER_COORDINATION_RECONCILE_INTERVAL=PT1S `
-  -e FIREFLY_SCHEDULER_COORDINATION_NODE_TIMEOUT=PT5S `
-  -e FIREFLY_SCHEDULER_COORDINATION_LEASE_DURATION=PT10S `
-  -e FIREFLY_EXECUTOR_REGISTRATION_AUTO_CREATE_DEFINITION=false `
-  -e FIREFLY_EXECUTOR_AUTH_TOKEN=change-executor-token `
   -e FIREFLY_ADMIN_HTTP_HOST=0.0.0.0 `
   -e FIREFLY_METRICS_PROMETHEUS_HOST=0.0.0.0 `
   -e FIREFLY_STORE_TYPE=jdbc `
   -e FIREFLY_JDBC_URL=jdbc:postgresql://postgres:5432/firefly `
-  -e FIREFLY_JDBC_USERNAME=postgres `
-  -e FIREFLY_JDBC_PASSWORD=123456 `
+  -e FIREFLY_JDBC_USERNAME=firefly `
+  -e FIREFLY_JDBC_PASSWORD=change-me `
   -e FIREFLY_JDBC_DIALECT=postgresql `
-  firefly:local
+  -e FIREFLY_JDBC_SCHEMA_MODE=initialize-if-empty `
+  -e FIREFLY_SECURITY_JWT_ENABLED=true `
+  -e FIREFLY_SECURITY_JWT_SECRET=change-me-to-a-long-random-signing-secret `
+  firefly/firefly-server:1.0.0
+
+docker run -d --name firefly-admin-ui --network firefly `
+  -p 9720:9720 `
+  -e FIREFLY_ADMIN_API=http://firefly-server:9710 `
+  firefly/firefly-admin-ui:1.0.0
 ```
 
-第二、第三个节点使用同一个镜像，只需要换掉 `FIREFLY_NODE_NAME`。第一阶段推荐三个节点都运行：
+`FIREFLY_ADMIN_API` 必须是前端容器可以访问的地址。容器内的 `127.0.0.1:9710` 指向前端容器自身，不能
+用于访问另一个 Firefly Server 容器。
 
-```text
+## 节点角色与高可用
+
+默认单节点配置：
+
+```dotenv
+FIREFLY_NODE_MODE=standalone
+FIREFLY_NODE_NAME=firefly-standalone
 FIREFLY_NODE_ROLES=api,gateway,scheduler
 ```
 
-`FIREFLY_SCHEDULER_SHARD_COUNT` 是集群首次初始化后不可变的契约。所有节点必须配置相同值；已有集群不能通过滚动修改该环境变量完成重分片。
+集群节点必须共享 PostgreSQL，每个容器使用唯一节点名：
 
-需要拆专用节点时，可以改成：
-
-```text
-FIREFLY_NODE_ROLES=api
-FIREFLY_NODE_ROLES=gateway
-FIREFLY_NODE_ROLES=scheduler
+```dotenv
+FIREFLY_NODE_MODE=cluster
+FIREFLY_NODE_NAME=firefly-node-1
+FIREFLY_NODE_ROLES=api,gateway,scheduler
 ```
 
-高可用远程执行器场景下，Scheduler 在共享数据库中原子写入 execution 和 outbox。Outbox 会标记为 `LOCAL` 或 `REMOTE`：Scheduler 节点领取本地任务，Gateway 节点领取远程任务。Executor 可同时连接所有 Gateway；也可启用共享实例位置目录和 Gateway 内部转发，使领取 Outbox 的 Gateway 将目标帧转发到实际持有连接的 Gateway。
+同一个 Server 镜像可以继续启动 `firefly-node-2`、`firefly-node-3`。三个节点应配置相同数据库、JWT 密钥、
+`FIREFLY_SCHEDULER_SHARD_COUNT` 和 Gateway 内部转发密钥，但必须使用不同的 `FIREFLY_NODE_NAME`。
 
-Outbox 轮询、批量、ACK 超时、重试上限、维护周期和数据库时钟校准均可通过 `firefly.dispatch.outbox.*`、`firefly.execution.maintenance.*` 和 `firefly.jdbc.clock.*` 配置。Gateway 的结果持久化队列和最大消息帧大小可通过 `firefly.executor.gateway.netty.result-queue-capacity`、`firefly.executor.gateway.netty.max-frame-length` 配置。
+生产环境推荐至少三个全角色节点，前置负载均衡暴露 Admin API；Executor 配置多个 Gateway 地址。需要拆分职责时，
+可以分别配置 `api`、`gateway`、`scheduler`，但专用 Gateway 和 Scheduler 节点不应使用依赖 `/api/health` 的
+Compose 健康检查。
 
-Outbox worker 的状态回写由 `claim_owner + attempt` fencing 保护。认领租约过期并被其他节点接管后，旧 worker 的迟到 SENT/RETRY 更新会失败；`DONE` 和 `DEAD` 也不会被普通重试路径重新激活。`max-attempts` 是包含 ACK 超时在内的真实发送次数上限。监控应至少对 `firefly_jobs_overdue_max_seconds`、`firefly_dispatch_outbox_oldest_age_seconds`、`firefly_dispatch_outbox_dead`、`firefly_dispatch_outbox_delivery_exhausted_total` 和 `firefly_shard_lease_renewal_failures_total` 建立告警。
+`FIREFLY_SCHEDULER_SHARD_COUNT` 是集群首次初始化后的共享契约，不能通过普通滚动更新修改。Gateway 内部转发、
+分片重建、排空下线和生产告警约束见 [ha-cluster.md](ha-cluster.md) 与 [database-schema.md](database-schema.md)。
 
-Gateway 支持两种拓扑：3 个全角色节点可让 Executor 同时连接全部 Gateway；节点更多时启用内部转发。每个 Gateway 配置唯一的 `firefly.executor.gateway.internal.advertised-address` 和监听端口，所有节点使用相同的 `firefly.executor.gateway.internal.auth-token`。共享目录使用 `instanceId + sessionId + lease` 防止旧连接被路由；内部端口应只在集群可信网络开放。
+## 数据与外部插件
 
-内部转发使用 HMAC-SHA256 签名，不在请求中传输共享 Token，并校验 30 秒时间窗、nonce 防重放和请求体上限。仍应通过安全组或 NetworkPolicy 限制内部端口来源；HTTP 不提供载荷保密性，跨不可信网络应在服务网格或内部负载层终止 mTLS。
+Compose 使用 `firefly-postgres` volume 保存全部调度数据。删除容器不会删除数据；执行
+`docker compose down -v` 会删除数据库卷，应仅在确认不再需要数据时使用。
 
-```properties
-firefly.executor.gateway.internal.host=0.0.0.0
-firefly.executor.gateway.internal.port=9801
-firefly.executor.gateway.internal.advertised-address=http://gateway-1:9801
-firefly.executor.gateway.internal.auth-token=${FIREFLY_EXECUTOR_GATEWAY_INTERNAL_AUTH_TOKEN}
-firefly.executor.gateway.instance-location-refresh-interval=PT30S
-firefly.executor.gateway.instance-location-lease=PT90S
+Firefly Server 镜像预留 `/opt/firefly/plugins`。使用外部插件时，将插件 JAR 挂载到该目录，并在环境变量中
+加入插件 ID：
+
+```yaml
+volumes:
+  - ./plugins:/opt/firefly/plugins:ro
+environment:
+  FIREFLY_PLUGINS: metrics-prometheus,acme-alerts
+  FIREFLY_PLUGINS_DIRECTORY: /opt/firefly/plugins
 ```
 
-节点排空使用 `POST /api/nodes/{nodeId}/drain`。节点进入 `DRAINING` 后会停止领取新 Outbox、释放 Scheduler 分片、拒绝新 Executor 注册，但保留已有连接完成在途任务。可通过 `GET /api/nodes/{nodeId}/drain-status` 查看剩余分片、投递、target 和连接；持久化在途工作归零后节点自动断开空闲 Executor 并转为 `OFFLINE`。
-
-Scheduler 容量参数为 `firefly.scheduler.max-due-records-per-tick` 和 `firefly.scheduler.max-idle-wakeup`。生产环境应加载 `config/prometheus/firefly-alerts.yml`，再根据压测结果调整 p99 阈值和 per-shard backlog 阈值。
-
-集群生产环境建议关闭 `FIREFLY_EXECUTOR_REGISTRATION_AUTO_CREATE_DEFINITION`。先通过 `POST /api/executor-definitions` 创建逻辑执行器，再由业务服务使用相同的 `executorName` 注册一个或多个运行实例；服务断线只会使实例离线，不会删除执行器定义。
-
-数据库全量初始化和旧库升级说明见 [database-schema.md](database-schema.md)。当前 schema v10 包含共享 Executor 位置目录、持久化审计、任务变更历史和 Admin 用户表。
-
-需要修改 scheduler shard count 时必须停机执行显式维护命令；工具会拒绝在线节点、活跃 execution 和未完成 Outbox，并重算 `firefly_job.shard_id`、清理旧 shard lease、更新集群元数据：
+## 常用命令
 
 ```powershell
-.\gradlew.bat :server:launcher:migrateSchema --args="--firefly.schema.action=reshard --firefly.schema.reshard.confirm=true --firefly.scheduler.shard-count=64"
+docker compose logs -f firefly-server
+docker compose logs -f firefly-admin-ui
+docker compose restart firefly-server firefly-admin-ui
+docker compose down
 ```
 
-Admin HTTP 支持分级 Token。旧 `FIREFLY_ADMIN_HTTP_API_TOKEN` 仍按 `ADMIN` 处理；生产环境建议分别配置只读、运维和管理 Token：
-
-```text
-FIREFLY_ADMIN_HTTP_READER_TOKEN=reader-token
-FIREFLY_ADMIN_HTTP_OPERATOR_TOKEN=operator-token
-FIREFLY_ADMIN_HTTP_ADMIN_TOKEN=admin-token
-```
-
-所有 Admin 变更请求会输出到 `com.firefly.audit.admin` logger。生产环境应将该 logger 单独送入不可变日志存储；记录不会包含 Token 和请求体。
-
-## Compose 示例
-
-仓库根目录提供 `docker-compose.yml`，可启动 PostgreSQL 和三个 Firefly 全角色节点：
-
-```powershell
-docker compose up --build
-```
-
-默认暴露：
-
-```text
-Admin HTTP: http://127.0.0.1:9710/
-Metrics:    http://127.0.0.1:9711/metrics
-Gateway:    127.0.0.1:9700
-```
-
-业务 Executor 容器需要跨重启复用已完成结果时，应为 `firefly.executor.idempotency-directory` 挂载持久卷，例如 `/data/firefly-executor-results`，并配置足以覆盖调度重投窗口的 `idempotency-retention`。该存储能重放已完成结果，但进程在业务副作用完成、结果落盘之前崩溃时仍可能再次执行，Handler 仍应按 `rootExecutionId` 或业务键保证幂等。
-
-Gateway TLS 证书、私钥和信任链会按 `firefly.executor.gateway.netty.tls.reload-interval` 检查变化。刷新只作用于新连接，已有 TLS 会话保留到自然重连。
+修改普通环境变量后执行 `docker compose up -d` 会重建相关容器。修改 Java 或前端代码后使用
+`docker compose up -d --build` 重建镜像。

@@ -16,6 +16,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcAdminUserRepositoryTest {
     @Test
+    void initializesDefaultAdminWithoutOverwritingIt() {
+        JdbcDataSource dataSource = new JdbcDataSource();
+        dataSource.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
+        dataSource.setUser("sa");
+        dataSource.setPassword("");
+
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        JdbcAdminUserRepository repository = new JdbcAdminUserRepository(dataSource);
+        AdminUser admin = repository.find("admin").orElseThrow();
+        assertTrue(new Pbkdf2PasswordHasher().verify("admin".toCharArray(), admin.passwordHash()));
+        assertEquals(Set.of(FireflyRole.ADMIN), admin.roles());
+
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        AdminUser afterRepeatedInitialization = repository.find("admin").orElseThrow();
+        assertEquals(admin.passwordHash(), afterRepeatedInitialization.passwordHash());
+        assertEquals(admin.version(), afterRepeatedInitialization.version());
+    }
+
+    @Test
     void persistsUsersAndUsesVersionCompareAndSet() {
         JdbcDataSource dataSource = new JdbcDataSource();
         dataSource.setURL("jdbc:h2:mem:" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
@@ -27,24 +46,24 @@ class JdbcAdminUserRepositoryTest {
         String hash = new Pbkdf2PasswordHasher().hash("correct-password".toCharArray());
         JdbcAdminUserRepository first = new JdbcAdminUserRepository(dataSource);
         assertTrue(first.create(new AdminUser(
-                "admin", hash, Set.of(FireflyRole.ADMIN), true, 0, createdAt, createdAt
+                "operator", hash, Set.of(FireflyRole.ADMIN), true, 0, createdAt, createdAt
         )));
         assertFalse(first.create(new AdminUser(
-                "admin", hash, Set.of(FireflyRole.ADMIN), true, 0, createdAt, createdAt
+                "operator", hash, Set.of(FireflyRole.ADMIN), true, 0, createdAt, createdAt
         )));
 
         JdbcAdminUserRepository afterRestart = new JdbcAdminUserRepository(dataSource);
-        AdminUser persisted = afterRestart.find("admin").orElseThrow();
+        AdminUser persisted = afterRestart.find("operator").orElseThrow();
         assertTrue(new Pbkdf2PasswordHasher().verify("correct-password".toCharArray(), persisted.passwordHash()));
         assertEquals(Set.of(FireflyRole.ADMIN), persisted.roles());
 
         AdminUser updated = new AdminUser(
-                "admin", persisted.passwordHash(), Set.of(FireflyRole.ADMIN), true, 1,
+                "operator", persisted.passwordHash(), Set.of(FireflyRole.ADMIN), true, 1,
                 persisted.createdAt(), createdAt.plusSeconds(30)
         );
         assertTrue(afterRestart.update(updated, 0));
         assertFalse(afterRestart.update(updated, 0));
-        assertFalse(afterRestart.delete("admin", 0));
-        assertTrue(afterRestart.delete("admin", 1));
+        assertFalse(afterRestart.delete("operator", 0));
+        assertTrue(afterRestart.delete("operator", 1));
     }
 }

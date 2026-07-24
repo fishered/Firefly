@@ -14,8 +14,7 @@ public record ServerRuntimeOptions(
         NettyExecutorGatewayOptions nettyGateway,
         AdminAuthorizationOptions adminAuthorization,
         SchedulerEngineOptions schedulerEngine,
-        JwtSecurityOptions jwtSecurity,
-        AdminSecurityOptions adminSecurity
+        JwtSecurityOptions jwtSecurity
 ) {
     public ServerRuntimeOptions(
             DispatchOutboxOptions dispatchOutbox,
@@ -24,8 +23,7 @@ public record ServerRuntimeOptions(
             NettyExecutorGatewayOptions nettyGateway
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled(),
-                AdminSecurityOptions.disabled());
+                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions(
@@ -36,8 +34,7 @@ public record ServerRuntimeOptions(
             AdminAuthorizationOptions adminAuthorization
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                adminAuthorization, SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled(),
-                AdminSecurityOptions.disabled());
+                adminAuthorization, SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions(
@@ -49,7 +46,7 @@ public record ServerRuntimeOptions(
             SchedulerEngineOptions schedulerEngine
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                adminAuthorization, schedulerEngine, JwtSecurityOptions.disabled(), AdminSecurityOptions.disabled());
+                adminAuthorization, schedulerEngine, JwtSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions {
@@ -60,7 +57,6 @@ public record ServerRuntimeOptions(
         Objects.requireNonNull(adminAuthorization, "adminAuthorization");
         Objects.requireNonNull(schedulerEngine, "schedulerEngine");
         Objects.requireNonNull(jwtSecurity, "jwtSecurity");
-        Objects.requireNonNull(adminSecurity, "adminSecurity");
     }
 
     public static ServerRuntimeOptions defaults() {
@@ -71,8 +67,7 @@ public record ServerRuntimeOptions(
                 NettyExecutorGatewayOptions.defaults(),
                 AdminAuthorizationOptions.defaults(),
                 SchedulerEngineOptions.defaults(),
-                JwtSecurityOptions.disabled(),
-                AdminSecurityOptions.disabled()
+                JwtSecurityOptions.disabled()
         );
     }
 }

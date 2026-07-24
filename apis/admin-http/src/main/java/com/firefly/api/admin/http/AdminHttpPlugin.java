@@ -84,6 +84,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             server = HttpServer.create(new InetSocketAddress(options.host(), options.port()), 0);
             server.createContext("/", exchange -> handleSafely(exchange, this::handleIndex));
             server.createContext("/api/health", exchange -> handleSafely(exchange, this::handleHealth));
+            server.createContext("/api/auth/config", exchange -> handleSafely(exchange, this::handleAuthConfig));
             server.createContext("/api/auth/login", exchange -> handleSafely(exchange, this::handleLogin));
             server.createContext("/api/integration-key", exchange -> handleSafely(exchange, this::handleIntegrationKey));
             server.createContext("/api/plugins", exchange -> handleSafely(exchange, this::handlePlugins));
@@ -117,6 +118,15 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private void handleHealth(HttpExchange exchange) throws IOException {
         respond(exchange, "application/json; charset=utf-8", "{\"status\":\"UP\",\"plugin\":\"admin-http\"}");
+    }
+
+    private void handleAuthConfig(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
+            return;
+        }
+        respond(exchange, "application/json; charset=utf-8",
+                "{\"enabled\":" + (options.jwtService() != null) + "}");
     }
 
     private void handlePlugins(HttpExchange exchange) throws IOException {
@@ -1101,7 +1111,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private Authorization authorize(HttpExchange exchange) {
         String path = exchange.getRequestURI().getPath();
-        if ("/api/health".equals(path) || "/api/auth/login".equals(path)) {
+        if ("/api/health".equals(path) || "/api/auth/config".equals(path) || "/api/auth/login".equals(path)) {
             return new Authorization(true, true);
         }
         String integrationKey = exchange.getRequestHeaders().getFirst("X-Firefly-Integration-Key");

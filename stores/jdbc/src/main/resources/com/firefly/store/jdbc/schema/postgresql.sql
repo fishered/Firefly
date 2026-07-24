@@ -214,6 +214,13 @@ create table if not exists firefly_user (
 
 create index if not exists idx_firefly_user_enabled on firefly_user (enabled, username);
 
+insert into firefly_user
+    (username, password_hash, roles, enabled, version, created_at, updated_at)
+select 'admin',
+       'pbkdf2-sha256$210000$cdNnTGyvKtyrY2J5VniRJw$fugVWfUlpN9f84Rkjagj5aBkaBGyWwJuy68TBfJCAe4',
+       'ADMIN', true, 0, current_timestamp, current_timestamp
+where not exists (select 1 from firefly_user where username = 'admin');
+
 create table if not exists firefly_integration_key (
     key_id varchar(64) primary key,
     key_hash varchar(512) not null,

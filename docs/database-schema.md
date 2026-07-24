@@ -48,7 +48,7 @@ firefly.jdbc.schema.mode=validate
 
 `firefly_user` 保存人类管理员账号，不保存 Executor/Starter 的客户端凭据。密码使用带随机盐的
 PBKDF2-HMAC-SHA256 摘要；创建、改密、角色调整、启停和删除由 `/api/users` 管理，并使用 `version`
-做 CAS。引导账号只在用户名不存在时创建，后续重启和配置变更不会覆盖数据库中的密码。
+做 CAS。全量初始化 SQL 在用户名不存在时创建默认账号 `admin/admin`；重复执行初始化不会覆盖已有密码。
 
 `firefly_integration_key` 是集群共享的单例凭据，只保存带随机盐的 PBKDF2 摘要。Admin 通过
 `GET /api/integration-key` 查看配置状态，通过 `POST /api/integration-key` 生成或轮换；明文只在轮换响应
