@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="https://fishered.github.io/firefly-home/">官方网站</a> ·
-  <a href="https://fishered.github.io/firefly-home/guide/quick-start">快速开始</a> ·
+  <a href="https://fishered.github.io/firefly-home/guide/quick-start">Starter 快速手册</a> ·
   <a href="https://fishered.github.io/firefly-home/guide/integration">集成文档</a> ·
   <a href="https://fishered.github.io/firefly-home/reference/admin-api">Admin API</a> ·
   <a href="README_EN.md">English</a>
@@ -217,6 +217,8 @@ docker compose down
 
 ## Spring Boot 快速集成
 
+Starter 快速手册：[https://fishered.github.io/firefly-home/guide/quick-start](https://fishered.github.io/firefly-home/guide/quick-start)
+
 ### 1. 引入唯一 Starter
 
 Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外仓库：
@@ -395,7 +397,7 @@ firefly/
 
 | 文档 | 内容 |
 | --- | --- |
-| [快速开始](https://fishered.github.io/firefly-home/guide/quick-start) | 本地运行 Server、Admin UI 和示例任务 |
+| [Starter 快速手册](https://fishered.github.io/firefly-home/guide/quick-start) | 引入 Starter、配置 Executor，并通过注解声明任务 |
 | [集成方式](https://fishered.github.io/firefly-home/guide/integration) | Spring Boot、传统 Java、Executor 接入 |
 | [部署说明](https://fishered.github.io/firefly-home/guide/deployment) | Docker、镜像、节点角色和生产部署 |
 | [配置参考](https://fishered.github.io/firefly-home/reference/configuration) | Server、Scheduler、Gateway、JDBC 和安全配置 |
