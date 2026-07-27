@@ -15,5 +15,6 @@ class InMemoryAdminUserRepositoryTest {
         assertTrue(new Pbkdf2PasswordHasher().verify("admin".toCharArray(), admin.passwordHash()));
         assertEquals(Set.of(FireflyRole.ADMIN), admin.roles());
         assertTrue(admin.enabled());
+        assertTrue(admin.passwordChangeRequired());
     }
 }

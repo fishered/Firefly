@@ -143,6 +143,10 @@ async function activateConsole() {
   updateSessionSummary();
   clearInterval(sessionTimer);
   sessionTimer = setInterval(updateSessionSummary, 1000);
+  if (state.session?.passwordChangeRequired) {
+    showPasswordChange();
+    return;
+  }
   await setView(state.currentView ?? 'overview');
 }
 
@@ -166,6 +170,66 @@ function showLogin(message = '') {
       </section>
     </main>`;
   root.querySelector('#login-form').addEventListener('submit', submitLogin);
+}
+
+function showPasswordChange(message = '') {
+  clearInterval(sessionTimer);
+  document.body.classList.remove('auth-pending', 'auth-required');
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <main class="login-screen">
+      <section class="login-panel" aria-labelledby="password-change-title">
+        <div class="login-brand"><img class="brand-logo" src="/firefly-mark.svg" alt=""><strong>Firefly</strong></div>
+        <h1 id="password-change-title">修改初始密码</h1>
+        <form id="password-change-form">
+          <label class="field">当前密码<input type="password" name="currentPassword" autocomplete="current-password" required autofocus></label>
+          <label class="field">新密码<input type="password" name="newPassword" autocomplete="new-password" minlength="8" maxlength="256" required></label>
+          <label class="field">确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" maxlength="256" required></label>
+          <div class="login-error" role="alert">${escapeHtml(message)}</div>
+          <button class="btn primary login-submit" type="submit">保存并重新登录</button>
+        </form>
+      </section>
+    </main>`;
+  root.querySelector('#password-change-form').addEventListener('submit', submitPasswordChange);
+}
+
+async function submitPasswordChange(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const error = form.querySelector('.login-error');
+  const currentPassword = form.elements.currentPassword.value;
+  const newPassword = form.elements.newPassword.value;
+  const confirmPassword = form.elements.confirmPassword.value;
+  error.textContent = '';
+  if (newPassword !== confirmPassword) {
+    error.textContent = '两次输入的新密码不一致';
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const response = await fetch('/api/auth/password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(state.session?.csrfToken ? { 'X-Firefly-CSRF': state.session.csrfToken } : {})
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(passwordChangeError(body.error, body.message));
+    const csrfToken = state.session?.csrfToken;
+    await fetch('/ui/auth/logout', {
+      method: 'POST',
+      headers: csrfToken ? { 'X-Firefly-CSRF': csrfToken } : {}
+    }).catch(() => {});
+    showLogin('密码已修改，请重新登录');
+  } catch (failure) {
+    error.textContent = failure.message;
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 async function submitLogin(event) {
@@ -212,6 +276,15 @@ function loginError(code) {
     authentication_service_unavailable: '认证服务暂时不可用',
     credentials_required: '请输入用户名和密码'
   }[code] ?? '登录失败';
+}
+
+function passwordChangeError(code, message) {
+  return {
+    invalid_credentials: '当前密码不正确',
+    user_version_conflict: '账号已被更新，请重新登录后再修改',
+    csrf_validation_failed: '会话校验失败，请重新登录',
+    password_change_required: '请先修改初始密码'
+  }[code] ?? message ?? '密码修改失败';
 }
 
 function updateSessionSummary() {
@@ -1587,6 +1660,10 @@ async function performRequest(path, requestOptions, method) {
   if (!response.ok) {
     if (response.status === 401 && path.startsWith('/api/')) {
       showLogin('会话已过期，请重新登录');
+    }
+    if (response.status === 403 && data?.error === 'password_change_required') {
+      state.session = { ...state.session, passwordChangeRequired: true };
+      showPasswordChange('请先修改初始密码');
     }
     const errorMessages = {
       executor_not_found: '执行器定义不存在或已被删除',

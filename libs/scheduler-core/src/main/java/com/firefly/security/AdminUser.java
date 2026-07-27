@@ -10,10 +10,23 @@ public record AdminUser(
         String passwordHash,
         Set<FireflyRole> roles,
         boolean enabled,
+        boolean passwordChangeRequired,
         long version,
         Instant createdAt,
         Instant updatedAt
 ) {
+    public AdminUser(
+            String username,
+            String passwordHash,
+            Set<FireflyRole> roles,
+            boolean enabled,
+            long version,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(username, passwordHash, roles, enabled, false, version, createdAt, updatedAt);
+    }
+
     public AdminUser {
         if (username == null || !username.matches("[A-Za-z0-9._@-]{1,128}")) {
             throw new IllegalArgumentException("username must contain 1-128 letters, digits, '.', '_', '@', or '-'");

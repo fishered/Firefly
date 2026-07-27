@@ -27,10 +27,12 @@ class JdbcAdminUserRepositoryTest {
         AdminUser admin = repository.find("admin").orElseThrow();
         assertTrue(new Pbkdf2PasswordHasher().verify("admin".toCharArray(), admin.passwordHash()));
         assertEquals(Set.of(FireflyRole.ADMIN), admin.roles());
+        assertTrue(admin.passwordChangeRequired());
 
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
         AdminUser afterRepeatedInitialization = repository.find("admin").orElseThrow();
         assertEquals(admin.passwordHash(), afterRepeatedInitialization.passwordHash());
+        assertTrue(afterRepeatedInitialization.passwordChangeRequired());
         assertEquals(admin.version(), afterRepeatedInitialization.version());
     }
 

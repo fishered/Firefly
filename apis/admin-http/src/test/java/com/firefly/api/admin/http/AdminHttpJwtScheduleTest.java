@@ -52,6 +52,9 @@ class AdminHttpJwtScheduleTest {
             assertEquals(403, request(port, "/api/users", "GET", integrationKey, "").statusCode());
 
             String adminToken = login(port, "admin", "admin");
+            assertEquals(200, request(port, "/api/auth/password", "POST", adminToken,
+                    "{\"currentPassword\":\"admin\",\"newPassword\":\"changed-admin-password\"}").statusCode());
+            adminToken = login(port, "admin", "changed-admin-password");
             HttpResponse<String> preview = request(port, "/api/schedules/preview", "POST", adminToken,
                     "{\"cron\":\"0 */5 * * * *\",\"zoneId\":\"Asia/Shanghai\",\"count\":3}");
             assertEquals(200, preview.statusCode());

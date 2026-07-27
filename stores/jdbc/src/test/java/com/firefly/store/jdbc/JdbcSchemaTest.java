@@ -268,9 +268,9 @@ final class JdbcSchemaTest {
 
     @Test
     void loadsDialectScripts() {
-        assertEquals(40, JdbcSchemaScript.load(JdbcDialect.H2).size());
-        assertEquals(40, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
-        assertEquals(29, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
+        assertEquals(41, JdbcSchemaScript.load(JdbcDialect.H2).size());
+        assertEquals(41, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
+        assertEquals(30, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
     }
 
     private DataSource rawH2DataSource() {

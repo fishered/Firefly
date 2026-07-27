@@ -86,6 +86,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             server.createContext("/api/health", exchange -> handleSafely(exchange, this::handleHealth));
             server.createContext("/api/auth/config", exchange -> handleSafely(exchange, this::handleAuthConfig));
             server.createContext("/api/auth/login", exchange -> handleSafely(exchange, this::handleLogin));
+            server.createContext("/api/auth/password", exchange -> handleSafely(exchange, this::handlePasswordChange));
             server.createContext("/api/integration-key", exchange -> handleSafely(exchange, this::handleIntegrationKey));
             server.createContext("/api/plugins", exchange -> handleSafely(exchange, this::handlePlugins));
             server.createContext("/api/schedules/preview", exchange -> handleSafely(exchange, this::handleSchedulePreview));
@@ -194,9 +195,61 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             respond(exchange, 200, "application/json; charset=utf-8",
                     "{\"accessToken\":\"" + jsonEscape(token)
                             + "\",\"tokenType\":\"Bearer\",\"expiresIn\":"
-                            + options.jwtService().expiresInSeconds() + "}");
+                            + options.jwtService().expiresInSeconds()
+                            + ",\"passwordChangeRequired\":" + user.passwordChangeRequired() + "}");
         } finally {
             java.util.Arrays.fill(password, '\0');
+        }
+    }
+
+    private void handlePasswordChange(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
+            return;
+        }
+        com.firefly.security.AdminUserRepository repository = context.adminUserRepository()
+                .orElseThrow(() -> new IllegalStateException("Admin user repository is unavailable"));
+        com.firefly.security.FireflyPrincipal principal =
+                (com.firefly.security.FireflyPrincipal) exchange.getAttribute("firefly.principal");
+        if (principal == null) {
+            respond(exchange, 401, "application/json; charset=utf-8", "{\"error\":\"unauthorized\"}");
+            return;
+        }
+        com.firefly.security.AdminUser current = repository.find(principal.subject()).orElse(null);
+        if (current == null || !current.enabled()) {
+            respond(exchange, 401, "application/json; charset=utf-8", "{\"error\":\"unauthorized\"}");
+            return;
+        }
+        Map<String, String> request = requestObject(exchange);
+        char[] currentPassword = required(request, "currentPassword").toCharArray();
+        char[] newPassword = required(request, "newPassword").toCharArray();
+        try {
+            if (!passwordHasher.verify(currentPassword, current.passwordHash())) {
+                respond(exchange, 401, "application/json; charset=utf-8",
+                        "{\"error\":\"invalid_credentials\"}");
+                return;
+            }
+            if (newPassword.length < 8 || newPassword.length > 256) {
+                throw new IllegalArgumentException("newPassword must contain 8-256 characters");
+            }
+            if (passwordHasher.verify(newPassword, current.passwordHash())) {
+                throw new IllegalArgumentException("newPassword must differ from the current password");
+            }
+            com.firefly.security.AdminUser updated = new com.firefly.security.AdminUser(
+                    current.username(), passwordHasher.hash(newPassword), current.roles(), current.enabled(),
+                    false, current.version() + 1, current.createdAt(), context.clock().instant()
+            );
+            if (!repository.update(updated, current.version())) {
+                respond(exchange, 409, "application/json; charset=utf-8",
+                        "{\"error\":\"user_version_conflict\"}");
+                return;
+            }
+            exchange.setAttribute("firefly.audit.before", AdminHttpJson.user(current));
+            exchange.setAttribute("firefly.audit.after", AdminHttpJson.user(updated));
+            respond(exchange, 200, "application/json; charset=utf-8", "{\"status\":\"password_changed\"}");
+        } finally {
+            java.util.Arrays.fill(currentPassword, '\0');
+            java.util.Arrays.fill(newPassword, '\0');
         }
     }
 
@@ -262,8 +315,9 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                     java.util.Arrays.fill(password, '\0');
                 }
             }
+            boolean passwordChangeRequired = rawPassword.isBlank() && current.passwordChangeRequired();
             com.firefly.security.AdminUser updated = new com.firefly.security.AdminUser(
-                    username, passwordHash, roles, enabled, expectedVersion + 1,
+                    username, passwordHash, roles, enabled, passwordChangeRequired, expectedVersion + 1,
                     current.createdAt(), context.clock().instant()
             );
             if (!repository.update(updated, expectedVersion)) {
@@ -1091,7 +1145,9 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 return;
             }
             if (!authorization.allowed()) {
-                respond(exchange, 403, "application/json; charset=utf-8", "{\"error\":\"forbidden\"}");
+                String error = attribute(exchange, "firefly.authorization.error");
+                respond(exchange, 403, "application/json; charset=utf-8",
+                        "{\"error\":\"" + jsonEscape(error.isBlank() ? "forbidden" : error) + "\"}");
                 return;
             }
             handler.handle(exchange);
@@ -1138,6 +1194,13 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 exchange.setAttribute("firefly.principal", principal);
                 exchange.setAttribute("firefly.admin.role", principal.roles().toString());
                 exchange.setAttribute("firefly.admin.actor", principal.subject());
+                if ("/api/auth/password".equals(path)) {
+                    return new Authorization(true, "POST".equalsIgnoreCase(exchange.getRequestMethod()));
+                }
+                if (user.passwordChangeRequired()) {
+                    exchange.setAttribute("firefly.authorization.error", "password_change_required");
+                    return new Authorization(true, false);
+                }
                 return new Authorization(true, principal.allows(requiredJwtRole(exchange)));
             } catch (IllegalArgumentException invalidJwt) {
                 return new Authorization(false, false);

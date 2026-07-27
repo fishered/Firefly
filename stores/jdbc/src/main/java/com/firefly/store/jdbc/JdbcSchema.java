@@ -2,6 +2,7 @@ package com.firefly.store.jdbc;
 
 import com.firefly.cluster.ShardHasher;
 import com.firefly.cluster.SchedulerShardConfig;
+import com.firefly.security.DefaultAdminUser;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -22,7 +23,7 @@ import java.util.Set;
  * Initializes and validates JDBC schema by selecting a dialect-specific SQL resource.
  */
 public final class JdbcSchema {
-    public static final int CURRENT_VERSION = 11;
+    public static final int CURRENT_VERSION = 12;
 
     private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.ofEntries(
             Map.entry("firefly_schema_version", Set.of("version", "installed_at")),
@@ -60,7 +61,8 @@ public final class JdbcSchema {
                     "after_payload", "occurred_at"
             )),
             Map.entry("firefly_user", Set.of(
-                    "username", "password_hash", "roles", "enabled", "version", "created_at", "updated_at"
+                    "username", "password_hash", "roles", "enabled", "password_change_required",
+                    "version", "created_at", "updated_at"
             )),
             Map.entry("firefly_integration_key", Set.of(
                     "key_id", "key_hash", "version", "created_at", "updated_at"
@@ -124,6 +126,7 @@ public final class JdbcSchema {
                 migrateOutboxColumns(connection, dialect);
                 migrateExecutionRetryColumns(connection);
                 migrateExecutionTimeoutColumn(connection, dialect);
+                migrateUserPasswordChangeRequired(connection);
                 backfillOutboxSnapshots(connection);
                 backfillExecutionTimeouts(connection);
                 configureClusterShardCount(connection, installedShardCount, options.schedulerShardCount());
@@ -381,6 +384,24 @@ public final class JdbcSchema {
         };
         try (Statement statement = connection.createStatement()) {
             statement.execute("alter table firefly_execution add column timeout_at " + type);
+        }
+    }
+
+    private static void migrateUserPasswordChangeRequired(Connection connection) throws SQLException {
+        Set<String> columns = columns(connection.getMetaData(), "firefly_user");
+        if (!columns.contains("password_change_required")) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("alter table firefly_user add column password_change_required boolean not null default false");
+            }
+        }
+        try (PreparedStatement statement = connection.prepareStatement("""
+                update firefly_user
+                set password_change_required=true
+                where username=? and password_hash=?
+                """)) {
+            statement.setString(1, DefaultAdminUser.USERNAME);
+            statement.setString(2, DefaultAdminUser.PASSWORD_HASH);
+            statement.executeUpdate();
         }
     }
 

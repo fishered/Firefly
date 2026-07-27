@@ -163,6 +163,7 @@ final class AdminHttpJson {
         return "{\"username\":\"" + escape(user.username())
                 + "\",\"roles\":[" + roles + "]"
                 + ",\"enabled\":" + user.enabled()
+                + ",\"passwordChangeRequired\":" + user.passwordChangeRequired()
                 + ",\"version\":" + user.version()
                 + ",\"createdAt\":\"" + user.createdAt()
                 + "\",\"updatedAt\":\"" + user.updatedAt() + "\"}";
