@@ -251,6 +251,37 @@ final class JdbcSchemaTest {
     }
 
     @Test
+    void upgradesVersionElevenUsersWithPasswordChangeRequired() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.createStatement()) {
+            statement.execute("alter table firefly_user drop column password_change_required");
+            statement.execute("delete from firefly_schema_version where version = 12");
+        }
+
+        JdbcSchema.initializeIfEmpty(dataSource, JdbcSchemaOptions.of("h2"));
+
+        try (Connection connection = dataSource.getConnection();
+             ResultSet resultSet = connection.getMetaData().getColumns(
+                     null, null, "FIREFLY_USER", "PASSWORD_CHANGE_REQUIRED")) {
+            assertTrue(resultSet.next());
+        }
+        try (Connection connection = dataSource.getConnection();
+             ResultSet resultSet = connection.createStatement().executeQuery("""
+                     select password_change_required from firefly_user where username='admin'
+                     """)) {
+            assertTrue(resultSet.next());
+            assertTrue(resultSet.getBoolean(1));
+        }
+        try (Connection connection = dataSource.getConnection();
+             ResultSet resultSet = connection.createStatement().executeQuery(
+                     "select version from firefly_schema_version where version=12")) {
+            assertTrue(resultSet.next());
+        }
+    }
+
+    @Test
     void validatesInitializedSchema() {
         DataSource dataSource = rawH2DataSource();
 
@@ -271,6 +302,9 @@ final class JdbcSchemaTest {
         assertEquals(41, JdbcSchemaScript.load(JdbcDialect.H2).size());
         assertEquals(41, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
         assertEquals(30, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 12).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 12).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 12).size());
     }
 
     private DataSource rawH2DataSource() {
