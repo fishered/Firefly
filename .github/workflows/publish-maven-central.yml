@@ -29,23 +29,31 @@ jobs:
       ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_SIGNING_KEY }}
       ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: v${{ inputs.version }}
+          fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: gradle
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
 
       - name: Verify release tag and project version
         shell: bash
         run: |
           set -euo pipefail
           expected_version='${{ inputs.version }}'
-          if [[ "$GITHUB_REF_TYPE" != "tag" || "$GITHUB_REF_NAME" != "v${expected_version}" ]]; then
-            echo "Run this workflow from tag v${expected_version}."
+          expected_tag="v${expected_version}"
+          actual_tag="$(git describe --tags --exact-match HEAD)"
+          if [[ "$actual_tag" != "$expected_tag" ]]; then
+            echo "Checked out tag ${actual_tag} does not match ${expected_tag}."
             exit 1
           fi
           actual_version="$(./gradlew -q properties | sed -n 's/^version: //p' | head -n 1)"
