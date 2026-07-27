@@ -8,40 +8,19 @@ const views = {
   settings: { title: '账号与安全', action: 'new-user' }
 };
 
-const sampleJobs = [
-  { id: 'job-001', name: '每日订单对账', groupName: 'finance', schedule: '0 0 2 * * ?', zoneId: 'Asia/Shanghai', nextFireTime: '2026-07-09T02:00:00Z', executorName: 'order-executor', businessHandlerName: 'reconciliationHandler', enabled: true, lastResult: '成功' },
-  { id: 'job-002', name: '每小时用户统计', groupName: 'user', schedule: '0 0 * * * ?', zoneId: 'Asia/Shanghai', nextFireTime: '2026-07-09T15:00:00Z', executorName: 'user-executor', businessHandlerName: 'userStatisticsHandler', enabled: true, lastResult: '失败' },
-  { id: 'job-003', name: '每日推送报告', groupName: 'notification', schedule: '0 30 9 * * ?', zoneId: 'America/New_York', nextFireTime: '2026-07-09T09:30:00Z', executorName: 'notification-executor', businessHandlerName: 'dailyReportHandler', enabled: false, lastResult: '成功' },
-  { id: 'job-004', name: '30秒心跳检测', groupName: 'monitor', schedule: 'fixed-rate:30000', zoneId: 'UTC', nextFireTime: '2026-07-09T07:30:00Z', executorName: 'monitor-executor', businessHandlerName: 'heartbeatHandler', enabled: false, status: '暂停', lastResult: '成功' }
-];
-
-const sampleNodes = [
-  { nodeId: 'node-a', roles: ['SCHEDULER', 'API'], mode: 'Cluster', lastHeartbeatAt: '2024-05-20T14:32:18', shards: ['shard-0', 'shard-2', 'shard-4'], leaseUntil: '2024-05-20T14:33:18', fencingToken: '7a2f9d3e...', status: '在线' },
-  { nodeId: 'node-b', roles: ['SCHEDULER', 'GATEWAY'], mode: 'Cluster', lastHeartbeatAt: '2024-05-20T14:32:17', shards: ['shard-1', 'shard-3', 'shard-5'], leaseUntil: '2024-05-20T14:33:17', fencingToken: '8b3e4f2a...', status: '在线' },
-  { nodeId: 'node-c', roles: ['SCHEDULER', 'API'], mode: 'Cluster', lastHeartbeatAt: '2024-05-20T14:32:19', shards: ['shard-6', 'shard-7'], leaseUntil: '2024-05-20T14:33:19', fencingToken: '9c4d5g1b...', status: '在线' }
-];
-
-const sampleExecutions = [
-  ['exec-001287', 'job-00042', '2024-05-20 10:30:00', '2024-05-20 10:30:00', '2024-05-20 10:30:01', '2024-05-20 10:30:05', '4s', 'order-executor@instance-1', 'SUCCEEDED'],
-  ['exec-001286', 'job-00078', '2024-05-20 10:25:00', '2024-05-20 10:25:00', '2024-05-20 10:25:01', '2024-05-20 10:25:12', '11s', 'user-executor@instance-2', 'FAILED'],
-  ['exec-001285', 'job-00023', '2024-05-20 10:20:00', '2024-05-20 10:20:00', '2024-05-20 10:20:01', '-', '运行中', 'notification-executor@instance-1', 'RUNNING'],
-  ['exec-001284', 'job-00056', '2024-05-20 10:15:00', '2024-05-20 10:15:02', '-', '-', '-', '-', 'MISFIRED'],
-  ['exec-001283', 'job-00091', '2024-05-20 10:10:00', '2024-05-20 10:10:00', '2024-05-20 10:10:01', '2024-05-20 10:15:02', '5m 1s', 'data-executor@instance-3', 'TIMEOUT']
-];
-
 const state = {
   currentView: 'overview',
   config: null,
   session: null,
   overview: null,
-  jobs: sampleJobs,
+  jobs: [],
   executions: [],
   deadDispatches: [],
   executors: [],
   executorDefinitions: [],
   executorHeartbeatTimeoutSeconds: 30,
   executorServerTime: null,
-  nodes: sampleNodes,
+  nodes: [],
   users: [],
   integrationKey: null,
   plugins: []
@@ -356,7 +335,7 @@ async function loadViewData(view, force) {
   const loadedAt = viewLoadedAt.get(view) ?? 0;
   if (!force && Date.now() - loadedAt < VIEW_CACHE_MS) return;
   const loaders = {
-    overview: [loadOverview],
+    overview: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes],
     jobs: [loadJobs, loadExecutors],
     executors: [loadExecutors],
     executions: [loadExecutions, loadDeadDispatches],
@@ -388,9 +367,9 @@ async function loadJobs() {
   try {
     const data = await api('/api/jobs');
     const jobs = normalizeList(data, 'jobs');
-    state.jobs = jobs.length ? jobs.map(normalizeJob) : sampleJobs;
+    state.jobs = jobs.map(normalizeJob);
   } catch {
-    state.jobs = sampleJobs;
+    state.jobs = [];
   }
 }
 
@@ -416,7 +395,7 @@ async function loadExecutions() {
       ? executions.filter(item => item.jobId === state.executionFilterJobId)
       : executions;
   } catch {
-    state.executions = sampleExecutionObjects();
+    state.executions = [];
   }
 }
 
@@ -433,9 +412,9 @@ async function loadNodes() {
   try {
     const data = await api('/api/nodes');
     const nodes = normalizeList(data, 'nodes');
-    state.nodes = nodes.length ? nodes.map(normalizeNode) : sampleNodes;
+    state.nodes = nodes.map(normalizeNode);
   } catch {
-    state.nodes = sampleNodes;
+    state.nodes = [];
   }
 }
 
@@ -504,39 +483,49 @@ function legacyBindViewActions(view) {
 
 function overviewPage() {
   const overview = state.overview ?? {};
-  const jobsTotal = Number(overview.jobsTotal ?? 92);
-  const jobsEnabled = Number(overview.jobsEnabled ?? (state.jobs.filter(job => job.enabled !== false).length || 86));
-  const nodesOnline = Number(overview.nodesOnline ?? (state.nodes.length || 3));
-  const executorsOnline = Number(overview.executorsOnline ?? (state.executors.length || 12));
+  const jobsTotal = Number(overview.jobsTotal ?? state.jobs.length);
+  const jobsEnabled = Number(overview.jobsEnabled ?? state.jobs.filter(job => job.enabled !== false).length);
+  const jobsDisabled = Number(overview.jobsDisabled ?? Math.max(0, jobsTotal - jobsEnabled));
+  const nodesOnline = Number(overview.nodesOnline ?? onlineNodes().length);
+  const executorsOnline = Number(overview.executorsOnline ?? onlineExecutorInstances().length);
+  const executorsTotal = state.executors.length;
+  const executorsOffline = Math.max(0, executorsTotal - executorsOnline);
+  const dueSoon = jobsDueWithin(60 * 1000).length;
+  const recentFailures = recentFailureCount(24 * 60 * 60 * 1000);
+  const executionSummary = summarizeExecutions(state.executions);
+  const primaryNode = state.nodes[0] ?? {};
+  const schedulerStatus = overview.status === 'UP'
+    ? '<span class="success"><span class="dot"></span>运行正常</span>'
+    : '-';
   return `
     <section class="card system-card">
       <h2 class="section-title">系统信息</h2>
       <div class="divider"></div>
       <div class="system-grid">
-        ${metaBlock('调度模式', tag('cluster'))}
-        ${metaBlock('当前节点角色', `${tag('SCHEDULER', 'primary')} ${tag('API')}`)}
-        ${metaBlock('调度器状态', `<span class="success"><span class="dot"></span>运行正常</span>`)}
-        ${metaBlock('系统运行时间', '12天 6小时 32分钟')}
+        ${metaBlock('调度模式', primaryNode.mode ? tag(primaryNode.mode) : '-')}
+        ${metaBlock('当前节点角色', renderRoleTags(primaryNode.roles))}
+        ${metaBlock('调度器状态', schedulerStatus)}
+        ${metaBlock('系统运行时间', '-')}
       </div>
     </section>
 
     <section class="stats-grid">
-      ${statCard('在线执行器', executorsOnline, '/ 12', '全部在线', '▤', 'primary')}
-      ${statCard('启用任务数', jobsEnabled, `/ ${jobsTotal}`, '6个任务已禁用', '●', 'yellow', 'warning')}
-      ${statCard('未来1分钟待触发', 17, '个任务', '调度队列正常', '◔', 'gray')}
-      ${statCard('最近失败数', 3, '次/24h', '需要关注', '▲', 'red', 'danger')}
+      ${statCard('在线执行器', executorsOnline, executorsTotal ? `/ ${executorsTotal}` : '', executorsOffline ? `${executorsOffline} 个离线记录` : '全部在线', '▤', 'primary', executorsOffline ? 'warning' : 'success')}
+      ${statCard('启用任务数', jobsEnabled, `/ ${jobsTotal}`, `${jobsDisabled} 个任务已禁用`, '●', 'yellow', jobsDisabled ? 'warning' : 'success')}
+      ${statCard('未来1分钟待触发', dueSoon, '个任务', dueSoon ? '等待调度' : '暂无待触发', '◔', 'gray')}
+      ${statCard('最近失败数', recentFailures, '次/24h', recentFailures ? '需要关注' : '暂无失败', '▲', 'red', recentFailures ? 'danger' : 'success')}
     </section>
 
     <section class="grid-2">
       <article class="chart-card">
-        <h2 class="chart-title">▰ 调度延迟统计</h2>
+        <h2 class="chart-title">▰ 执行趋势</h2>
         <div class="divider"></div>
-        <div class="line-chart">${lineChart()}</div>
+        <div class="line-chart">${lineChart(state.executions)}</div>
       </article>
       <article class="chart-card">
         <h2 class="chart-title">◔ 执行状态分布</h2>
         <div class="divider"></div>
-        <div class="donut-wrap">${statusDonut()}</div>
+        <div class="donut-wrap">${statusDonut(executionSummary.statusCounts)}</div>
       </article>
     </section>
 
@@ -545,11 +534,11 @@ function overviewPage() {
         <h2 class="chart-title">◉ 核心运行指标</h2>
         <div class="divider"></div>
         <div class="metrics-list">
-          ${metricRow('平均调度延迟', '12ms')}
-          ${metricRow('最近1小时触发任务数', '1247')}
-          ${metricRow('最近1小时失败任务数', '0')}
-          ${metricRow('任务成功率', '<span class="success">99.7%</span>')}
-          ${metricRow('平均执行时长', '247ms')}
+          ${metricRow('平均调度延迟', executionSummary.averageDispatchDelay)}
+          ${metricRow('最近1小时触发任务数', String(executionsWithin(60 * 60 * 1000).length))}
+          ${metricRow('最近1小时失败任务数', String(recentFailureCount(60 * 60 * 1000)))}
+          ${metricRow('任务成功率', executionSummary.successRate)}
+          ${metricRow('平均执行时长', executionSummary.averageDuration)}
         </div>
       </article>
       <article class="chart-card">
@@ -747,6 +736,7 @@ function bindExecutorInstanceDetailActions(root = document) {
 }
 
 function executionsPage() {
+  const summary = summarizeExecutions(state.executions);
   const rows = state.executions.slice(0, 8).map(item => tableRow([
     code(item.executionId),
     code(item.jobId),
@@ -778,10 +768,10 @@ function executionsPage() {
       <button class="btn" type="button">◆ 重置</button>
     </section>
     <section class="stats-grid">
-      ${statCard('总执行数', '12,847', '', '', '▤', 'primary')}
-      ${statCard('成功执行', '12,362', '', '', '●', 'primary', 'success')}
-      ${statCard('失败执行', 217, '', '', '×', 'red', 'danger')}
-      ${statCard('运行中', 26, '', '', '◌', 'gray')}
+      ${statCard('总执行数', state.executions.length, '', '', '▤', 'primary')}
+      ${statCard('成功执行', summary.statusCounts.SUCCEEDED ?? 0, '', '', '●', 'primary', 'success')}
+      ${statCard('失败执行', summary.failureCount, '', '', '×', 'red', summary.failureCount ? 'danger' : 'success')}
+      ${statCard('运行中', summary.runningCount, '', '', '◌', 'gray')}
     </section>
     <section class="table-card">
       <div class="table-scroll">
@@ -961,12 +951,16 @@ function emptyRow(columns, label) {
 }
 
 function nodesPage() {
+  const nodeTotal = state.nodes.length;
+  const onlineCount = onlineNodes().length;
+  const shardTotal = totalNodeShards();
+  const health = nodeTotal ? `${Math.round((onlineCount / nodeTotal) * 100)}%` : '-';
   return `
     <section class="summary-strip">
-      ${statCard('集群模式', 'Cluster', '', '', '▤', 'primary')}
-      ${statCard('在线节点', `${state.nodes.length} / 3`, '', '', '●', 'primary', 'success')}
-      ${statCard('总分片数', 8, '', '', '▦', 'gray')}
-      ${statCard('调度健康度', '100%', '', '', '❤', 'primary', 'success')}
+      ${statCard('集群模式', nodeTotal ? 'Cluster' : '-', '', '', '▤', 'primary')}
+      ${statCard('在线节点', `${onlineCount} / ${nodeTotal}`, '', '', '●', 'primary', onlineCount === nodeTotal ? 'success' : 'warning')}
+      ${statCard('总分片数', shardTotal, '', '', '▦', 'gray')}
+      ${statCard('调度健康度', health, '', '', '❤', 'primary', onlineCount === nodeTotal ? 'success' : 'warning')}
     </section>
     <section class="table-card">
       <div class="table-title">节点列表</div>
@@ -975,13 +969,13 @@ function nodesPage() {
           <thead><tr>${headers(['节点ID','角色','模式','最后心跳','所属分片','租约到期','隔离令牌','状态','操作'])}</tr></thead>
           <tbody>${state.nodes.map(node => tableRow([
             text(node.nodeId),
-            normalizeRoles(node.roles).split(', ').map(role => tag(role, role === 'SCHEDULER' ? 'primary' : '')).join(' '),
-            text(node.mode ?? 'Cluster'),
+            renderRoleTags(node.roles),
+            text(node.mode ?? '-'),
             text(formatDate(node.lastHeartbeatAt)),
-            (node.shards ?? ['shard-0']).map(shard => `<span class="shard-tag">${escapeHtml(shard)}</span>`).join(' '),
-            text(node.leaseUntil ?? formatDate(new Date(Date.now() + 60000).toISOString())),
-            text(node.fencingToken ?? '7a2f9d3e...'),
-            statusText(node.status ?? '在线', node.status === 'DRAINING' ? 'warning' : 'success'),
+            (node.shards ?? []).map(shard => `<span class="shard-tag">${escapeHtml(shard)}</span>`).join(' ') || '-',
+            text(node.leaseUntil ? formatDate(node.leaseUntil) : '-'),
+            text(node.fencingToken ?? '-'),
+            statusText(node.status ?? '-', node.status === 'DRAINING' ? 'warning' : 'success'),
             `<button class="link-button" type="button" data-node-operation="drain" data-node-id="${escapeHtml(node.nodeId)}">排空</button> <button class="link-button danger" type="button" data-node-operation="offline" data-node-id="${escapeHtml(node.nodeId)}">下线</button>`
           ])).join('')}</tbody>
         </table>
@@ -1056,11 +1050,15 @@ function tableRow(values) {
 }
 
 function tableFooter(label, last) {
+  const lastPage = Math.max(1, Number(last) || 1);
+  const pages = Array.from({ length: Math.min(3, lastPage) }, (_, index) => index + 1)
+    .map(page => `<span class="page-btn ${page === 1 ? 'active' : ''}">${page}</span>`)
+    .join('');
   return `
     <div class="table-footer">
       <span>${escapeHtml(label)}</span>
       <div class="pagination">
-        <span class="page-btn">‹</span><span class="page-btn active">1</span><span class="page-btn">2</span><span class="page-btn">3</span><span>...</span><span class="page-btn">${escapeHtml(last)}</span><span class="page-btn">›</span>
+        <span class="page-btn">‹</span>${pages}${lastPage > 3 ? `<span>...</span><span class="page-btn">${escapeHtml(lastPage)}</span>` : ''}<span class="page-btn">›</span>
       </div>
     </div>
   `;
@@ -1563,45 +1561,151 @@ async function createExecutor(event) {
   }
 }
 
-function sampleExecutionObjects() {
-  return sampleExecutions.map(item => ({
-    executionId: item[0],
-    jobId: item[1],
-    scheduledFireTime: item[2],
-    dispatchTime: item[3],
-    startTime: item[4],
-    endTime: item[5],
-    duration: item[6],
-    executorInstance: item[7],
-    status: item[8]
-  }));
+function onlineExecutorInstances() {
+  return state.executors.filter(instance => String(instance.status ?? '').toUpperCase() === 'ONLINE');
 }
 
-function lineChart() {
+function onlineNodes() {
+  return state.nodes.filter(node => ['ONLINE', '在线'].includes(String(node.status ?? '').toUpperCase())
+    || String(node.status ?? '') === '在线');
+}
+
+function totalNodeShards() {
+  return new Set(state.nodes.flatMap(node => node.shards ?? [])).size;
+}
+
+function jobsDueWithin(milliseconds) {
+  const now = Date.now();
+  const limit = now + milliseconds;
+  return state.jobs.filter(job => {
+    const next = timestamp(job.nextFireTime);
+    return job.enabled !== false && next !== null && next >= now && next <= limit;
+  });
+}
+
+function executionsWithin(milliseconds) {
+  const since = Date.now() - milliseconds;
+  return state.executions.filter(item => {
+    const occurredAt = executionTimestamp(item);
+    return occurredAt !== null && occurredAt >= since;
+  });
+}
+
+function recentFailureCount(milliseconds) {
+  return executionsWithin(milliseconds).filter(item => isFailureStatus(item.status)).length;
+}
+
+function summarizeExecutions(executions) {
+  const statusCounts = executions.reduce((counts, item) => {
+    const status = String(item.status ?? 'UNKNOWN').toUpperCase();
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+  const terminal = executions.filter(item => ['SUCCEEDED', 'FAILED', 'TIMEOUT', 'CANCELLED'].includes(String(item.status ?? '').toUpperCase()));
+  const succeeded = statusCounts.SUCCEEDED ?? 0;
+  const successRate = terminal.length
+    ? `<span class="${succeeded === terminal.length ? 'success' : ''}">${Math.round((succeeded / terminal.length) * 1000) / 10}%</span>`
+    : '-';
+  return {
+    statusCounts,
+    failureCount: executions.filter(item => isFailureStatus(item.status)).length,
+    runningCount: executions.filter(item => isActiveExecution(String(item.status ?? '').toUpperCase())).length,
+    successRate,
+    averageDispatchDelay: averageDuration(executions, item => {
+      const scheduled = timestamp(item.scheduledFireTime);
+      const dispatched = timestamp(item.dispatchTime);
+      return scheduled !== null && dispatched !== null ? Math.max(0, dispatched - scheduled) : null;
+    }),
+    averageDuration: averageDuration(executions, item => {
+      const start = timestamp(item.startTime ?? item.dispatchTime);
+      const end = timestamp(item.endTime ?? item.completedAt);
+      return start !== null && end !== null ? Math.max(0, end - start) : null;
+    })
+  };
+}
+
+function isFailureStatus(status) {
+  return ['FAILED', 'TIMEOUT'].includes(String(status ?? '').toUpperCase());
+}
+
+function averageDuration(items, value) {
+  const durations = items.map(value).filter(duration => Number.isFinite(duration));
+  if (!durations.length) return '-';
+  return formatDurationMs(Math.round(durations.reduce((sum, duration) => sum + duration, 0) / durations.length));
+}
+
+function formatDurationMs(milliseconds) {
+  if (milliseconds < 1000) return `${milliseconds}ms`;
+  const seconds = milliseconds / 1000;
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.round(seconds % 60)}s`;
+}
+
+function executionTimestamp(item) {
+  return timestamp(item.endTime) ?? timestamp(item.completedAt) ?? timestamp(item.dispatchTime)
+    ?? timestamp(item.scheduledFireTime) ?? timestamp(item.createdAt);
+}
+
+function timestamp(value) {
+  if (!value || value === '-') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function lineChart(executions) {
+  const now = Date.now();
+  const buckets = Array.from({ length: 7 }, (_, index) => {
+    const start = now - (6 - index) * 60 * 60 * 1000;
+    return {
+      label: new Date(start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      count: 0
+    };
+  });
+  for (const execution of executions) {
+    const occurredAt = executionTimestamp(execution);
+    if (occurredAt === null || occurredAt < now - 6 * 60 * 60 * 1000 || occurredAt > now) continue;
+    const index = Math.min(6, Math.max(0, Math.floor((occurredAt - (now - 6 * 60 * 60 * 1000)) / (60 * 60 * 1000))));
+    buckets[index].count += 1;
+  }
+  const max = Math.max(1, ...buckets.map(bucket => bucket.count));
+  const points = buckets.map((bucket, index) => {
+    const x = 90 + index * 97;
+    const y = 155 - (bucket.count / max) * 115;
+    return `${x},${y}`;
+  }).join(' ');
   return `
-    <svg viewBox="0 0 720 190" role="img" aria-label="调度延迟统计">
-      <defs><linearGradient id="lineFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#0f766e" stop-opacity=".20"/><stop offset="100%" stop-color="#0f766e" stop-opacity=".04"/></linearGradient></defs>
+    <svg viewBox="0 0 720 190" role="img" aria-label="执行趋势">
       ${[35,65,95,125,155].map(y => `<line x1="42" y1="${y}" x2="690" y2="${y}" stroke="#e2e8f0"/>`).join('')}
-      <path d="M90 120 C150 105 205 90 245 55 C285 25 340 34 390 52 C445 72 485 90 540 98 C600 105 645 100 675 82 L675 155 L90 155 Z" fill="url(#lineFill)"/>
-      <path d="M90 120 C150 105 205 90 245 55 C285 25 340 34 390 52 C445 72 485 90 540 98 C600 105 645 100 675 82" fill="none" stroke="#0f766e" stroke-width="2"/>
+      <polyline points="${points}" fill="none" stroke="#0f766e" stroke-width="2"/>
       <line x1="42" y1="155" x2="690" y2="155" stroke="#cbd5e1"/>
-      ${['00:00','04:00','08:00','12:00','16:00','20:00','现在'].map((label, index) => `<text x="${90 + index * 97}" y="176" fill="#cbd5e1" font-size="13" text-anchor="middle">${label}</text>`).join('')}
-      ${['0','3','6','9','12','15','---'].map((label, index) => `<text x="34" y="${158 - index * 25}" fill="#64748b" font-size="12" text-anchor="end">${label}</text>`).join('')}
+      ${buckets.map((bucket, index) => `<text x="${90 + index * 97}" y="176" fill="#cbd5e1" font-size="13" text-anchor="middle">${bucket.label}</text>`).join('')}
+      ${[0, .25, .5, .75, 1].map((ratio, index) => `<text x="34" y="${158 - index * 30}" fill="#64748b" font-size="12" text-anchor="end">${Math.round(max * ratio)}</text>`).join('')}
     </svg>
   `;
 }
 
-function statusDonut() {
+function statusDonut(statusCounts) {
+  const statuses = [
+    ['SUCCEEDED', '#16a34a'],
+    ['RUNNING', '#2563eb'],
+    ['FAILED', '#dc2626'],
+    ['TIMEOUT', '#d97706'],
+    ['MISFIRED', '#475569']
+  ];
+  const total = statuses.reduce((sum, [status]) => sum + Number(statusCounts[status] ?? 0), 0);
+  const circumference = 326.7;
+  let offset = 0;
+  const segments = total ? statuses.map(([status, color]) => {
+    const length = (Number(statusCounts[status] ?? 0) / total) * circumference;
+    const segment = `<circle cx="190" cy="96" r="52" fill="none" stroke="${color}" stroke-width="24" stroke-dasharray="${length} ${circumference - length}" stroke-dashoffset="${-offset}" transform="rotate(-90 190 96)"/>`;
+    offset += length;
+    return segment;
+  }).join('') : '<circle cx="190" cy="96" r="52" fill="none" stroke="#e2e8f0" stroke-width="24"/>';
   return `
     <svg viewBox="0 0 560 190" role="img" aria-label="执行状态分布">
-      <circle cx="190" cy="96" r="52" fill="none" stroke="#16a34a" stroke-width="24"/>
-      <path d="M190 44 A52 52 0 0 1 194 44" fill="none" stroke="#2563eb" stroke-width="24"/>
-      <path d="M194 44 A52 52 0 0 1 197 45" fill="none" stroke="#ef4444" stroke-width="24"/>
-      ${legend(330, 52, '#16a34a', 'SUCCEEDED')}
-      ${legend(330, 78, '#2563eb', 'RUNNING')}
-      ${legend(330, 104, '#dc2626', 'FAILED')}
-      ${legend(330, 130, '#d97706', 'TIMEOUT')}
-      ${legend(330, 156, '#475569', 'MISFIRED')}
+      ${segments}
+      ${statuses.map(([status, color], index) => legend(330, 52 + index * 26, color, `${status} ${Number(statusCounts[status] ?? 0)}`)).join('')}
     </svg>
   `;
 }
@@ -1697,7 +1801,7 @@ function normalizeJob(job) {
     ...job,
     businessHandlerName: job.businessHandlerName ?? job.handlerName,
     groupName: job.groupName ?? job.groupId ?? 'default',
-    lastResult: job.lastResult ?? '成功'
+    lastResult: job.lastResult ?? '-'
   };
 }
 
@@ -1705,16 +1809,29 @@ function normalizeNode(node) {
   return {
     ...node,
     nodeId: node.nodeId ?? node.id,
-    mode: node.mode ?? 'Cluster',
-    shards: node.shards ?? ['shard-0'],
+    mode: node.mode ?? '-',
+    shards: node.shards ?? [],
     leaseUntil: node.leaseUntil ?? '-',
-    fencingToken: node.fencingToken ?? '7a2f9d3e...'
+    fencingToken: node.fencingToken ?? '-'
   };
 }
 
 function normalizeRoles(roles) {
-  if (Array.isArray(roles)) return roles.join(', ');
-  return String(roles ?? '').replace(/^\[|\]$/g, '') || '-';
+  const values = roleList(roles);
+  return values.length ? values.join(', ') : '-';
+}
+
+function renderRoleTags(roles) {
+  const values = roleList(roles);
+  return values.length
+    ? values.map(role => tag(role, role === 'SCHEDULER' ? 'primary' : '')).join(' ')
+    : '-';
+}
+
+function roleList(roles) {
+  if (Array.isArray(roles)) return roles.map(String).filter(Boolean);
+  return String(roles ?? '').replace(/^\[|\]$/g, '').split(',')
+    .map(role => role.trim()).filter(Boolean);
 }
 
 function formatDate(value) {
