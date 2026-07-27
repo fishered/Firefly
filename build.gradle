@@ -1,9 +1,10 @@
 plugins {
     id "base"
+    id "com.vanniktech.maven.publish" version "0.37.0" apply false
 }
 
 allprojects {
-    group = "com.firefly"
+    group = "io.github.fishered"
     version = "1.0.0"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
@@ -34,6 +35,13 @@ subprojects {
             events "passed", "skipped", "failed"
         }
     }
+
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = "UTF-8"
+        options.charSet = "UTF-8"
+        options.docEncoding = "UTF-8"
+        options.addStringOption("Xdoclint:none", "-quiet")
+    }
 }
 
 def publishedProjects = [
@@ -45,22 +53,89 @@ def publishedProjects = [
         ":integrations:firefly-spring-boot-starter"
 ]
 
+def publishedProjectDescriptions = [
+        ":libs:scheduler-core"                            : "Core scheduling domain, execution model, routing, and storage contracts for Firefly.",
+        ":plugins:plugin-api"                             : "Public plugin API for extending Firefly without coupling plugins to server internals.",
+        ":transports:netty"                               : "Netty protocol and transport implementation shared by Firefly gateways and executors.",
+        ":clients:executor-netty"                         : "Resilient Netty executor client for connecting business services to Firefly gateways.",
+        ":integrations:firefly-spring-boot-autoconfigure" : "Spring Boot auto-configuration for Firefly executors and annotated jobs.",
+        ":integrations:firefly-spring-boot-starter"       : "Single dependency for integrating Spring Boot applications with Firefly."
+]
+
 def configuredMavenLocalRepo = providers.gradleProperty("firefly.maven.local.repo")
         .orElse(providers.environmentVariable("FIREFLY_MAVEN_LOCAL_REPO"))
         .orElse(providers.systemProperty("maven.repo.local"))
         .orNull
 def fireflyLocalRepo = configuredMavenLocalRepo
         ?: new File(System.getProperty("user.home"), ".m2/repository").absolutePath
+def hasSigningKey = providers.gradleProperty("signingInMemoryKey").isPresent()
+def hasSigningPassword = providers.gradleProperty("signingInMemoryKeyPassword").isPresent()
+def hasMavenCentralCredentials = providers.gradleProperty("mavenCentralUsername").isPresent()
+        && providers.gradleProperty("mavenCentralPassword").isPresent()
+def centralPublishRequested = gradle.startParameter.taskNames.any {
+    def taskName = it.toLowerCase()
+    taskName.contains("publishandreleasetomavencentral")
+            || taskName.contains("publishallpublicationstomavencentralrepository")
+            || taskName.contains("publishmavenpublicationtomavencentralrepository")
+}
+
+if (centralPublishRequested && (!hasSigningKey || !hasSigningPassword)) {
+    throw new GradleException("Maven Central publishing requires a GPG signing key. Configure signingInMemoryKey and signingInMemoryKeyPassword.")
+}
+if (centralPublishRequested && !hasMavenCentralCredentials) {
+    throw new GradleException("Maven Central publishing requires mavenCentralUsername and mavenCentralPassword.")
+}
 
 configure(publishedProjects.collect { project(it) }) {
-    apply plugin: "maven-publish"
+    apply plugin: "com.vanniktech.maven.publish"
 
-    publishing {
-        publications {
-            mavenJava(MavenPublication) {
-                from components.java
+    tasks.named("jar", Jar) {
+        from(rootProject.file("LICENSE")) {
+            into("META-INF")
+        }
+        from(rootProject.file("NOTICE")) {
+            into("META-INF")
+        }
+    }
+
+    mavenPublishing {
+        publishToMavenCentral()
+
+        if (hasSigningKey && hasSigningPassword) {
+            signAllPublications()
+        }
+
+        pom {
+            name = "Firefly ${project.name}"
+            description = publishedProjectDescriptions[project.path]
+            inceptionYear = "2026"
+            url = "https://github.com/fishered/Firefly"
+
+            licenses {
+                license {
+                    name = "The Apache License, Version 2.0"
+                    url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                    distribution = "repo"
+                }
+            }
+
+            developers {
+                developer {
+                    id = "fishered"
+                    name = "fishered"
+                    url = "https://github.com/fishered"
+                }
+            }
+
+            scm {
+                url = "https://github.com/fishered/Firefly"
+                connection = "scm:git:git://github.com/fishered/Firefly.git"
+                developerConnection = "scm:git:ssh://git@github.com/fishered/Firefly.git"
             }
         }
+    }
+
+    publishing {
         repositories {
             maven {
                 name = "fireflyLocal"
@@ -77,7 +152,7 @@ tasks.register("publishToMavenLocal") {
         dependsOn(publishedProjects.collect { "${it}:publishToMavenLocal" })
     } else {
         dependsOn(publishedProjects.collect {
-            "${it}:publishMavenJavaPublicationToFireflyLocalRepository"
+            "${it}:publishMavenPublicationToFireflyLocalRepository"
         })
     }
 }
@@ -86,7 +161,20 @@ tasks.register("publishToFireflyMavenLocal") {
     group = "publishing"
     description = "Publishes Firefly artifacts to -Pfirefly.maven.local.repo or FIREFLY_MAVEN_LOCAL_REPO."
     dependsOn(publishedProjects.collect {
-        "${it}:publishMavenJavaPublicationToFireflyLocalRepository"
+        "${it}:publishMavenPublicationToFireflyLocalRepository"
+    })
+}
+
+tasks.register("verifyMavenCentralPublication") {
+    group = "verification"
+    description = "Builds tests, POMs, sources, and Javadocs for every Maven Central module without uploading."
+    dependsOn(subprojects.collect { "${it.path}:test" })
+    dependsOn(publishedProjects.collectMany {
+        [
+                "${it}:generatePomFileForMavenPublication",
+                "${it}:sourcesJar",
+                "${it}:plainJavadocJar"
+        ]
     })
 }
 

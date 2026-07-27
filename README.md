@@ -13,6 +13,7 @@
   <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
 </p>
 
 <p align="center">
@@ -216,19 +217,13 @@ docker compose down
 
 ## Spring Boot 快速集成
 
-### 1. 安装当前版本到 Maven Local
+### 1. 引入唯一 Starter
 
-在开发仓库执行：
-
-```powershell
-.\gradlew.bat publishToMavenLocal
-```
-
-### 2. 引入唯一 Starter
+Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外仓库：
 
 ```xml
 <dependency>
-    <groupId>com.firefly</groupId>
+    <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
     <version>1.0.0</version>
 </dependency>
@@ -236,7 +231,7 @@ docker compose down
 
 业务项目只需要这个 Starter。Netty 客户端、处理器发现、任务同步、心跳、重连和 Spring 生命周期均由自动配置完成。
 
-### 3. 生成 Integration Key
+### 2. 生成 Integration Key
 
 打开 Admin UI 的“配置”页面，生成 Integration Key。明文只返回一次，服务端只保存摘要。该密钥只用于：
 
@@ -245,7 +240,7 @@ docker compose down
 
 Integration Key 不能执行 Admin 用户管理、手动触发、节点排空等管理操作。
 
-### 4. 配置业务服务
+### 3. 配置业务服务
 
 ```yaml
 spring:
@@ -266,7 +261,7 @@ firefly:
 
 生产环境可以配置多个 Gateway 地址。Executor 会同时维护连接，并在断线后指数退避重连和重新注册。
 
-### 5. 声明任务
+### 4. 声明任务
 
 ```java
 import com.firefly.domain.ExecutionContext;
@@ -413,6 +408,7 @@ firefly/
 | [Admin API](https://fishered.github.io/firefly-home/reference/admin-api) | 管理接口与操作权限 |
 | [Metrics](https://fishered.github.io/firefly-home/reference/metrics) | Prometheus 指标与监控建议 |
 | [数据库结构](https://fishered.github.io/firefly-home/reference/database-schema) | 全量 schema 和表职责 |
+| [Maven Central 发布](docs/maven-central-publishing.md) | 命名空间、GPG、发布验证和 GitHub Actions |
 
 ## 验证与开发
 

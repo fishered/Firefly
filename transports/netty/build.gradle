@@ -14,3 +14,25 @@ dependencies {
     testImplementation "io.netty:netty-transport:4.1.115.Final"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"
 }
+
+def delombokOutput = layout.buildDirectory.dir("generated/sources/delombok/main")
+def delombok = tasks.register("delombok", JavaExec) {
+    group = "documentation"
+    description = "Expands Lombok-generated API types for Javadoc."
+    classpath = configurations.annotationProcessor
+    mainClass = "lombok.launch.Main"
+    inputs.dir("src/main/java")
+    outputs.dir(delombokOutput)
+    dependsOn(configurations.compileClasspath)
+    doFirst {
+        delete(delombokOutput)
+        args "delombok", file("src/main/java").absolutePath,
+                "--classpath", configurations.compileClasspath.asPath,
+                "-d", delombokOutput.get().asFile.absolutePath
+    }
+}
+
+tasks.named("javadoc", Javadoc) {
+    dependsOn(delombok)
+    setSource(delombokOutput)
+}

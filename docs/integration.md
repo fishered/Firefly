@@ -172,7 +172,7 @@ NettyExecutorClient client = NettyExecutorClient.builder()
 client.start();
 ```
 
-Spring Boot 项目只需要使用 `com.firefly:firefly-spring-boot-starter`，配置 `firefly.executor.name` 后即可自动注册：
+Spring Boot 项目只需要使用 `io.github.fishered:firefly-spring-boot-starter`，配置 `firefly.executor.name` 后即可自动注册：
 
 启动时会依次输出自动配置激活、Gateway 连接成功和 Executor 注册成功日志。只有收到 Gateway 的 `REGISTERED` 响应后，才表示该实例已经可以接收任务；单纯 Spring Context 启动成功不能替代这个判断。
 
@@ -180,7 +180,7 @@ Maven 依赖：
 
 ```xml
 <dependency>
-    <groupId>com.firefly</groupId>
+    <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
     <version>1.0.0</version>
 </dependency>

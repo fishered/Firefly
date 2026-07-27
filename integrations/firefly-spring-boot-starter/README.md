@@ -4,7 +4,7 @@ This is the single user-facing Spring Boot integration artifact.
 
 ```xml
 <dependency>
-    <groupId>com.firefly</groupId>
+    <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
     <version>1.0.0</version>
 </dependency>

@@ -65,7 +65,7 @@ client.start();
 
 ## Spring Boot 接入
 
-引入 `com.firefly:firefly-spring-boot-starter` 后，只需要配置执行器名称：
+引入 `io.github.fishered:firefly-spring-boot-starter` 后，只需要配置执行器名称：
 
 ```yaml
 firefly:
