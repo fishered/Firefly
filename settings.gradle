@@ -1,19 +1,57 @@
 pluginManagement {
     repositories {
-        mavenLocal()
-        maven { url = uri("file:///E:/m2/repository") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        String mavenLocalFlag = providers.gradleProperty("firefly.repositories.mavenLocal")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_MAVEN_LOCAL"))
+                .orNull
+        boolean useMavenLocal = mavenLocalFlag != null
+                && ["true", "1", "yes"].contains(mavenLocalFlag.trim().toLowerCase(Locale.ROOT))
+        String localRepositoryPath = providers.gradleProperty("firefly.repositories.local.path")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_LOCAL_PATH"))
+                .orNull
+        String dependencyMirrorUrl = providers.gradleProperty("firefly.repositories.maven.url")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_MAVEN_URL"))
+                .orNull
+        String pluginMirrorUrl = providers.gradleProperty("firefly.repositories.plugin.url")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_PLUGIN_URL"))
+                .orElse(dependencyMirrorUrl ?: "")
+                .orNull
+        if (useMavenLocal) {
+            mavenLocal()
+        }
+        if (localRepositoryPath != null && !localRepositoryPath.isBlank()) {
+            maven { url = uri(localRepositoryPath) }
+        }
+        if (pluginMirrorUrl != null && !pluginMirrorUrl.isBlank()) {
+            maven { url = uri(pluginMirrorUrl) }
+        }
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        mavenLocal()
-        maven { url = uri("file:///E:/m2/repository") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        String mavenLocalFlag = providers.gradleProperty("firefly.repositories.mavenLocal")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_MAVEN_LOCAL"))
+                .orNull
+        boolean useMavenLocal = mavenLocalFlag != null
+                && ["true", "1", "yes"].contains(mavenLocalFlag.trim().toLowerCase(Locale.ROOT))
+        String localRepositoryPath = providers.gradleProperty("firefly.repositories.local.path")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_LOCAL_PATH"))
+                .orNull
+        String dependencyMirrorUrl = providers.gradleProperty("firefly.repositories.maven.url")
+                .orElse(providers.environmentVariable("FIREFLY_REPOSITORIES_MAVEN_URL"))
+                .orNull
+        if (useMavenLocal) {
+            mavenLocal()
+        }
+        if (localRepositoryPath != null && !localRepositoryPath.isBlank()) {
+            maven { url = uri(localRepositoryPath) }
+        }
+        if (dependencyMirrorUrl != null && !dependencyMirrorUrl.isBlank()) {
+            maven { url = uri(dependencyMirrorUrl) }
+        }
         mavenCentral()
     }
 }
@@ -22,8 +60,6 @@ rootProject.name = "firefly"
 
 include("libs:scheduler-core")
 include("integrations:embedded")
-include("integrations:spring-boot-starter")
-include("integrations:server-cli")
 include("integrations:firefly-spring-boot-autoconfigure")
 include("integrations:firefly-spring-boot-starter")
 include("stores:jdbc")
