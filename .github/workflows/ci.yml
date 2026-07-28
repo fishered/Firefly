@@ -30,3 +30,26 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew --no-parallel :stores:jdbc:realDatabaseTest
+
+  spring-boot-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        spring-boot:
+          - '3.3.5'
+          - '3.4.12'
+          - '3.5.8'
+          - '4.0.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - run: mvn -v
+      - run: ./gradlew --no-parallel verifySpringBootCompatibility -Pcompat.springBootVersions=${{ matrix.spring-boot }} -Pcompat.maven.executable=mvn
