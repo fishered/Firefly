@@ -50,6 +50,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     private HttpServer server;
     private FireflyPluginContext context;
     private com.firefly.security.IntegrationKeyService integrationKeys;
+    private Instant startedAt;
 
     public AdminHttpPlugin() {
         this(AdminHttpOptions.defaults());
@@ -77,6 +78,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     @Override
     public void start(FireflyPluginContext context) {
         this.context = Objects.requireNonNull(context, "context");
+        this.startedAt = this.context.clock().instant();
         this.integrationKeys = context.integrationKeyRepository()
                 .map(repository -> new com.firefly.security.IntegrationKeyService(repository, context.clock()))
                 .orElse(null);
@@ -449,7 +451,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private void handleOverview(HttpExchange exchange) throws IOException {
         respond(exchange, 200, "application/json; charset=utf-8",
-                AdminHttpJson.overview(jobs(), onlineNodes(), executorInstances()));
+                AdminHttpJson.overview(jobs(), onlineNodes(), executorInstances(), startedAt));
     }
 
     private void handleJobs(HttpExchange exchange) throws IOException {

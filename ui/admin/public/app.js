@@ -268,6 +268,7 @@ function passwordChangeError(code, message) {
 
 function updateSessionSummary() {
   if (!state.session) return;
+  updateServerUptime();
   const absolute = new Date(state.session.expiresAt).getTime();
   const idle = new Date(state.session.idleExpiresAt).getTime();
   const remaining = Math.min(absolute, idle) - Date.now();
@@ -505,7 +506,7 @@ function overviewPage() {
         ${metaBlock('调度模式', primaryNode.mode ? tag(primaryNode.mode) : '-')}
         ${metaBlock('当前节点角色', renderRoleTags(primaryNode.roles))}
         ${metaBlock('调度器状态', schedulerStatus)}
-        ${metaBlock('系统运行时间', '-')}
+        ${metaBlock('系统运行时间', `<span id="server-uptime">${formatUptime(overview.startedAt)}</span>`)}
       </div>
     </section>
 
@@ -1640,6 +1641,26 @@ function formatDurationMs(milliseconds) {
   if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatUptime(startedAt) {
+  const started = timestamp(startedAt);
+  if (started === null) return '-';
+  const totalMinutes = Math.max(0, Math.floor((Date.now() - started) / 60000));
+  if (totalMinutes < 1) return '<1分钟';
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (days) parts.push(`${days}天`);
+  if (hours) parts.push(`${hours}小时`);
+  if (minutes) parts.push(`${minutes}分钟`);
+  return parts.join(' ');
+}
+
+function updateServerUptime() {
+  const element = document.getElementById('server-uptime');
+  if (element) element.textContent = formatUptime(state.overview?.startedAt);
 }
 
 function executionTimestamp(item) {
