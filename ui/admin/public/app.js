@@ -457,31 +457,6 @@ function renderView(view) {
   bindViewActions(view);
 }
 
-function legacyBindViewActions(view) {
-  if (view === 'executions') {
-    document.querySelectorAll('[data-execution-detail]').forEach(button => {
-      button.addEventListener('click', () => openExecutionDetail(button.dataset.executionDetail));
-    });
-    document.querySelectorAll('[data-outbox-requeue]').forEach(button => {
-      button.addEventListener('click', () => requeueOutbox(button.dataset.outboxRequeue));
-    });
-  }
-  if (view === 'executors') {
-    document.querySelectorAll('[data-isolate-executor]').forEach(button => {
-      button.addEventListener('click', () => isolateExecutor(button.dataset.isolateExecutor));
-    });
-    document.querySelectorAll('[data-executor-instances]').forEach(button => {
-      button.addEventListener('click', () => openExecutorInstancesDialog(button.dataset.executorInstances));
-    });
-    bindExecutorInstanceDetailActions();
-  }
-  if (view === 'nodes') {
-    document.querySelectorAll('[data-node-operation]').forEach(button => {
-      button.addEventListener('click', () => updateNode(button.dataset.nodeId, button.dataset.nodeOperation));
-    });
-  }
-}
-
 function overviewPage() {
   const overview = state.overview ?? {};
   const jobsTotal = Number(overview.jobsTotal ?? state.jobs.length);
