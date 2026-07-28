@@ -546,46 +546,11 @@ function overviewPage() {
         <h2 class="chart-title">✣ 已加载插件</h2>
         <div class="divider"></div>
         <div class="metrics-list">
-          ${(state.plugins.length ? state.plugins : [
-            { id: 'admin-http', status: 'ACTIVE' }, { id: 'metrics-prometheus', status: 'ACTIVE' }
-          ]).map(plugin => pluginRow(plugin.id, plugin.status === 'ACTIVE')).join('')}
+          ${state.plugins.length
+            ? state.plugins.map(plugin => pluginRow(plugin.id, plugin.status === 'ACTIVE')).join('')
+            : metricRow('暂无插件数据', '-')}
         </div>
       </article>
-    </section>
-  `;
-}
-
-function legacyJobsPage() {
-  const rows = state.jobs.slice(0, 4).map(job => tableRow([
-    code(job.id),
-    text(job.name ?? job.id),
-    text(job.groupName ?? job.groupId ?? '-'),
-    code(job.schedule ?? '-'),
-    text(job.zoneId ?? 'Asia/Shanghai'),
-    text(formatDate(job.nextFireTime)),
-    text(job.executorName ?? '-'),
-    text(job.dispatchMode ?? 'UNICAST'),
-    text(job.businessHandlerName ?? job.handlerName ?? '-'),
-    statusText(job.enabled === false ? '禁用' : (job.status ?? '启用'), job.enabled === false ? 'muted' : 'success'),
-    statusText(job.lastResult ?? '成功', job.lastResult === '失败' ? 'danger' : 'success'),
-    `<span class="action-icons">◱ ⏸ ◆ ◔ ↶ 🗑</span>`
-  ])).join('');
-  return `
-    <section class="toolbar">
-      <label class="inline-field">任务名称 <input placeholder="搜索任务名称"></label>
-      <label class="inline-field">执行器 <select><option>全部执行器</option></select></label>
-      <label class="inline-field">状态 <select><option>全部状态</option></select></label>
-      <button class="btn" type="button">🔍 查询</button>
-      <button class="btn" type="button">⟳ 重置</button>
-    </section>
-    <section class="table-card">
-      <div class="table-scroll">
-        <table>
-          <thead><tr>${headers(['Job ID','名称','分组','调度表达式','时区','下次触发时间','执行器','分发模式','处理器','状态','上次执行结果','操作'])}</tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${tableFooter('显示 1-4 共 24 条记录', '6')}
     </section>
   `;
 }
@@ -1732,21 +1697,53 @@ function statusDonut(statusCounts) {
 }
 
 function nodeDonut() {
+  const colors = ['#0f766e', '#3b82f6', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2'];
+  const nodes = state.nodes
+    .map(node => ({
+      nodeId: node.nodeId ?? '-',
+      shardCount: (node.shards ?? []).length
+    }))
+    .filter(node => node.shardCount > 0);
+  const visibleNodes = nodes.slice(0, 5);
+  const otherShardCount = nodes.slice(5).reduce((sum, node) => sum + node.shardCount, 0);
+  const chartNodes = otherShardCount
+    ? [...visibleNodes, { nodeId: '其他节点', shardCount: otherShardCount }]
+    : visibleNodes;
+  const total = chartNodes.reduce((sum, node) => sum + node.shardCount, 0);
+  if (!total) {
+    return `
+      <svg viewBox="0 0 700 250" role="img" aria-label="分片分布">
+        <circle cx="350" cy="118" r="72" fill="none" stroke="#e2e8f0" stroke-width="34"/>
+        <text x="350" y="112" fill="#334155" font-size="18" text-anchor="middle">暂无分片数据</text>
+        <text x="350" y="138" fill="#64748b" font-size="13" text-anchor="middle">等待节点上报</text>
+      </svg>
+    `;
+  }
+  const circumference = 452.39;
+  let offset = 0;
+  const segments = chartNodes.map((node, index) => {
+    const length = (node.shardCount / total) * circumference;
+    const segment = `<circle cx="350" cy="118" r="72" fill="none" stroke="${colors[index % colors.length]}" stroke-width="34" stroke-dasharray="${length} ${circumference - length}" stroke-dashoffset="${-offset}" transform="rotate(-90 350 118)"/>`;
+    offset += length;
+    return segment;
+  }).join('');
   return `
     <svg viewBox="0 0 700 250" role="img" aria-label="分片分布">
-      <circle cx="350" cy="118" r="72" fill="none" stroke="#0f766e" stroke-width="34" stroke-dasharray="170 452" transform="rotate(-90 350 118)"/>
-      <circle cx="350" cy="118" r="72" fill="none" stroke="#3b82f6" stroke-width="34" stroke-dasharray="135 452" stroke-dashoffset="-174" transform="rotate(-90 350 118)"/>
-      <circle cx="350" cy="118" r="72" fill="none" stroke="#f59e0b" stroke-width="34" stroke-dasharray="113 452" stroke-dashoffset="-313" transform="rotate(-90 350 118)"/>
-      <text x="470" y="80" fill="#334155">node-a</text><text x="470" y="96" fill="#334155">3 个分片</text>
-      <text x="230" y="200" fill="#334155">node-b</text><text x="230" y="216" fill="#334155">3 个分片</text>
-      <text x="240" y="58" fill="#334155">node-c</text><text x="240" y="74" fill="#334155">2 个分片</text>
-      ${legend(276, 230, '#0f766e', 'node-a')}${legend(360, 230, '#3b82f6', 'node-b')}${legend(444, 230, '#f59e0b', 'node-c')}
+      ${segments}
+      <text x="350" y="112" fill="#334155" font-size="20" font-weight="700" text-anchor="middle">${total}</text>
+      <text x="350" y="138" fill="#64748b" font-size="13" text-anchor="middle">总分片</text>
+      ${chartNodes.map((node, index) => legend(
+        470,
+        62 + index * 28,
+        colors[index % colors.length],
+        `${node.nodeId} ${node.shardCount} 个分片`
+      )).join('')}
     </svg>
   `;
 }
 
 function legend(x, y, color, label) {
-  return `<rect x="${x}" y="${y - 10}" width="22" height="12" rx="3" fill="${color}"/><text x="${x + 30}" y="${y}" fill="#334155" font-size="13">${label}</text>`;
+  return `<rect x="${x}" y="${y - 10}" width="22" height="12" rx="3" fill="${color}"/><text x="${x + 30}" y="${y}" fill="#334155" font-size="13">${escapeHtml(label)}</text>`;
 }
 
 async function api(path, options) {
