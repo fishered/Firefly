@@ -58,6 +58,27 @@ class NettyExecutorAckTest {
         second.finishAndReleaseAll();
     }
 
+    @Test
+    void recordsExecutorOverloadAcknowledgements() {
+        Instant now = Instant.parse("2026-07-15T10:00:00Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        InMemoryExecutionRepository executions = new InMemoryExecutionRepository();
+        executions.saveExecution(new ExecutionRecord(
+                "broadcast-1", "job-1", now, now, ExecutorDispatchMode.BROADCAST,
+                ExecutorCompletionPolicy.ALL_SUCCESS, ExecutionStatus.DISPATCHED,
+                1, 1, "node-a", 9, now, now
+        ));
+        executions.saveTargets(List.of(target("broadcast-1@instance:a", "a", now)));
+        NettyExecutorConnectionRegistry connections = new NettyExecutorConnectionRegistry();
+        SchedulerMetrics metrics = new SchedulerMetrics();
+        EmbeddedChannel channel = channel("a", "session-a", connections, executions, clock, new AtomicInteger(), metrics);
+
+        channel.writeInbound(overloadAck("broadcast-1@instance:a", "a", "session-a"));
+
+        assertEquals(1, metrics.snapshot().executorOverloadAcks());
+        channel.finishAndReleaseAll();
+    }
+
     private EmbeddedChannel channel(
             String instanceId,
             String sessionId,
@@ -88,6 +109,23 @@ class NettyExecutorAckTest {
                         "sessionId", sessionId,
                         "ownerNodeId", "node-a",
                         "fencingToken", "9"
+                )
+        ));
+    }
+
+    private String overloadAck(String targetExecutionId, String instanceId, String sessionId) {
+        return new NettyExecutorJsonCodec().encode(new NettyExecutorMessage(
+                "ack-overload-" + instanceId,
+                NettyExecutorMessageType.ACK_JOB,
+                Map.of(
+                        "executionId", targetExecutionId,
+                        "parentExecutionId", "broadcast-1",
+                        "instanceId", instanceId,
+                        "sessionId", sessionId,
+                        "ownerNodeId", "node-a",
+                        "fencingToken", "9",
+                        "accepted", "false",
+                        "reason", "executor_overloaded"
                 )
         ));
     }

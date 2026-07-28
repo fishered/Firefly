@@ -1,8 +1,14 @@
 name: ci
 
 on:
-  push:
   pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   unit:
@@ -44,3 +50,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - run: chmod +x gradlew
       - run: ./gradlew --no-parallel :stores:jdbc:realDatabaseTest
+
+  spring-boot-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        spring-boot:
+          - '3.3.5'
+          - '3.4.12'
+          - '3.5.8'
+          - '4.0.0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v6
+      - run: chmod +x gradlew
+      - run: mvn -v
+      - run: ./gradlew --no-parallel verifySpringBootCompatibility -Pcompat.springBootVersions=${{ matrix.spring-boot }} -Pcompat.maven.executable=mvn

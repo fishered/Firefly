@@ -144,6 +144,8 @@ class NettyExecutorClientHaTest {
                     .count();
             assertEquals(1, warnings);
             assertEquals(0, client.connectedGatewayCount());
+            assertEquals("executor authentication failed", client.registrationFailures()
+                    .get("127.0.0.1:" + gatewayPort));
         } finally {
             logger.removeHandler(recorder);
             logger.setLevel(previousLevel);

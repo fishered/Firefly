@@ -8,10 +8,10 @@ public final class NettyExecutorProtocol {
     public static final int MIN_SUPPORTED_VERSION = 1;
     public static final Set<String> SERVER_CAPABILITIES = Set.of(
             "TARGET_ACK", "RESULT_REPORT", "MULTI_GATEWAY", "FENCING_TOKEN",
-            "CANCELLATION", "GATEWAY_FORWARDING"
+            "CANCELLATION", "GATEWAY_FORWARDING", "OVERLOAD_ACK"
     );
     public static final Set<String> CLIENT_CAPABILITIES = Set.of(
-            "TARGET_ACK", "RESULT_REPORT", "COMPLETED_RESULT_REPLAY", "CANCELLATION"
+            "TARGET_ACK", "RESULT_REPORT", "COMPLETED_RESULT_REPLAY", "CANCELLATION", "OVERLOAD_ACK"
     );
     public static final Set<String> REQUIRED_CAPABILITIES = Set.of("TARGET_ACK", "RESULT_REPORT");
 
