@@ -61,11 +61,10 @@ public record ServerOptions(
         if (nodeMode == ServerNodeMode.CLUSTER && !store.jdbcEnabled()) {
             throw new IllegalArgumentException("firefly.node.mode=cluster requires firefly.store.type=jdbc");
         }
-        if (nodeMode == ServerNodeMode.CLUSTER
+        if ((nodeMode == ServerNodeMode.CLUSTER || externallyBoundAdminHttp(adminHttpEnabled, adminHttpHost))
                 && runtimeOptions.jwtSecurity().usesDevelopmentCredentials()) {
             throw new IllegalArgumentException(
-                    "firefly.node.mode=cluster rejects bundled development security credentials; "
-                            + "configure the JWT secret"
+                    "non-local deployments reject bundled development security credentials; configure the JWT secret"
             );
         }
         if (adminHttpEnabled != nodeRoles.contains(ServerNodeRole.API)) {
@@ -593,5 +592,13 @@ public record ServerOptions(
             throw new IllegalArgumentException(name + " must not be blank");
         }
         return host.trim();
+    }
+
+    private static boolean externallyBoundAdminHttp(boolean enabled, String host) {
+        if (!enabled || host == null) {
+            return false;
+        }
+        String normalized = host.trim().toLowerCase(java.util.Locale.ROOT);
+        return !(normalized.equals("127.0.0.1") || normalized.equals("localhost") || normalized.equals("::1"));
     }
 }

@@ -59,7 +59,12 @@ final class AdminHttpJson {
         return json.append("]}").toString();
     }
 
-    static String overview(List<ScheduledJobRecord> jobs, List<FireflyNode> nodes, List<ExecutorInstance> instances) {
+    static String overview(
+            List<ScheduledJobRecord> jobs,
+            List<FireflyNode> nodes,
+            List<ExecutorInstance> instances,
+            Instant startedAt
+    ) {
         long enabledJobs = jobs.stream().filter(job -> job.definition().enabled()).count();
         long disabledJobs = jobs.size() - enabledJobs;
         Instant nextFireTime = jobs.stream()
@@ -68,6 +73,7 @@ final class AdminHttpJson {
                 .min(Instant::compareTo)
                 .orElse(null);
         return "{\"status\":\"UP\""
+                + ",\"startedAt\":\"" + escape(startedAt.toString()) + "\""
                 + ",\"jobsTotal\":" + jobs.size()
                 + ",\"jobsEnabled\":" + enabledJobs
                 + ",\"jobsDisabled\":" + disabledJobs
@@ -163,6 +169,7 @@ final class AdminHttpJson {
         return "{\"username\":\"" + escape(user.username())
                 + "\",\"roles\":[" + roles + "]"
                 + ",\"enabled\":" + user.enabled()
+                + ",\"passwordChangeRequired\":" + user.passwordChangeRequired()
                 + ",\"version\":" + user.version()
                 + ",\"createdAt\":\"" + user.createdAt()
                 + "\",\"updatedAt\":\"" + user.updatedAt() + "\"}";

@@ -13,8 +13,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,11 +29,13 @@ class AdminHttpRbacTest {
         InMemoryJobRepository jobs = new InMemoryJobRepository();
         jobs.save(JobDefinition.builder().id("job-1").name("Job 1").handlerName("run")
                 .schedule(new CronSchedule("0 * * * * *")).build(), Instant.now());
+        Instant startedAt = Instant.parse("2026-07-28T08:00:00Z");
         AdminHttpPlugin plugin = new AdminHttpPlugin(new AdminHttpOptions(
                 "127.0.0.1", port, Duration.ofSeconds(30), "legacy-admin",
                 Map.of("reader", AdminRole.READER, "operator", AdminRole.OPERATOR, "admin", AdminRole.ADMIN)
         ));
         plugin.start(FireflyPluginContext.builder()
+                .clock(Clock.fixed(startedAt, ZoneOffset.UTC))
                 .jobRepository(jobs)
                 .nodeRegistry(new InMemoryNodeRegistry())
                 .schedulerCatalog(new InMemorySchedulerCatalog())
@@ -41,7 +45,9 @@ class AdminHttpRbacTest {
                 )))
                 .build());
         try {
-            assertEquals(200, request(port, "/api/overview", "GET", "reader", "").statusCode());
+            HttpResponse<String> overview = request(port, "/api/overview", "GET", "reader", "");
+            assertEquals(200, overview.statusCode());
+            assertTrue(overview.body().contains("\"startedAt\":\"" + startedAt + "\""));
             HttpResponse<String> plugins = request(port, "/api/plugins", "GET", "reader", "");
             assertEquals(200, plugins.statusCode());
             org.junit.jupiter.api.Assertions.assertTrue(plugins.body().contains("metrics-prometheus"));

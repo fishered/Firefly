@@ -108,6 +108,7 @@ async function login(req, res) {
       csrfToken: randomBytes(24).toString('base64url'),
       subject: username,
       accessToken: token.value,
+      passwordChangeRequired: token.passwordChangeRequired,
       createdAt: now,
       lastAccessAt: now,
       expiresAt: now + token.expiresInSeconds * 1000
@@ -213,6 +214,7 @@ async function requestAdminAccessToken(username, password) {
     }
     return {
       value: body.accessToken,
+      passwordChangeRequired: body.passwordChangeRequired === true,
       expiresInSeconds: Math.max(1, Number(body.expiresIn ?? 60))
     };
   } finally {
@@ -357,6 +359,7 @@ function sessionView(session) {
     authenticationEnabled: Boolean(session.accessToken),
     subject: session.subject,
     csrfToken: session.csrfToken,
+    passwordChangeRequired: session.passwordChangeRequired === true,
     createdAt: new Date(session.createdAt).toISOString(),
     expiresAt: new Date(session.expiresAt).toISOString(),
     idleExpiresAt: new Date(Math.min(session.expiresAt, session.lastAccessAt + sessionIdleTimeoutMs)).toISOString(),

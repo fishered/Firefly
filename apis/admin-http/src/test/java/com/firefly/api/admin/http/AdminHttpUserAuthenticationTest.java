@@ -43,6 +43,11 @@ class AdminHttpUserAuthenticationTest {
             assertEquals(401, request(port, "/api/auth/login", "POST", "",
                     "{\"username\":\"admin\",\"password\":\"wrong-password\"}").statusCode());
             String token = login(port, "admin", "admin");
+            assertEquals(403, request(port, "/api/integration-key", "GET", token, "").statusCode());
+            assertEquals(200, request(port, "/api/auth/password", "POST", token,
+                    "{\"currentPassword\":\"admin\",\"newPassword\":\"changed-admin-password\"}").statusCode());
+            assertEquals(401, request(port, "/api/integration-key", "GET", token, "").statusCode());
+            token = login(port, "admin", "changed-admin-password");
 
             assertEquals(200, request(port, "/api/integration-key", "GET", token, "").statusCode());
             HttpResponse<String> rotated = request(port, "/api/integration-key", "POST", token, "");

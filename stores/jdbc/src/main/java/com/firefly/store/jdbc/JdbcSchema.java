@@ -22,7 +22,8 @@ import java.util.Set;
  * Initializes and validates JDBC schema by selecting a dialect-specific SQL resource.
  */
 public final class JdbcSchema {
-    public static final int CURRENT_VERSION = 11;
+    public static final int CURRENT_VERSION = 12;
+    private static final int FIRST_VERSIONED_SQL_MIGRATION = 12;
 
     private static final Map<String, Set<String>> REQUIRED_COLUMNS = Map.ofEntries(
             Map.entry("firefly_schema_version", Set.of("version", "installed_at")),
@@ -60,7 +61,8 @@ public final class JdbcSchema {
                     "after_payload", "occurred_at"
             )),
             Map.entry("firefly_user", Set.of(
-                    "username", "password_hash", "roles", "enabled", "version", "created_at", "updated_at"
+                    "username", "password_hash", "roles", "enabled", "password_change_required",
+                    "version", "created_at", "updated_at"
             )),
             Map.entry("firefly_integration_key", Set.of(
                     "key_id", "key_hash", "version", "created_at", "updated_at"
@@ -112,18 +114,13 @@ public final class JdbcSchema {
                 // A concurrent initializer may have completed while this node waited for the lock.
                 installedShardCount = installedShardCount(connection);
                 rejectShardCountMismatch(installedShardCount, options.schedulerShardCount());
-                for (String sql : JdbcSchemaScript.load(dialect)) {
-                    String normalized = sql.toLowerCase(Locale.ROOT);
-                    if (!normalized.contains("idx_firefly_job_shard_due")
-                            && !normalized.contains("idx_firefly_execution_timeout")
-                            && !normalized.contains("idx_firefly_outbox_role_claim")) {
-                        statement.execute(sql);
-                    }
+                Integer installedSchemaVersion = installedSchemaVersion(connection);
+                if (!hasAnyFireflyTable(connection)) {
+                    executeFullSchema(statement, dialect);
+                } else {
+                    migrateLegacySchema(connection, dialect);
+                    executeVersionedSqlMigrations(statement, dialect, installedSchemaVersion);
                 }
-                migrateJobDispatchColumns(connection);
-                migrateOutboxColumns(connection, dialect);
-                migrateExecutionRetryColumns(connection);
-                migrateExecutionTimeoutColumn(connection, dialect);
                 backfillOutboxSnapshots(connection);
                 backfillExecutionTimeouts(connection);
                 configureClusterShardCount(connection, installedShardCount, options.schedulerShardCount());
@@ -167,18 +164,14 @@ public final class JdbcSchema {
         }
     }
 
-    private static boolean hasAnyFireflyTable(DataSource dataSource) {
-        try (Connection connection = dataSource.getConnection()) {
-            DatabaseMetaData metadata = connection.getMetaData();
-            for (String table : REQUIRED_COLUMNS.keySet()) {
-                if (tableExists(metadata, table)) {
-                    return true;
-                }
+    private static boolean hasAnyFireflyTable(Connection connection) throws SQLException {
+        DatabaseMetaData metadata = connection.getMetaData();
+        for (String table : REQUIRED_COLUMNS.keySet()) {
+            if (tableExists(metadata, table)) {
+                return true;
             }
-            return false;
-        } catch (SQLException e) {
-            throw new JdbcException("failed to inspect firefly jdbc schema", e);
         }
+        return false;
     }
 
     private static void validateTable(DatabaseMetaData metadata, String tableName, Set<String> requiredColumns) throws SQLException {
@@ -246,6 +239,16 @@ public final class JdbcSchema {
         }
     }
 
+    private static Integer installedSchemaVersion(Connection connection) throws SQLException {
+        if (!tableExists(connection.getMetaData(), "firefly_schema_version")) return null;
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("select max(version) from firefly_schema_version")) {
+            if (!resultSet.next()) return null;
+            int version = resultSet.getInt(1);
+            return resultSet.wasNull() ? null : version;
+        }
+    }
+
     private static void configureClusterShardCount(
             Connection connection, Integer installedShardCount, int requestedShardCount
     ) throws SQLException {
@@ -310,6 +313,55 @@ public final class JdbcSchema {
             case POSTGRESQL -> statement.execute("select pg_advisory_unlock(704926301)");
             case MYSQL -> statement.execute("select release_lock('firefly_schema_migration')");
             case H2 -> { }
+        }
+    }
+
+    private static void executeFullSchema(Statement statement, JdbcDialect dialect) throws SQLException {
+        for (String sql : JdbcSchemaScript.load(dialect)) {
+            String normalized = sql.toLowerCase(Locale.ROOT);
+            if (!normalized.contains("idx_firefly_job_shard_due")
+                    && !normalized.contains("idx_firefly_execution_timeout")
+                    && !normalized.contains("idx_firefly_outbox_role_claim")) {
+                statement.execute(sql);
+            }
+        }
+    }
+
+    private static void migrateLegacySchema(Connection connection, JdbcDialect dialect) throws SQLException {
+        migrateJobDispatchColumns(connection);
+        migrateOutboxColumns(connection, dialect);
+        migrateExecutionRetryColumns(connection);
+        migrateExecutionTimeoutColumn(connection, dialect);
+        installLegacyMigrationVersionRows(connection);
+    }
+
+    private static void executeVersionedSqlMigrations(
+            Statement statement,
+            JdbcDialect dialect,
+            Integer installedSchemaVersion
+    ) throws SQLException {
+        int installed = installedSchemaVersion == null ? 0 : installedSchemaVersion;
+        for (int version = Math.max(installed + 1, FIRST_VERSIONED_SQL_MIGRATION);
+             version <= CURRENT_VERSION;
+             version++) {
+            for (String sql : JdbcSchemaScript.loadMigration(dialect, version)) {
+                statement.execute(sql);
+            }
+        }
+    }
+
+    private static void installLegacyMigrationVersionRows(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into firefly_schema_version (version, installed_at)
+                select ?, current_timestamp
+                where not exists (select 1 from firefly_schema_version where version = ?)
+                """)) {
+            for (int version = 2; version < FIRST_VERSIONED_SQL_MIGRATION; version++) {
+                statement.setInt(1, version);
+                statement.setInt(2, version);
+                statement.addBatch();
+            }
+            statement.executeBatch();
         }
     }
 

@@ -14,6 +14,16 @@ final class JdbcSchemaScript {
 
     static List<String> load(JdbcDialect dialect) {
         String resource = "/com/firefly/store/jdbc/schema/" + dialect.id() + ".sql";
+        return loadResource(resource);
+    }
+
+    static List<String> loadMigration(JdbcDialect dialect, int version) {
+        String resource = "/com/firefly/store/jdbc/schema/migrations/"
+                + dialect.id() + "/v" + version + ".sql";
+        return loadResource(resource);
+    }
+
+    private static List<String> loadResource(String resource) {
         try (InputStream inputStream = JdbcSchemaScript.class.getResourceAsStream(resource)) {
             if (inputStream == null) {
                 throw new JdbcException("missing jdbc schema resource: " + resource);

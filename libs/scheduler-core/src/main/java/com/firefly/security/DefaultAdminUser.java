@@ -13,6 +13,6 @@ public final class DefaultAdminUser {
     }
 
     public static AdminUser at(Instant now) {
-        return new AdminUser(USERNAME, PASSWORD_HASH, Set.of(FireflyRole.ADMIN), true, 0, now, now);
+        return new AdminUser(USERNAME, PASSWORD_HASH, Set.of(FireflyRole.ADMIN), true, true, 0, now, now);
     }
 }

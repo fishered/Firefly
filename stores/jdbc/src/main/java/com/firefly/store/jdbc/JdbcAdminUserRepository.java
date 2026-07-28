@@ -30,7 +30,8 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
     public Optional<AdminUser> find(String username) {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
-                     select username, password_hash, roles, enabled, version, created_at, updated_at
+                     select username, password_hash, roles, enabled, password_change_required,
+                            version, created_at, updated_at
                      from firefly_user where username=?
                      """)) {
             statement.setString(1, username);
@@ -46,7 +47,8 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
     public List<AdminUser> list() {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
-                     select username, password_hash, roles, enabled, version, created_at, updated_at
+                     select username, password_hash, roles, enabled, password_change_required,
+                            version, created_at, updated_at
                      from firefly_user order by username
                      """);
              ResultSet resultSet = statement.executeQuery()) {
@@ -63,8 +65,9 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
                      insert into firefly_user
-                     (username, password_hash, roles, enabled, version, created_at, updated_at)
-                     values (?, ?, ?, ?, ?, ?, ?)
+                     (username, password_hash, roles, enabled, password_change_required,
+                      version, created_at, updated_at)
+                     values (?, ?, ?, ?, ?, ?, ?, ?)
                      """)) {
             bind(statement, user);
             return statement.executeUpdate() == 1;
@@ -79,16 +82,18 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
                      update firefly_user
-                     set password_hash=?, roles=?, enabled=?, version=?, updated_at=?
+                     set password_hash=?, roles=?, enabled=?, password_change_required=?,
+                         version=?, updated_at=?
                      where username=? and version=?
                      """)) {
             statement.setString(1, user.passwordHash());
             statement.setString(2, encodeRoles(user.roles()));
             statement.setBoolean(3, user.enabled());
-            statement.setLong(4, user.version());
-            statement.setTimestamp(5, Timestamp.from(user.updatedAt()));
-            statement.setString(6, user.username());
-            statement.setLong(7, expectedVersion);
+            statement.setBoolean(4, user.passwordChangeRequired());
+            statement.setLong(5, user.version());
+            statement.setTimestamp(6, Timestamp.from(user.updatedAt()));
+            statement.setString(7, user.username());
+            statement.setLong(8, expectedVersion);
             return statement.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new JdbcException("failed to update Admin user", e);
@@ -113,9 +118,10 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
         statement.setString(2, user.passwordHash());
         statement.setString(3, encodeRoles(user.roles()));
         statement.setBoolean(4, user.enabled());
-        statement.setLong(5, user.version());
-        statement.setTimestamp(6, Timestamp.from(user.createdAt()));
-        statement.setTimestamp(7, Timestamp.from(user.updatedAt()));
+        statement.setBoolean(5, user.passwordChangeRequired());
+        statement.setLong(6, user.version());
+        statement.setTimestamp(7, Timestamp.from(user.createdAt()));
+        statement.setTimestamp(8, Timestamp.from(user.updatedAt()));
     }
 
     private AdminUser map(ResultSet resultSet) throws SQLException {
@@ -124,6 +130,7 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
                 resultSet.getString("password_hash"),
                 decodeRoles(resultSet.getString("roles")),
                 resultSet.getBoolean("enabled"),
+                resultSet.getBoolean("password_change_required"),
                 resultSet.getLong("version"),
                 resultSet.getTimestamp("created_at").toInstant(),
                 resultSet.getTimestamp("updated_at").toInstant()

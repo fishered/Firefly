@@ -12,6 +12,8 @@ public record JwtSecurityOptions(
 ) {
     public static final String DEVELOPMENT_SIGNING_SECRET =
             "firefly-local-development-signing-secret-unsafe-change-me";
+    public static final String DOCKER_DEVELOPMENT_SIGNING_SECRET =
+            "firefly-docker-local-signing-secret-change-before-production";
     public JwtSecurityOptions {
         secret = secret == null ? "" : secret;
         issuer = issuer == null ? "" : issuer.trim();
@@ -33,6 +35,6 @@ public record JwtSecurityOptions(
 
     public boolean usesDevelopmentCredentials() {
         if (!enabled) return false;
-        return DEVELOPMENT_SIGNING_SECRET.equals(secret);
+        return DEVELOPMENT_SIGNING_SECRET.equals(secret) || DOCKER_DEVELOPMENT_SIGNING_SECRET.equals(secret);
     }
 }

@@ -464,7 +464,30 @@ final class ServerOptionsTest {
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
                 ServerOptions.parse(new String[]{"--firefly.config=" + config}, Map.of()));
 
-        assertTrue(failure.getMessage().contains("rejects bundled development security credentials"));
+        assertTrue(failure.getMessage().contains("reject bundled development security credentials"));
+    }
+
+    @Test
+    void publicAdminHttpRejectsDockerDevelopmentJwtCredentials() {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
+                ServerOptions.parse(new String[]{
+                        "--firefly.node.roles=api",
+                        "--firefly.admin-http.host=0.0.0.0"
+                }, Map.of(
+                        "FIREFLY_SECURITY_JWT_ENABLED", "true",
+                        "FIREFLY_SECURITY_JWT_SECRET",
+                        JwtSecurityOptions.DOCKER_DEVELOPMENT_SIGNING_SECRET
+                )));
+
+        assertTrue(failure.getMessage().contains("reject bundled development security credentials"));
+    }
+
+    @Test
+    void enabledJwtRejectsMissingSecret() {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
+                ServerOptions.parse(new String[0], Map.of("FIREFLY_SECURITY_JWT_ENABLED", "true")));
+
+        assertTrue(failure.getMessage().contains("firefly.security.jwt.secret"));
     }
 
     @Test

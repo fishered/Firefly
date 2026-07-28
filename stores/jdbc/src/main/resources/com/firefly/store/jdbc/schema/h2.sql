@@ -207,6 +207,7 @@ create table if not exists firefly_user (
     password_hash varchar(512) not null,
     roles varchar(256) not null,
     enabled boolean not null,
+    password_change_required boolean not null default false,
     version bigint not null,
     created_at timestamp not null,
     updated_at timestamp not null
@@ -215,10 +216,10 @@ create table if not exists firefly_user (
 create index if not exists idx_firefly_user_enabled on firefly_user (enabled, username);
 
 insert into firefly_user
-    (username, password_hash, roles, enabled, version, created_at, updated_at)
+    (username, password_hash, roles, enabled, password_change_required, version, created_at, updated_at)
 select 'admin',
        'pbkdf2-sha256$210000$cdNnTGyvKtyrY2J5VniRJw$fugVWfUlpN9f84Rkjagj5aBkaBGyWwJuy68TBfJCAe4',
-       'ADMIN', true, 0, current_timestamp, current_timestamp
+       'ADMIN', true, true, 0, current_timestamp, current_timestamp
 where not exists (select 1 from firefly_user where username = 'admin');
 
 create table if not exists firefly_integration_key (
@@ -268,3 +269,7 @@ where not exists (select 1 from firefly_schema_version where version = 10);
 insert into firefly_schema_version (version, installed_at)
 select 11, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 11);
+
+insert into firefly_schema_version (version, installed_at)
+select 12, current_timestamp
+where not exists (select 1 from firefly_schema_version where version = 12);
