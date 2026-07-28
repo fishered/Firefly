@@ -61,6 +61,11 @@ final class NettyExecutorExecutionRegistry {
         if (cancelled.contains(executionId)) task.cancel(true);
     }
 
+    void cancelRunningTasks() {
+        runningTasks.values().forEach(task -> task.cancel(true));
+        runningTasks.clear();
+    }
+
     ExecutorExecutionResult cancel(String executionId, String reason) {
         cancelled.add(executionId);
         java.util.concurrent.Future<?> task = runningTasks.remove(executionId);

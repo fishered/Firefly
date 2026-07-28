@@ -1,1 +1,2 @@
 com.firefly.spring.netty.FireflyNettyExecutorAutoConfiguration
+com.firefly.spring.health.FireflyHealthAutoConfiguration

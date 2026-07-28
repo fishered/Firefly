@@ -1,6 +1,7 @@
 package com.firefly.spring.job;
 
 import com.firefly.executor.netty.NettyExecutorClient;
+import com.firefly.spring.health.FireflyStarterHealthState;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ class FireflyJobRegistrarTest {
         NettyExecutorClient client = client();
         try {
             FireflyJobRegistrationProperties properties = properties(server);
+            FireflyStarterHealthState healthState = new FireflyStarterHealthState();
             FireflyJobRegistrar registrar = new FireflyJobRegistrar(
                     "billing-executor",
                     properties,
@@ -45,7 +47,8 @@ class FireflyJobRegistrarTest {
                             .parameter("tenant", "primary")
                             .build()),
                     client,
-                    com.firefly.executor.netty.AuthTokenProvider.fixed("ffk_test-key")
+                    com.firefly.executor.netty.AuthTokenProvider.fixed("ffk_test-key"),
+                    healthState
             );
 
             registrar.synchronizeJobs();
@@ -55,6 +58,12 @@ class FireflyJobRegistrarTest {
             assertTrue(body.get().contains("\"executorName\":\"billing-executor\""));
             assertTrue(body.get().contains("\"handlerName\":\"billingHandler\""));
             assertTrue(body.get().contains("\"param.tenant\":\"primary\""));
+            assertEquals(
+                    FireflyStarterHealthState.JobRegistrationStatus.SUCCESS,
+                    healthState.jobRegistration().status()
+            );
+            assertEquals(1, healthState.jobRegistration().synchronizedJobs());
+            assertEquals(0, healthState.jobRegistration().failedJobs());
         } finally {
             client.close();
             server.stop(0);
@@ -96,15 +105,25 @@ class FireflyJobRegistrarTest {
         NettyExecutorClient client = client();
         try {
             FireflyJobRegistrationProperties properties = properties(server);
+            FireflyStarterHealthState healthState = new FireflyStarterHealthState();
             IllegalStateException failure = assertThrows(IllegalStateException.class, () ->
                     new FireflyJobRegistrar(
                             "billing-executor",
                             properties,
                             List.of(FireflyJobRegistration.of("unknown-job", "missingHandler", "0 * * * * *")),
-                            client
+                            client,
+                            com.firefly.executor.netty.AuthTokenProvider.fixed(""),
+                            healthState
                     ).synchronizeJobs()
             );
             assertTrue(failure.getMessage().contains("handler is not registered locally"));
+            assertEquals(
+                    FireflyStarterHealthState.JobRegistrationStatus.FAILED,
+                    healthState.jobRegistration().status()
+            );
+            assertEquals(0, healthState.jobRegistration().synchronizedJobs());
+            assertEquals(1, healthState.jobRegistration().failedJobs());
+            assertTrue(healthState.jobRegistration().failures().get(0).contains("unknown-job"));
         } finally {
             client.close();
             server.stop(0);

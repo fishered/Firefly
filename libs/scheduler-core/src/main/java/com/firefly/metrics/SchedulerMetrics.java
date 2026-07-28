@@ -32,6 +32,11 @@ public final class SchedulerMetrics {
     private final AtomicInteger executorConnections = new AtomicInteger();
     private final LongAdder executorRegistrationRejections = new LongAdder();
     private final LongAdder executorDisconnects = new LongAdder();
+    private final LongAdder executorOverloadAcks = new LongAdder();
+    private final AtomicInteger executorClientActiveExecutions = new AtomicInteger();
+    private final AtomicInteger executorClientQueuedExecutions = new AtomicInteger();
+    private final AtomicInteger executorClientMaxConcurrentExecutions = new AtomicInteger();
+    private final AtomicInteger executorClientQueueCapacity = new AtomicInteger();
     private final LongAdder gatewayForwardAttempts = new LongAdder();
     private final LongAdder gatewayForwardSuccesses = new LongAdder();
     private final LongAdder gatewayForwardFailures = new LongAdder();
@@ -80,6 +85,20 @@ public final class SchedulerMetrics {
         executorDisconnects.increment();
     }
 
+    public void recordExecutorOverloadAck() {
+        executorOverloadAcks.increment();
+    }
+
+    public void executorClientCapacity(int maxConcurrentExecutions, int queueCapacity) {
+        executorClientMaxConcurrentExecutions.set(Math.max(0, maxConcurrentExecutions));
+        executorClientQueueCapacity.set(Math.max(0, queueCapacity));
+    }
+
+    public void executorClientWorkload(int activeExecutions, int queuedExecutions) {
+        executorClientActiveExecutions.set(Math.max(0, activeExecutions));
+        executorClientQueuedExecutions.set(Math.max(0, queuedExecutions));
+    }
+
     public void recordGatewayForward(Duration duration, boolean success) {
         gatewayForwardAttempts.increment();
         gatewayForwardDuration.observe(duration);
@@ -110,6 +129,9 @@ public final class SchedulerMetrics {
                 leaseRenewalFailures.sum(), dueBacklogEvents.sum(),
                 outboxDeliveryExhaustions.sum(), executorConnections.get(),
                 executorRegistrationRejections.sum(), executorDisconnects.sum(),
+                executorOverloadAcks.sum(), executorClientActiveExecutions.get(),
+                executorClientQueuedExecutions.get(), executorClientMaxConcurrentExecutions.get(),
+                executorClientQueueCapacity.get(),
                 gatewayForwardAttempts.sum(), gatewayForwardSuccesses.sum(), gatewayForwardFailures.sum(),
                 ownedShards.get(), clockOffsetMillis.get(),
                 clockDriftWarnings.sum(), clockSyncFailures.sum()
@@ -128,6 +150,11 @@ public final class SchedulerMetrics {
             int executorConnections,
             long executorRegistrationRejections,
             long executorDisconnects,
+            long executorOverloadAcks,
+            int executorClientActiveExecutions,
+            int executorClientQueuedExecutions,
+            int executorClientMaxConcurrentExecutions,
+            int executorClientQueueCapacity,
             long gatewayForwardAttempts,
             long gatewayForwardSuccesses,
             long gatewayForwardFailures,

@@ -141,6 +141,10 @@ configure(publishedProjects.collect { project(it) }) {
                 name = "fireflyLocal"
                 url = uri(fireflyLocalRepo)
             }
+            maven {
+                name = "fireflyCompatibility"
+                url = rootProject.layout.buildDirectory.dir("compatibility/firefly-repo")
+            }
         }
     }
 }
@@ -175,6 +179,70 @@ tasks.register("verifyMavenCentralPublication") {
                 "${it}:sourcesJar",
                 "${it}:plainJavadocJar"
         ]
+    })
+}
+
+def defaultSpringBootCompatibilityVersions = ["3.3.5", "3.4.12", "3.5.8", "4.0.0"]
+def springBootCompatibilityVersions = (
+        findProperty("compat.springBootVersions")
+                ?: defaultSpringBootCompatibilityVersions.join(",")
+).split(",")
+        .collect { it.trim() }
+        .findAll { !it.isBlank() }
+def compatibilityMavenExecutable = providers.gradleProperty("compat.maven.executable")
+        .orElse(providers.environmentVariable("MAVEN_EXECUTABLE"))
+        .orElse(System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows") ? "mvn.cmd" : "mvn")
+def compatibilityConsumerSource = layout.projectDirectory.dir("compatibility/spring-boot-consumer")
+def compatibilityBuildRoot = layout.buildDirectory.dir("compatibility/spring-boot-consumer")
+def compatibilityFireflyRepo = layout.buildDirectory.dir("compatibility/firefly-repo")
+def compatibilityMavenRepo = layout.buildDirectory.dir("compatibility/m2")
+def publishCompatibilityArtifacts = publishedProjects.collect {
+    "${it}:publishMavenPublicationToFireflyCompatibilityRepository"
+}
+
+springBootCompatibilityVersions.each { springBootVersion ->
+    def taskSuffix = springBootVersion.replaceAll(/[^A-Za-z0-9]/, "")
+    def consumerDir = compatibilityBuildRoot.map { it.dir(springBootVersion) }
+    def mavenRepoDir = compatibilityMavenRepo.map { it.dir(springBootVersion) }
+    def prepareTask = tasks.register("prepareSpringBootCompatibility${taskSuffix}", Sync) {
+        from(compatibilityConsumerSource)
+        into(consumerDir)
+        filesMatching("settings-central.xml") {
+            expand(fireflyRepoUrl: compatibilityFireflyRepo.get().asFile.toURI().toString())
+        }
+    }
+    tasks.register("verifySpringBootCompatibility${taskSuffix}", Exec) {
+        group = "verification"
+        description = "Verifies Firefly starter consumption with Spring Boot ${springBootVersion} using Maven Central."
+        dependsOn(publishCompatibilityArtifacts)
+        dependsOn(prepareTask)
+        workingDir = consumerDir.get().asFile
+        executable = compatibilityMavenExecutable.get()
+        doFirst {
+            delete(new File(mavenRepoDir.get().asFile, "io/github/fishered"))
+        }
+        args(
+                "--batch-mode",
+                "--no-transfer-progress",
+                "-U",
+                "-s",
+                consumerDir.get().file("settings-central.xml").asFile.absolutePath,
+                "-gs",
+                consumerDir.get().file("settings-central.xml").asFile.absolutePath,
+                "-Dmaven.repo.local=${mavenRepoDir.get().asFile.absolutePath}",
+                "-Dfirefly.version=${project.version}",
+                "-Dspring-boot.version=${springBootVersion}",
+                "-Dexpected.boot.line=${springBootVersion.tokenize(".").take(2).join(".")}",
+                "test"
+        )
+    }
+}
+
+tasks.register("verifySpringBootCompatibility") {
+    group = "verification"
+    description = "Runs isolated Maven consumer tests against the supported Spring Boot compatibility matrix."
+    dependsOn(springBootCompatibilityVersions.collect {
+        "verifySpringBootCompatibility${it.replaceAll(/[^A-Za-z0-9]/, "")}"
     })
 }
 
