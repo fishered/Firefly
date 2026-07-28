@@ -29,7 +29,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -52,7 +51,7 @@ public final class NettyExecutorClient implements AutoCloseable {
     private final Duration reconnectMaxDelay;
     private final AuthTokenProvider authTokenProvider;
     private final JobHandlerRegistry handlerRegistry;
-    private final ExecutorService workerPool;
+    private final NettyExecutorWorkScheduler workScheduler;
     private final Clock clock;
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
     private final NettyExecutorExecutionRegistry executionRegistry;
@@ -83,6 +82,8 @@ public final class NettyExecutorClient implements AutoCloseable {
             ExecutorResultStore resultStore,
             JobHandlerRegistry handlerRegistry,
             ExecutorService workerPool,
+            NettyExecutorResourceOptions resourceOptions,
+            com.firefly.metrics.SchedulerMetrics metrics,
             Clock clock
     ) {
         this.schedulerHost = requireNonBlank(schedulerHost, "schedulerHost");
@@ -102,7 +103,12 @@ public final class NettyExecutorClient implements AutoCloseable {
                 Objects.requireNonNull(resultStore, "resultStore")
         );
         this.handlerRegistry = Objects.requireNonNull(handlerRegistry, "handlerRegistry");
-        this.workerPool = Objects.requireNonNull(workerPool, "workerPool");
+        com.firefly.metrics.SchedulerMetrics actualMetrics = metrics == null
+                ? new com.firefly.metrics.SchedulerMetrics()
+                : metrics;
+        this.workScheduler = workerPool == null
+                ? NettyExecutorWorkScheduler.owned(resourceOptions, actualMetrics)
+                : NettyExecutorWorkScheduler.borrowed(workerPool, resourceOptions, actualMetrics);
         this.clock = Objects.requireNonNull(clock, "clock");
         if (schedulerPort < 1 || schedulerPort > 65535) {
             throw new IllegalArgumentException("schedulerPort must be between 1 and 65535");
@@ -130,7 +136,9 @@ public final class NettyExecutorClient implements AutoCloseable {
                 .tlsOptions(NettyTlsOptions.disabled())
                 .resultStore(new InMemoryExecutorResultStore())
                 .handlerRegistry(new InMemoryJobHandlerRegistry())
-                .workerPool(Executors.newCachedThreadPool())
+                .workerPool(null)
+                .resourceOptions(NettyExecutorResourceOptions.defaults())
+                .metrics(new com.firefly.metrics.SchedulerMetrics())
                 .clock(Clock.systemUTC());
     }
 
@@ -186,7 +194,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                                         serviceName,
                                         heartbeatInterval,
                                         handlerRegistry,
-                                        workerPool,
+                                        workScheduler,
                                         codec,
                                         clock,
                                         executionRegistry,
@@ -231,7 +239,8 @@ public final class NettyExecutorClient implements AutoCloseable {
             group.shutdownGracefully(0, 5, TimeUnit.SECONDS)
                     .awaitUninterruptibly(5, TimeUnit.SECONDS);
         }
-        workerPool.shutdownNow();
+        executionRegistry.cancelRunningTasks();
+        workScheduler.close();
         log.fine(() -> "Firefly executor client stopped: executor=" + executorName
                 + ", instanceId=" + instanceId);
     }

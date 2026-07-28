@@ -381,10 +381,13 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
 
     private void acknowledge(ChannelHandlerContext context, Map<String, String> payload) {
         if (!validReporter(context, payload)) return;
+        boolean overloadAck = "false".equalsIgnoreCase(payload.getOrDefault("accepted", "true"))
+                && "executor_overloaded".equals(payload.get("reason"));
         Instant now = clock.instant();
         String parentExecutionId = payload.getOrDefault("parentExecutionId", payload.get("executionId"));
         persist(context, () -> {
             if (!validFencing(parentExecutionId, payload)) return;
+            if (overloadAck) metrics.recordExecutorOverloadAck();
             Instant dispatchedAt = target(parentExecutionId, payload.get("executionId"))
                     .map(com.firefly.execution.ExecutionTargetRecord::updatedAt)
                     .orElse(now);

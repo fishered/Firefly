@@ -12,6 +12,8 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -28,7 +30,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     private final String serviceName;
     private final Duration heartbeatInterval;
     private final JobHandlerRegistry handlerRegistry;
-    private final ExecutorService workerPool;
+    private final NettyExecutorWorkScheduler workScheduler;
     private final NettyExecutorJsonCodec codec;
     private final Clock clock;
     private final NettyExecutorExecutionRegistry executionRegistry;
@@ -53,7 +55,11 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     ) {
         this(
                 executorName, instanceId, sessionId, authToken, serviceName, heartbeatInterval,
-                handlerRegistry, workerPool, codec, clock, executionRegistry, disconnectListener,
+                handlerRegistry,
+                NettyExecutorWorkScheduler.borrowed(
+                        workerPool, NettyExecutorResourceOptions.defaults(), new com.firefly.metrics.SchedulerMetrics()
+                ),
+                codec, clock, executionRegistry, disconnectListener,
                 ignored -> { }, (ignored, reason) -> { }
         );
     }
@@ -66,7 +72,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             String serviceName,
             Duration heartbeatInterval,
             JobHandlerRegistry handlerRegistry,
-            ExecutorService workerPool,
+            NettyExecutorWorkScheduler workScheduler,
             NettyExecutorJsonCodec codec,
             Clock clock,
             NettyExecutorExecutionRegistry executionRegistry,
@@ -81,7 +87,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
         this.serviceName = serviceName;
         this.heartbeatInterval = heartbeatInterval;
         this.handlerRegistry = handlerRegistry;
-        this.workerPool = workerPool;
+        this.workScheduler = workScheduler;
         this.codec = codec;
         this.clock = clock;
         this.executionRegistry = executionRegistry;
@@ -159,31 +165,41 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
         if (message.type() != NettyExecutorMessageType.TRIGGER_JOB) {
             return;
         }
-        write(context, ackMessage(message));
         String executionId = message.payload().get("executionId");
         NettyExecutorExecutionRegistry.ExecutionClaim claim = executionRegistry.claim(executionId);
         if (!claim.owner()) {
+            write(context, ackMessage(message));
             claim.execution().thenAccept(result ->
                     write(context, resultMessage(message, result.status(), result.errorMessage()))
             );
             return;
         }
         try {
-            java.util.concurrent.Future<?> task = workerPool.submit(() -> {
+            Future<?> task = workScheduler.submit(() -> {
                 ExecutorExecutionResult result = execute(message);
                 executionRegistry.complete(executionId, claim.execution(), result);
                 write(context, resultMessage(message, result.status(), result.errorMessage()));
-                context.executor().schedule(
-                        () -> executionRegistry.remove(executionId, claim.execution()), 1, TimeUnit.HOURS
-                );
+                scheduleExecutionRemoval(context, executionId, claim);
             });
+            write(context, ackMessage(message));
             executionRegistry.attachTask(executionId, task);
+        } catch (RejectedExecutionException overloaded) {
+            ExecutorExecutionResult result = new ExecutorExecutionResult(
+                    "FAILED", "executor_overloaded"
+            );
+            workScheduler.recordOverloadAck();
+            executionRegistry.complete(executionId, claim.execution(), result);
+            write(context, overloadAckMessage(message));
+            write(context, resultMessage(message, result.status(), result.errorMessage()));
+            scheduleExecutionRemoval(context, executionId, claim);
         } catch (RuntimeException e) {
             ExecutorExecutionResult result = new ExecutorExecutionResult(
                     "FAILED", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()
             );
             executionRegistry.complete(executionId, claim.execution(), result);
+            write(context, ackMessage(message));
             write(context, resultMessage(message, result.status(), result.errorMessage()));
+            scheduleExecutionRemoval(context, executionId, claim);
         }
     }
 
@@ -253,10 +269,16 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     }
 
     private NettyExecutorMessage ackMessage(NettyExecutorMessage trigger) {
-        return new NettyExecutorMessage(
-                UUID.randomUUID().toString(),
-                NettyExecutorMessageType.ACK_JOB,
-                Map.of(
+        return ackMessage(trigger, true, "");
+    }
+
+    private NettyExecutorMessage overloadAckMessage(NettyExecutorMessage trigger) {
+        return ackMessage(trigger, false, "executor_overloaded");
+    }
+
+    private NettyExecutorMessage ackMessage(NettyExecutorMessage trigger, boolean accepted, String reason) {
+        java.util.LinkedHashMap<String, String> payload = new java.util.LinkedHashMap<>();
+        payload.putAll(Map.of(
                         "triggerMessageId", trigger.messageId(),
                         "executionId", trigger.payload().get("executionId"),
                         "parentExecutionId", trigger.payload().getOrDefault(
@@ -266,8 +288,18 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
                         "sessionId", sessionId
                         , "ownerNodeId", trigger.payload().getOrDefault("ownerNodeId", "local")
                         , "fencingToken", trigger.payload().getOrDefault("fencingToken", "1")
-                )
-        );
+                ));
+        payload.put("accepted", Boolean.toString(accepted));
+        if (!reason.isBlank()) {
+            payload.put("reason", reason);
+            payload.put("activeExecutions", Integer.toString(workScheduler.runningExecutions()));
+            payload.put("queuedExecutions", Integer.toString(workScheduler.queuedExecutions()));
+            payload.put("maxConcurrentExecutions", Integer.toString(
+                    workScheduler.options().maxConcurrentExecutions()
+            ));
+            payload.put("queueCapacity", Integer.toString(workScheduler.options().queueCapacity()));
+        }
+        return new NettyExecutorMessage(UUID.randomUUID().toString(), NettyExecutorMessageType.ACK_JOB, payload);
     }
 
     private NettyExecutorMessage resultMessage(NettyExecutorMessage trigger, String status, String errorMessage) {
@@ -301,6 +333,16 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
 
     private void write(ChannelHandlerContext context, NettyExecutorMessage message) {
         context.writeAndFlush(codec.encode(message) + "\n");
+    }
+
+    private void scheduleExecutionRemoval(
+            ChannelHandlerContext context,
+            String executionId,
+            NettyExecutorExecutionRegistry.ExecutionClaim claim
+    ) {
+        context.executor().schedule(
+                () -> executionRegistry.remove(executionId, claim.execution()), 1, TimeUnit.HOURS
+        );
     }
 
     private boolean validRegistrationResponse(Map<String, String> payload) {
