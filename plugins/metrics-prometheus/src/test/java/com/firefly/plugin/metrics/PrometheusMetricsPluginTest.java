@@ -35,6 +35,9 @@ class PrometheusMetricsPluginTest {
         metrics.executorConnections(3);
         metrics.recordExecutorRegistrationRejection();
         metrics.recordExecutorDisconnect();
+        metrics.recordExecutorOverloadAck();
+        metrics.executorClientCapacity(8, 64);
+        metrics.executorClientWorkload(2, 5);
         metrics.recordGatewayForward(Duration.ofMillis(20), true);
         metrics.recordGatewayForward(Duration.ofMillis(40), false);
         metrics.ownedShards(17);
@@ -68,6 +71,11 @@ class PrometheusMetricsPluginTest {
             assertTrue(body.contains("firefly_executor_connections 3"));
             assertTrue(body.contains("firefly_executor_registration_rejections_total 1"));
             assertTrue(body.contains("firefly_executor_disconnects_total 1"));
+            assertTrue(body.contains("firefly_executor_overload_acks_total 1"));
+            assertTrue(body.contains("firefly_executor_client_active_executions 2"));
+            assertTrue(body.contains("firefly_executor_client_queued_executions 5"));
+            assertTrue(body.contains("firefly_executor_client_max_concurrent_executions 8"));
+            assertTrue(body.contains("firefly_executor_client_queue_capacity 64"));
             assertTrue(body.contains("firefly_gateway_forward_attempts_total 2"));
             assertTrue(body.contains("firefly_gateway_forward_successes_total 1"));
             assertTrue(body.contains("firefly_gateway_forward_failures_total 1"));
