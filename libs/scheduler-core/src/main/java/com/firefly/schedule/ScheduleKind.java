@@ -6,7 +6,5 @@ package com.firefly.schedule;
 public enum ScheduleKind {
     CRON,
     FIXED_RATE,
-    DAILY_TIME,
-    LINEAR_BACKOFF,
-    MANUAL
+    DAILY_TIME
 }

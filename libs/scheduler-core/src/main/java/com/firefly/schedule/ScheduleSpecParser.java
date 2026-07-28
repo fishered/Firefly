@@ -16,12 +16,6 @@ public final class ScheduleSpecParser {
             case CRON -> new CronSchedule(spec.expression());
             case FIXED_RATE -> new FixedRateSchedule(Duration.parse(spec.expression()));
             case DAILY_TIME -> parseDailyTime(spec.expression());
-            case LINEAR_BACKOFF -> throw new UnsupportedOperationException(
-                    "linear backoff requires persisted schedule state before it can be executed"
-            );
-            case MANUAL -> throw new UnsupportedOperationException(
-                    "manual schedules do not produce automatic next-fire times"
-            );
         };
     }
 

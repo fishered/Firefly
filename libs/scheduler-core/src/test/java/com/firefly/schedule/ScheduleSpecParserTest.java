@@ -9,8 +9,6 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
 class ScheduleSpecParserTest {
     private final ScheduleSpecParser parser = new ScheduleSpecParser();
 
@@ -30,14 +28,4 @@ class ScheduleSpecParserTest {
                 schedule.nextAfter(Instant.parse("2026-07-08T16:00:00Z"), ZoneId.of("Asia/Shanghai")));
     }
 
-    @Test
-    void rejectsStatefulBackoffUntilScheduleStateExists() {
-        ScheduleSpec spec = ScheduleSpec.linearBackoff(
-                Duration.ofMinutes(1),
-                Duration.ofMinutes(1),
-                Duration.ofMinutes(10)
-        );
-
-        assertThrows(UnsupportedOperationException.class, () -> parser.parse(spec));
-    }
 }

@@ -60,8 +60,6 @@ rootProject.name = "firefly"
 
 include("libs:scheduler-core")
 include("integrations:embedded")
-include("integrations:spring-boot-starter")
-include("integrations:server-cli")
 include("integrations:firefly-spring-boot-autoconfigure")
 include("integrations:firefly-spring-boot-starter")
 include("stores:jdbc")

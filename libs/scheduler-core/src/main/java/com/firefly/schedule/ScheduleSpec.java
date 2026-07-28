@@ -43,21 +43,6 @@ public record ScheduleSpec(
                 .build();
     }
 
-    public static ScheduleSpec linearBackoff(Duration firstDelay, Duration step, Duration maxDelay) {
-        return builder()
-                .kind(ScheduleKind.LINEAR_BACKOFF)
-                .expression(firstDelay.toString())
-                .options(Map.of("step", step.toString(), "maxDelay", maxDelay.toString()))
-                .build();
-    }
-
-    public static ScheduleSpec manual() {
-        return builder()
-                .kind(ScheduleKind.MANUAL)
-                .expression("")
-                .build();
-    }
-
     /**
      * Keeps optional parser settings immutable and absent by default.
      */

@@ -26,7 +26,6 @@ Firefly focuses on three goals:
 - Plugin SPI for optional components outside the scheduler core
 - Admin HTTP API plus independent Node Admin UI for separated management APIs and operational pages
 - Prometheus Metrics plugin for an independent `/metrics` text endpoint
-- Server CLI placeholder module
 - in-memory job repository
 - job-level IANA time zone support
 - 6-field cron: second minute hour day month weekday
@@ -45,9 +44,8 @@ firefly
 ├── server                 # app entry point and Guice wiring
 ├── integrations
 │   ├── embedded           # traditional Java / non-Spring integration
-│   ├── firefly-spring-boot-starter
-│   ├── spring-boot-starter
-│   └── server-cli
+│   ├── firefly-spring-boot-autoconfigure
+│   └── firefly-spring-boot-starter
 ├── executors
 │   └── netty              # remote executor long-connection transport
 ├── stores
@@ -144,9 +142,9 @@ The main config file is `config/firefly-server.properties`, and profile-specific
 ## Integration
 
 - Traditional Java services: use `integrations:embedded` and embed Firefly through `FireflyScheduler.create()`.
-- Spring Boot services: use `integrations:spring-boot-starter` and declare `FireflyJobRegistration` beans.
+- Spring Boot services: use `integrations:firefly-spring-boot-starter` and annotated `@FireflyJob` methods.
 - Remote business executors: use `transports:netty`; business services actively connect to the scheduler gateway and do not need to expose listener ports.
-- Standalone server: `integrations:server-cli` keeps a command entry point for future config loading and process mode.
+- Standalone server: use `server:launcher`.
 
 See [docs/integration.md](docs/integration.md).
 
