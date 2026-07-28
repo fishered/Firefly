@@ -2,6 +2,7 @@ package com.firefly.spring.job;
 
 import com.firefly.executor.netty.NettyExecutorClient;
 import com.firefly.executor.netty.AuthTokenProvider;
+import com.firefly.spring.health.FireflyStarterHealthState;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -31,6 +32,7 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
     private final NettyExecutorClient executorClient;
     private final HttpClient httpClient;
     private final AuthTokenProvider authTokenProvider;
+    private final FireflyStarterHealthState healthState;
 
     public FireflyJobRegistrar(
             String executorName,
@@ -39,7 +41,7 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
             NettyExecutorClient executorClient
     ) {
         this(executorName, properties, registrations, executorClient,
-                AuthTokenProvider.fixed(""));
+                AuthTokenProvider.fixed(""), new FireflyStarterHealthState());
     }
 
     public FireflyJobRegistrar(
@@ -49,11 +51,24 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
             NettyExecutorClient executorClient,
             AuthTokenProvider authTokenProvider
     ) {
+        this(executorName, properties, registrations, executorClient, authTokenProvider,
+                new FireflyStarterHealthState());
+    }
+
+    public FireflyJobRegistrar(
+            String executorName,
+            FireflyJobRegistrationProperties properties,
+            List<FireflyJobRegistration> registrations,
+            NettyExecutorClient executorClient,
+            AuthTokenProvider authTokenProvider,
+            FireflyStarterHealthState healthState
+    ) {
         this.executorName = requireNonBlank(executorName, "executorName");
         this.properties = Objects.requireNonNull(properties, "properties");
         this.registrations = new CopyOnWriteArrayList<>(registrations);
         this.executorClient = Objects.requireNonNull(executorClient, "executorClient");
         this.authTokenProvider = Objects.requireNonNull(authTokenProvider, "authTokenProvider");
+        this.healthState = Objects.requireNonNull(healthState, "healthState");
         validateConfiguration();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(positive(properties.getRequestTimeout(), "requestTimeout"))
@@ -62,7 +77,12 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
 
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
-        if (!properties.isEnabled() || registrations.isEmpty()) {
+        if (!properties.isEnabled()) {
+            healthState.jobRegistrationDisabled();
+            return;
+        }
+        if (registrations.isEmpty()) {
+            healthState.jobRegistrationSkippedNoJobs();
             return;
         }
         int synchronizedJobs = 0;
@@ -77,11 +97,13 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
             }
         }
         if (failures.isEmpty()) {
+            healthState.jobRegistrationSucceeded(synchronizedJobs);
             log.info("Firefly startup job registration completed: executor=" + executorName
                     + ", jobs=" + synchronizedJobs
                     + ", updateExisting=" + properties.isUpdateExisting());
             return;
         }
+        healthState.jobRegistrationFailed(synchronizedJobs, failures);
         if (properties.isFailFast()) {
             throw new IllegalStateException("Firefly startup job registration failed: " + String.join("; ", failures));
         }
@@ -91,11 +113,26 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
 
     public void synchronizeJobs() {
         if (!properties.isEnabled()) {
+            healthState.jobRegistrationDisabled();
             return;
         }
-        for (FireflyJobRegistration registration : registrations) {
-            synchronizeWithRetry(registration);
+        if (registrations.isEmpty()) {
+            healthState.jobRegistrationSkippedNoJobs();
+            return;
         }
+        int synchronizedJobs = 0;
+        List<String> failures = new ArrayList<>();
+        for (FireflyJobRegistration registration : registrations) {
+            try {
+                synchronizeWithRetry(registration);
+                synchronizedJobs++;
+            } catch (RuntimeException e) {
+                failures.add(registration.id() + ": " + e.getMessage());
+                healthState.jobRegistrationFailed(synchronizedJobs, failures);
+                throw e;
+            }
+        }
+        healthState.jobRegistrationSucceeded(synchronizedJobs);
     }
 
     public void register(FireflyJobRegistration registration) {
