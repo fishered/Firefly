@@ -11,6 +11,7 @@ import com.firefly.handler.NamedJobHandler;
 import com.firefly.handler.FireflyJobHandlerRegistration;
 import com.firefly.idempotency.BusinessIdempotencyStore;
 import com.firefly.executor.idempotency.jdbc.JdbcBusinessIdempotencyStore;
+import com.firefly.spring.health.FireflyStarterHealthState;
 import com.firefly.spring.job.FireflyJobRegistrar;
 import com.firefly.spring.job.FireflyJobRegistration;
 import com.firefly.spring.job.FireflyJobRegistrationProperties;
@@ -127,19 +128,27 @@ public class FireflyNettyExecutorAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public FireflyStarterHealthState fireflyStarterHealthState() {
+        return new FireflyStarterHealthState();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public FireflyJobRegistrar fireflyJobRegistrar(
             FireflyNettyExecutorProperties executorProperties,
             FireflyJobRegistrationProperties registrationProperties,
             ObjectProvider<FireflyJobRegistration> registrations,
             NettyExecutorClient executorClient,
-            AuthTokenProvider integrationKeyProvider
+            AuthTokenProvider integrationKeyProvider,
+            FireflyStarterHealthState healthState
     ) {
         return new FireflyJobRegistrar(
                 executorProperties.getName(),
                 registrationProperties,
                 registrations.orderedStream().toList(),
                 executorClient,
-                integrationKeyProvider
+                integrationKeyProvider,
+                healthState
         );
     }
 

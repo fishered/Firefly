@@ -217,6 +217,14 @@ public final class NettyExecutorClient implements AutoCloseable {
         return registeredGateways.size();
     }
 
+    public Map<String, String> registrationFailures() {
+        return registrationFailures.entrySet().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        entry -> entry.getKey().host() + ":" + entry.getKey().port(),
+                        Map.Entry::getValue
+                ));
+    }
+
     @Override
     public void close() {
         if (!closing.compareAndSet(false, true)) {
