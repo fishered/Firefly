@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.1-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -227,7 +227,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
 <dependency>
     <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 

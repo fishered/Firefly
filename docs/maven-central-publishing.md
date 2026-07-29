@@ -6,7 +6,7 @@ Firefly 的公共 Java 构件使用 `io.github.fishered` 命名空间。普通�
 <dependency>
     <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
@@ -104,18 +104,18 @@ $env:ORG_GRADLE_PROJECT_signingInMemoryKeyPassword="<GPG_PASSWORD>"
 正式发布步骤：
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag -a v1.0.1 -m "Release 1.0.1"
+git push origin v1.0.1
 ```
 
-在 GitHub Actions 中选择 `publish-maven-central`，从 `v1.0.0` Tag 运行，并输入版本 `1.0.0`。工作流会同时校验 Tag、Gradle 版本、Secrets、测试和发布构件，校验通过后才会自动 Release。
+在 GitHub Actions 中选择 `publish-maven-central`，从 `v1.0.1` Tag 运行，并输入版本 `1.0.1`。工作流会同时校验 Tag、Gradle 版本、Secrets、测试和发布构件，校验通过后才会自动 Release。
 
 ## 6. 发布后的检查
 
 Central 正式版本不可覆盖或删除。发布后检查：
 
 ```text
-https://central.sonatype.com/artifact/io.github.fishered/firefly-spring-boot-starter/1.0.0
+https://central.sonatype.com/artifact/io.github.fishered/firefly-spring-boot-starter/1.0.1
 ```
 
 在一个空 Maven 项目中仅引入 Starter，并执行：
@@ -124,4 +124,4 @@ https://central.sonatype.com/artifact/io.github.fishered/firefly-spring-boot-sta
 mvn -U dependency:tree
 ```
 
-确认六个 Firefly 模块都来自 Maven Central。任何修复都必须使用新版本，例如 `1.0.1`。
+确认六个 Firefly 模块都来自 Maven Central。任何修复都必须使用新版本，例如 `1.0.2`。
