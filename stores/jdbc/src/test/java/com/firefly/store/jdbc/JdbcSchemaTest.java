@@ -305,6 +305,19 @@ final class JdbcSchemaTest {
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 12).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 12).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 12).size());
+
+        assertEquals(3, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).stream()
+                .filter(JdbcSchema::isManagedIndexStatement).count());
+        assertEquals(0, JdbcSchemaScript.load(JdbcDialect.MYSQL).stream()
+                .filter(JdbcSchema::isManagedIndexStatement).count());
+        var mysqlTablesWithManagedIndexes = JdbcSchemaScript.load(JdbcDialect.MYSQL).stream()
+                .filter(sql -> sql.contains("idx_firefly_job_shard_due")
+                        || sql.contains("idx_firefly_execution_timeout")
+                        || sql.contains("idx_firefly_outbox_role_claim"))
+                .toList();
+        assertEquals(3, mysqlTablesWithManagedIndexes.size());
+        assertTrue(mysqlTablesWithManagedIndexes.stream()
+                .allMatch(sql -> !JdbcSchema.isManagedIndexStatement(sql)));
     }
 
     private DataSource rawH2DataSource() {
