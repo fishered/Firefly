@@ -1,0 +1,14 @@
+{
+  "topic": "Firefly v1.0.1 Production Hardening",
+  "slug": "firefly-v1-0-1-production-hardening",
+  "visuals": [
+    {
+      "file": "assets/diagrams/01-bounded-dispatch-flow.svg",
+      "type": "diagram",
+      "source": "Firefly v1.0.1 implementation",
+      "purpose": "Explain executor admission, overload acknowledgements, durable retries, and execution deadline convergence",
+      "alt_zh": "Firefly 有界派发与失败收敛流程",
+      "alt_en": "Bounded dispatch and failure convergence in Firefly"
+    }
+  ]
+}

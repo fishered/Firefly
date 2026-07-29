@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">Firefly bounded dispatch and failure convergence</title>
+  <desc id="desc">A dispatch flows from Scheduler through a durable Outbox and Gateway into bounded Executor admission. Accepted work runs with limited concurrency. Overload sends a negative ACK. Retry exhaustion or the execution deadline produces a terminal state.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2f554d"/>
+    </marker>
+    <style>
+      .label { font: 600 18px Inter, Segoe UI, sans-serif; fill: #14201d; }
+      .small { font: 15px Inter, Segoe UI, sans-serif; fill: #42534e; }
+      .mono { font: 14px Consolas, monospace; fill: #14201d; }
+      .line { stroke: #2f554d; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 8 7; }
+    </style>
+  </defs>
+  <rect width="1200" height="560" fill="#fbfaf7"/>
+  <text x="60" y="52" class="label" font-size="26">Bounded dispatch: capacity and time are explicit</text>
+
+  <rect x="60" y="105" width="185" height="96" rx="6" fill="#ffffff" stroke="#7ccf67" stroke-width="4"/>
+  <text x="92" y="143" class="label">Scheduler</text>
+  <text x="82" y="174" class="small">Create execution</text>
+
+  <rect x="315" y="105" width="205" height="96" rx="6" fill="#ffffff" stroke="#f2b84b" stroke-width="4"/>
+  <text x="375" y="143" class="label">Outbox</text>
+  <text x="339" y="174" class="small">Durable delivery</text>
+
+  <rect x="590" y="105" width="185" height="96" rx="6" fill="#ffffff" stroke="#38bdf8" stroke-width="4"/>
+  <text x="638" y="143" class="label">Gateway</text>
+  <text x="620" y="174" class="small">Route + ACK</text>
+
+  <rect x="845" y="80" width="295" height="146" rx="6" fill="#ffffff" stroke="#18715f" stroke-width="4"/>
+  <text x="902" y="117" class="label">Executor admission</text>
+  <text x="875" y="151" class="mono">accepted = running + queued</text>
+  <text x="875" y="179" class="mono">accepted &lt;= max + capacity</text>
+  <text x="875" y="207" class="small">Fail fast when no slot remains</text>
+
+  <path d="M245 153 H315" class="line"/>
+  <path d="M520 153 H590" class="line"/>
+  <path d="M775 153 H845" class="line"/>
+
+  <rect x="845" y="305" width="295" height="94" rx="6" fill="#eff8ed" stroke="#64b84f" stroke-width="3"/>
+  <text x="905" y="343" class="label">Accepted work</text>
+  <text x="879" y="375" class="small">Run under concurrency limit</text>
+  <path d="M955 226 V305" class="line"/>
+  <text x="968" y="270" class="small">slot available</text>
+
+  <rect x="510" y="305" width="265" height="94" rx="6" fill="#fff4f1" stroke="#e66b5b" stroke-width="3"/>
+  <text x="565" y="343" class="label">Overload result</text>
+  <text x="535" y="375" class="mono">ACK accepted=false</text>
+  <path d="M875 226 L742 305" class="line"/>
+  <text x="724" y="264" class="small">no capacity</text>
+
+  <rect x="60" y="444" width="1060" height="66" rx="6" fill="#17231f"/>
+  <text x="88" y="473" font-family="Consolas, monospace" font-size="15" fill="#dff5d8">ACK deadline: retry bounded delivery</text>
+  <text x="88" y="497" font-family="Consolas, monospace" font-size="15" fill="#dff5d8">Execution deadline: DISPATCHING / RUNNING -&gt; terminal timeout</text>
+
+  <path d="M643 399 V444" class="line dash"/>
+  <path d="M992 399 V444" class="line dash"/>
+  <path d="M417 201 V444" class="line dash"/>
+</svg>
