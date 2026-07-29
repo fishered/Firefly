@@ -37,7 +37,7 @@ final class JdbcSchemaScript {
     /**
      * Schema resources are intentionally simple: semicolon-separated statements and line comments.
      */
-    private static List<String> parse(InputStream inputStream) throws IOException {
+    static List<String> parse(InputStream inputStream) throws IOException {
         List<String> statements = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {

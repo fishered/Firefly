@@ -1,3 +1,6 @@
+-- Canonical PostgreSQL schema for a fresh Firefly installation.
+-- Creates only Firefly-managed objects; the database, role, and grants are operator-owned.
+
 create table if not exists firefly_schema_version (
     version integer primary key,
     installed_at timestamp not null

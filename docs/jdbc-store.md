@@ -10,15 +10,16 @@ JDBC schema 不在 Java 代码里硬编码建表 SQL。`JdbcSchema` 负责：
 
 - 根据 `DatabaseMetaData` 自动识别数据库方言。
 - 或使用 `JdbcSchemaOptions` 指定方言。
-- 加载 `stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/*.sql` 下的 SQL 资源。
+- 加载各数据库方言对应的 SQL 资源。PostgreSQL 的权威源文件是 `scripts/postgresql/init.sql`，
+  构建时会自动打包到 JDBC 模块的 schema 资源目录。
 - 按脚本顺序执行建表语句。
 
 当前脚本：
 
 ```text
-h2.sql
-postgresql.sql
-mysql.sql
+stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/h2.sql
+scripts/postgresql/init.sql
+stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/mysql.sql
 ```
 
 默认自动识别：
@@ -45,9 +46,5 @@ JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("postgresql"));
 
 因此 Firefly 使用 dialect script，而不是在 `JdbcSchema` 里写死一份 SQL。
 
-## 后续方向
-
-- server bootstrap 通过配置选择 `memory` / `jdbc` store。
-- 增加 schema version 表和迁移版本号。
-- 增加更多数据库脚本，例如 Oracle、SQL Server。
-- 对 MySQL index 初始化增加更完整的 migration guard。
+PostgreSQL 全量脚本只用于全新数据库。已有数据库由 `JdbcSchema` 根据 `firefly_schema_version`
+依次执行 `schema/migrations/postgresql/v*.sql`；新增 PostgreSQL 迁移时必须同步更新全量脚本。
