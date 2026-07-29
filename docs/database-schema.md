@@ -1,12 +1,17 @@
 # Firefly 数据库结构
 
-当前 schema 版本为 `11`。以下脚本均可用于空库全量初始化，也可由 `initialize-if-empty` 模式重复执行：
+当前 schema 版本为 `12`。以下脚本用于空库全量初始化，也可由 `initialize-if-empty` 模式重复执行：
 
 ```text
 stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/h2.sql
-stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/postgresql.sql
+scripts/postgresql/init.sql
 stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/mysql.sql
 ```
+
+`scripts/postgresql/init.sql` 是 PostgreSQL 全新安装的唯一权威脚本。Gradle 构建 `stores:jdbc` 时会将
+同一文件打包为 `com/firefly/store/jdbc/schema/postgresql.sql`，供 `JdbcSchema` 加载，不维护第二份副本。
+后续任何 PostgreSQL schema 变更都必须同时更新该全量脚本和对应版本的增量脚本；构建测试会校验仓库脚本
+与 JAR 资源完全一致，并限制全量脚本只能包含 Firefly 必需对象和种子数据。
 
 ## 表结构
 
@@ -34,6 +39,25 @@ Scheduler 不单独建表。它是 `firefly_node.roles` 中的节点职责，实
 
 ## 初始化模式
 
+全新 PostgreSQL 数据库可以在仓库根目录执行：
+
+```powershell
+psql -v ON_ERROR_STOP=1 --dbname=firefly --file=scripts/postgresql/init.sql
+```
+
+该脚本只创建 Firefly 管理的表、索引和必要种子数据，不创建数据库、登录角色、权限或示例任务。
+数据库、角色和授权由部署人员预先管理。脚本固定初始化 `scheduler.shard-count=32`；需要其他分片数时，
+应改用 Server/JdbcSchema 初始化流程并在所有节点配置相同值。
+
+使用外部脚本完成初始化后，生产节点建议只验证 schema：
+
+```properties
+firefly.jdbc.schema.mode=validate
+```
+
+已有数据库不要重新执行全量脚本来代替升级。Server 的初始化流程会读取 `firefly_schema_version`，并按版本
+执行 `stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/migrations/postgresql/v*.sql` 增量脚本。
+
 ```properties
 firefly.jdbc.schema.mode=initialize-if-empty
 ```
@@ -44,11 +68,12 @@ firefly.jdbc.schema.mode=initialize-if-empty
 firefly.jdbc.schema.mode=validate
 ```
 
-`validate` 只检查，不修改数据库。完成外部迁移后，`firefly_schema_version` 必须包含版本 `11`。
+`validate` 只检查，不修改数据库。完成外部迁移后，`firefly_schema_version` 必须包含版本 `12`。
 
 `firefly_user` 保存人类管理员账号，不保存 Executor/Starter 的客户端凭据。密码使用带随机盐的
 PBKDF2-HMAC-SHA256 摘要；创建、改密、角色调整、启停和删除由 `/api/users` 管理，并使用 `version`
-做 CAS。全量初始化 SQL 在用户名不存在时创建默认账号 `admin/admin`；重复执行初始化不会覆盖已有密码。
+做 CAS。全量初始化 SQL 在用户名不存在时创建默认账号 `admin/admin`，并设置
+`password_change_required=true` 强制首次登录修改密码；重复执行初始化不会覆盖已有密码。
 
 `firefly_integration_key` 是集群共享的单例凭据，只保存带随机盐的 PBKDF2 摘要。Admin 通过
 `GET /api/integration-key` 查看配置状态，通过 `POST /api/integration-key` 生成或轮换；明文只在轮换响应
