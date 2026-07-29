@@ -331,7 +331,7 @@ public final class JdbcJobRepository implements JobRepository {
                             select 1 from firefly_execution execution
                             where execution.execution_id=firefly_dispatch_outbox.execution_id
                               and execution.status in ('DISPATCHING','DISPATCHED','RUNNING')
-                              and (execution.timeout_at is null or execution.timeout_at > ?)
+                              and execution.timeout_at > ?
                         ) and available_at <= ? and (
                             status in ('PENDING','RETRY')
                             or status='SENT' and ack_deadline <= ?

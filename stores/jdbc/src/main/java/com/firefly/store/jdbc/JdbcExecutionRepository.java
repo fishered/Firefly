@@ -250,8 +250,8 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
                 try (PreparedStatement statement = connection.prepareStatement("""
                         select execution_id from firefly_execution
                         where status in ('DISPATCHING','DISPATCHED','RUNNING')
-                          and timeout_at is not null and timeout_at <= ?
-                        order by timeout_at, execution_id
+                          and (timeout_at is null or timeout_at <= ?)
+                        order by case when timeout_at is null then 0 else 1 end, timeout_at, execution_id
                         """)) {
                     statement.setTimestamp(1, Timestamp.from(databaseNow));
                     statement.setMaxRows(limit);
@@ -262,14 +262,14 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
                 List<String> expired = new ArrayList<>();
                 for (String executionId : candidates) {
                     ExecutionRecord current = lockExecution(connection, executionId).orElse(null);
-                    if (current == null || current.status().terminal() || current.timeoutAt() == null
-                            || current.timeoutAt().isAfter(databaseNow)) {
+                    if (current == null || current.status().terminal()
+                            || (current.timeoutAt() != null && current.timeoutAt().isAfter(databaseNow))) {
                         continue;
                     }
                     try (PreparedStatement update = connection.prepareStatement("""
                             update firefly_execution set status='TIMEOUT', updated_at=?
                             where execution_id=? and status in ('DISPATCHING','DISPATCHED','RUNNING')
-                              and timeout_at <= ?
+                              and (timeout_at is null or timeout_at <= ?)
                             """)) {
                         update.setTimestamp(1, Timestamp.from(databaseNow));
                         update.setString(2, executionId);
