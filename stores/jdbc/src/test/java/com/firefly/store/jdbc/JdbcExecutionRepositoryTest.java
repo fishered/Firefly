@@ -18,6 +18,84 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcExecutionRepositoryTest {
     @Test
+    void manualExecutionGetsADeadlineBeforeAnExecutorAcceptsIt() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-07-18T09:00:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> now);
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource, ignored -> now);
+        com.firefly.domain.JobDefinition job = com.firefly.domain.JobDefinition.builder()
+                .id("waiting-job").name("Waiting job").handlerName("remote:orders:run")
+                .schedule(new com.firefly.domain.CronSchedule("0 * * * * *"))
+                .timeout(java.time.Duration.ofSeconds(45)).build();
+
+        assertTrue(jobs.enqueueManual(new com.firefly.engine.ExecutionCommand(
+                "waiting-exec", job, now, now, "node-a", 7L
+        )));
+
+        ExecutionRecord execution = executions.findExecution("waiting-exec").orElseThrow();
+        assertEquals(ExecutionStatus.DISPATCHING, execution.status());
+        assertEquals(now.plusSeconds(45), execution.timeoutAt());
+    }
+
+    @Test
+    void waitingExecutionTimesOutAndStopsItsOutboxWhenNoExecutorAppears() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-07-18T09:30:00Z");
+        java.util.concurrent.atomic.AtomicReference<Instant> databaseNow =
+                new java.util.concurrent.atomic.AtomicReference<>(now);
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> databaseNow.get());
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource, ignored -> databaseNow.get());
+        com.firefly.domain.JobDefinition job = com.firefly.domain.JobDefinition.builder()
+                .id("offline-job").name("Offline job").handlerName("remote:orders:run")
+                .schedule(new com.firefly.domain.CronSchedule("0 * * * * *"))
+                .timeout(java.time.Duration.ofSeconds(10)).build();
+        assertTrue(jobs.enqueueManual(new com.firefly.engine.ExecutionCommand(
+                "offline-exec", job, now, now, "node-a", 7L
+        )));
+
+        databaseNow.set(now.plusSeconds(11));
+        assertTrue(jobs.claimDispatches(
+                "gateway-a", databaseNow.get(), 10, java.time.Duration.ofSeconds(5)
+        ).isEmpty());
+        assertEquals(List.of("offline-exec"), executions.expireTimedOutExecutions(databaseNow.get(), 10));
+
+        assertEquals(ExecutionStatus.TIMEOUT,
+                executions.findExecution("offline-exec").orElseThrow().status());
+        assertEquals(1L, jobs.outboxCounts().get(com.firefly.store.DispatchOutboxStatus.DEAD));
+        assertTrue(jobs.claimDispatches(
+                "gateway-a", databaseNow.get(), 10, java.time.Duration.ofSeconds(5)
+        ).isEmpty());
+    }
+
+    @Test
+    void legacyWaitingExecutionWithoutADeadlineIsStoppedAfterUpgrade() throws Exception {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-07-18T09:45:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> now);
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource, ignored -> now);
+        com.firefly.domain.JobDefinition job = com.firefly.domain.JobDefinition.builder()
+                .id("legacy-job").name("Legacy job").handlerName("remote:orders:run")
+                .schedule(new com.firefly.domain.CronSchedule("0 * * * * *")).build();
+        assertTrue(jobs.enqueueManual(new com.firefly.engine.ExecutionCommand(
+                "legacy-exec", job, now, now, "node-a", 7L
+        )));
+        try (java.sql.Connection connection = dataSource.getConnection();
+             java.sql.PreparedStatement statement = connection.prepareStatement(
+                     "update firefly_execution set timeout_at=null where execution_id=?")) {
+            statement.setString(1, "legacy-exec");
+            assertEquals(1, statement.executeUpdate());
+        }
+
+        assertTrue(jobs.claimDispatches(
+                "gateway-a", now, 10, java.time.Duration.ofSeconds(5)
+        ).isEmpty());
+        assertEquals(List.of("legacy-exec"), executions.expireTimedOutExecutions(now, 10));
+        assertEquals(ExecutionStatus.TIMEOUT,
+                executions.findExecution("legacy-exec").orElseThrow().status());
+        assertEquals(1L, jobs.outboxCounts().get(com.firefly.store.DispatchOutboxStatus.DEAD));
+    }
+
+    @Test
     void cancellationAtomicallyStopsTargetsAndOutbox() {
         DataSource dataSource = JdbcTestSupport.dataSource();
         Instant now = Instant.parse("2026-07-18T10:00:00Z");

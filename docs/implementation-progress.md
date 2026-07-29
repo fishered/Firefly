@@ -63,13 +63,13 @@ examples/*                   Embedded 与 Netty executor 示例
 - schema v5 为 Outbox 增加 `dispatch_type` 和不可变 `snapshot_payload`。已入队任务不再回读可变的 `firefly_job`，任务修改或删除不会改变待派发内容。
 - schema v6 增加 `firefly_job_group`，`JdbcSchedulerCatalog` 已支持执行器、任务组和 Catalog job 持久化；`firefly_cluster_metadata.jobs.revision` 用于 TimingIndex 增量刷新。
 - schema v7 为 execution 和 Outbox 增加 `root_execution_id`、`run_attempt`，execution 增加 `retry_scheduled`。失败或 timeout 通过行锁 CAS 最多创建一个下一 attempt。
-- schema v8 为 execution 增加不可变 `timeout_at` 和超时索引。deadline 在 attempt 实际开始派发时按数据库时间固化，任务修改、删除和 retry backoff 不再改变执行超时语义。
+- schema v8 为 execution 增加不可变 `timeout_at` 和超时索引。初始 attempt 在进入可派发队列时按数据库时间固化 deadline；重试 attempt 从 `available_at` 开始计时，因此 retry backoff 不占用执行超时。任务修改或删除不会改变既有 attempt 的 deadline。
 - execution/target 已改为事务内单向状态机；ACK、结果、父级聚合和 timeout 按父行锁串行化，迟到 ACK、冲突结果和 LOCAL 完成不能覆盖终态。
 - Outbox worker 支持跨节点认领、ACK 超时重投、指数退避和最大尝试次数。`LOCAL` 记录只由 Scheduler 角色领取，`REMOTE` 记录只由 Gateway 角色领取；PostgreSQL/MySQL 使用 `FOR UPDATE SKIP LOCKED`，避免多个 worker 争抢同一候选集。
 - Outbox claim 已使用 `claim_owner + attempt` 作为回写 fencing token。旧 Gateway 的 claim 过期并被其他节点接管后，迟到的 SENT/RETRY 回写会被 CAS 拒绝；普通重试只允许 `CLAIMED -> RETRY/DEAD`，不能把已 ACK 的 `DONE` 或超时 `DEAD` 重新激活。
 - `firefly.dispatch.outbox.max-attempts` 同时约束发送拒绝和 ACK 超时重投。最多只会发生配置次数的真实发送；最后一次发送仍未 ACK 时，下一次 fenced 认领只负责把记录转为 `DEAD`，不会再次下发。
 - 传输层暂时拒绝派发时，逻辑 execution 保持非终态并交由 Outbox 重投，不再提前写成 `FAILED` 导致后续 ACK/结果无法推进；真正的业务失败和执行超时仍由 execution 状态机与业务重试策略处理。
-- Gateway 在本地没有目标 Executor 路由时会 fenced 延后并释放 Outbox claim，不消耗真实投递 attempt，使持有连接的 Gateway 可以重新竞争；广播和分片跨 Gateway 聚合仍采用 all-connected 拓扑约束。
+- Gateway 在本地没有目标 Executor 路由时会 fenced 延后并释放 Outbox claim，不消耗真实投递 attempt，使持有连接的 Gateway 可以在 deadline 前重新竞争。若 deadline 前仍无可用路由，execution 转为 `TIMEOUT`，对应 Outbox 原子转为 `DEAD` 且不再允许领取；升级前遗留的活动 execution 若缺少 deadline，也会由维护扫描终止。广播和分片跨 Gateway 聚合仍采用 all-connected 拓扑约束。
 - JDBC 模式使用数据库校准 Clock，按配置周期采样数据库时间，调度、节点、Outbox、维护和 Gateway 共享同一时钟；时钟偏移、漂移告警和同步失败会进入 Prometheus。
 - 广播和分片使用目标级 ACK；父 Outbox 只有在目标数达到预期且所有目标都已 ACK 后才完成。重投不会覆盖已 ACK 或已完成的目标，广播重投沿用首次实例快照。
 - Executor 客户端在实例级共享 `executionId` 幂等注册表，多 Gateway 同时或重复下发时，同一进程只执行业务 Handler 一次并复用结果。

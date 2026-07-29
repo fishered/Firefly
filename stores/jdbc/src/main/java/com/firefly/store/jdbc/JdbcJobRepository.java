@@ -262,7 +262,7 @@ public final class JdbcJobRepository implements JobRepository {
                     return true;
                 }
                 for (ExecutionCommand command : commands) {
-                    insertPlannedExecution(connection, command);
+                    insertPlannedExecution(connection, command, databaseNow);
                     insertOutbox(connection, command);
                 }
                 connection.commit();
@@ -327,7 +327,12 @@ public final class JdbcJobRepository implements JobRepository {
                         select outbox_id, root_execution_id, run_attempt, scheduled_fire_time, dispatch_time,
                                owner_node_id, fencing_token, attempt, dispatch_type, snapshot_payload
                         from firefly_dispatch_outbox
-                        where dispatch_type in (%s) and available_at <= ? and (
+                        where dispatch_type in (%s) and exists (
+                            select 1 from firefly_execution execution
+                            where execution.execution_id=firefly_dispatch_outbox.execution_id
+                              and execution.status in ('DISPATCHING','DISPATCHED','RUNNING')
+                              and execution.timeout_at > ?
+                        ) and available_at <= ? and (
                             status in ('PENDING','RETRY')
                             or status='SENT' and ack_deadline <= ?
                             or status='CLAIMED' and claim_until <= ?)
@@ -338,6 +343,7 @@ public final class JdbcJobRepository implements JobRepository {
                     for (DispatchType dispatchType : dispatchTypes) {
                         select.setString(selectIndex++, dispatchType.name());
                     }
+                    select.setTimestamp(selectIndex++, Timestamp.from(databaseNow));
                     select.setTimestamp(selectIndex++, Timestamp.from(databaseNow));
                     select.setTimestamp(selectIndex++, Timestamp.from(databaseNow));
                     select.setTimestamp(selectIndex, Timestamp.from(databaseNow));
@@ -589,7 +595,8 @@ public final class JdbcJobRepository implements JobRepository {
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
             try {
-                insertPlannedExecution(connection, command);
+                Instant databaseNow = timeSource.now(connection);
+                insertPlannedExecution(connection, command, databaseNow);
                 insertOutbox(connection, command);
                 connection.commit();
                 return true;
@@ -665,8 +672,9 @@ public final class JdbcJobRepository implements JobRepository {
                         executionId, source.rootId(), nextAttempt, definition, source.fireTime(), databaseNow,
                         source.owner(), source.token()
                 );
-                insertPlannedExecution(connection, retry);
-                insertOutbox(connection, retry, databaseNow.plus(policy.delayBeforeAttempt(nextAttempt)));
+                Instant availableAt = databaseNow.plus(policy.delayBeforeAttempt(nextAttempt));
+                insertPlannedExecution(connection, retry, availableAt);
+                insertOutbox(connection, retry, availableAt);
                 connection.commit();
                 return true;
             } catch (SQLException | RuntimeException e) {
@@ -680,16 +688,21 @@ public final class JdbcJobRepository implements JobRepository {
         }
     }
 
-    private void insertPlannedExecution(Connection connection, ExecutionCommand command) throws SQLException {
+    private void insertPlannedExecution(
+            Connection connection,
+            ExecutionCommand command,
+            Instant timeoutBase
+    ) throws SQLException {
         JobDefinition definition = command.definition();
         try (PreparedStatement statement = connection.prepareStatement("""
                 insert into firefly_execution
                 (execution_id, root_execution_id, run_attempt, retry_scheduled, job_id,
                  scheduled_fire_time, dispatch_time, dispatch_mode, completion_policy,
-                 status, expected_targets, accepted_targets, owner_node_id, fencing_token, created_at, updated_at)
-                values (?, ?, ?, false, ?, ?, ?, ?, ?, 'DISPATCHING', ?, 0, ?, ?, ?, ?)
+                 status, expected_targets, accepted_targets, owner_node_id, fencing_token,
+                 timeout_at, created_at, updated_at)
+                values (?, ?, ?, false, ?, ?, ?, ?, ?, 'DISPATCHING', ?, 0, ?, ?, ?, ?, ?)
                 """)) {
-            Instant now = command.dispatchTime();
+            Instant now = timeSource.now(connection);
             statement.setString(1, command.executionId()); statement.setString(2, command.rootExecutionId());
             statement.setInt(3, command.runAttempt()); statement.setString(4, definition.id());
             statement.setTimestamp(5, Timestamp.from(command.scheduledFireTime()));
@@ -698,7 +711,8 @@ public final class JdbcJobRepository implements JobRepository {
             statement.setString(8, definition.completionPolicy().name());
             statement.setInt(9, definition.dispatchMode() == ExecutorDispatchMode.SHARDING ? definition.shardCount() : 1);
             statement.setString(10, command.ownerNodeId()); statement.setLong(11, command.fencingToken());
-            statement.setTimestamp(12, Timestamp.from(now)); statement.setTimestamp(13, Timestamp.from(now));
+            statement.setTimestamp(12, Timestamp.from(timeoutBase.plus(definition.timeout())));
+            statement.setTimestamp(13, Timestamp.from(now)); statement.setTimestamp(14, Timestamp.from(now));
             statement.executeUpdate();
         }
     }
