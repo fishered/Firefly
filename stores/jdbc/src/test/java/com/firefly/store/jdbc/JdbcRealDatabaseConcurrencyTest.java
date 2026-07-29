@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @Tag("real-database")
 class JdbcRealDatabaseConcurrencyTest {
@@ -38,9 +39,7 @@ class JdbcRealDatabaseConcurrencyTest {
 
     @BeforeAll
     static void startContainers() {
-        if (!DockerClientFactory.instance().isDockerAvailable()) {
-            throw new IllegalStateException("Docker is required for realDatabaseTest");
-        }
+        assumeTrue(DockerClientFactory.instance().isDockerAvailable(), "Docker is not available");
         postgres = new PostgreSQLContainer<>("postgres:16-alpine");
         mysql = new MySQLContainer<>("mysql:8.0.36")
                 .withDatabaseName("firefly")
