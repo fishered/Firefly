@@ -139,6 +139,19 @@ Switch to in-memory storage:
 
 The main config file is `config/firefly-server.properties`, and profile-specific values live in `config/profiles/*.properties`. Command-line flags and environment variables override file values.
 
+## Container Images
+
+Public release images are published to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/fishered/firefly:1.0.1
+docker pull ghcr.io/fishered/firefly-admin:1.0.1
+```
+
+The Server image exposes Gateway `9700`, Admin API `9710`, and Metrics `9711`. The Admin image exposes the web console on `9720`. `docker-compose.yml` uses both public images by default and can still build them from source with `docker compose up -d --build`.
+
+Image publication is manual and always builds from an immutable `vX.Y.Z` source tag. See [docs/deployment.md](docs/deployment.md) for publication and runtime configuration.
+
 ## Integration
 
 - Traditional Java services: use `integrations:embedded` and embed Firefly through `FireflyScheduler.create()`.

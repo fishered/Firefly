@@ -4,8 +4,8 @@ Firefly 发布为两个独立镜像：
 
 | 镜像 | 默认容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui` | `9720` | Web 页面、登录会话和 Admin API 反向代理 |
+| `ghcr.io/fishered/firefly` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `ghcr.io/fishered/firefly-admin` | `9720` | Web 页面、登录会话和 Admin API 反向代理 |
 
 PostgreSQL 是运行依赖，不属于 Firefly 自身镜像。镜像不固化数据库地址、节点名称或密码，相同镜像可以通过
 环境变量运行成单节点、全角色集群节点或专用角色节点。
@@ -69,8 +69,8 @@ firefly:
 ## 分别构建两个镜像
 
 ```powershell
-docker build -t firefly/firefly-server:1.0.0 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.0.0 -f ui/admin/Dockerfile ui/admin
+docker build -t ghcr.io/fishered/firefly:1.0.1 -f Dockerfile .
+docker build -t ghcr.io/fishered/firefly-admin:1.0.1 -f ui/admin/Dockerfile ui/admin
 ```
 
 服务镜像使用 Amazon Corretto OpenJDK 21 Alpine 和 Gradle `installDist` 产物，以非 root 用户运行。前端镜像使用 Node 22 Alpine，
@@ -78,13 +78,14 @@ docker build -t firefly/firefly-admin-ui:1.0.0 -f ui/admin/Dockerfile ui/admin
 
 ## 使用已发布镜像
 
-Compose 默认使用固定镜像名和 `.env` 中的统一版本：
+Compose 默认使用 GHCR 公共镜像，并从 `.env` 读取统一仓库和版本：
 
 ```dotenv
-FIREFLY_VERSION=1.0.0
+FIREFLY_IMAGE_REGISTRY=ghcr.io/fishered
+FIREFLY_VERSION=1.0.1
 ```
 
-需要私有仓库时，对镜像重新打标签，并在部署侧 Compose 覆盖文件中替换 `image` 地址；运行配置不再承担镜像仓库选择职责。
+需要私有镜像仓库时，只需把 `FIREFLY_IMAGE_REGISTRY` 改成目标 registry 和 namespace。
 
 只拉取、不在部署机重新构建：
 
@@ -93,14 +94,60 @@ docker compose pull
 docker compose up -d --no-build
 ```
 
-也可以分别发布：
+也可以从本地构建结果重新打标签并分别发布：
 
 ```powershell
-docker tag firefly/firefly-server:1.0.0 registry.example.com/firefly/firefly-server:1.0.0
-docker tag firefly/firefly-admin-ui:1.0.0 registry.example.com/firefly/firefly-admin-ui:1.0.0
-docker push registry.example.com/firefly/firefly-server:1.0.0
-docker push registry.example.com/firefly/firefly-admin-ui:1.0.0
+docker tag ghcr.io/fishered/firefly:1.0.1 registry.example.com/firefly/firefly:1.0.1
+docker tag ghcr.io/fishered/firefly-admin:1.0.1 registry.example.com/firefly/firefly-admin:1.0.1
+docker push registry.example.com/firefly/firefly:1.0.1
+docker push registry.example.com/firefly/firefly-admin:1.0.1
 ```
+
+## 发布到 GitHub Container Registry
+
+`.github/workflows/publish-container-images.yml` 只支持手动触发，不响应普通分支 push。工作流先检出 `vX.Y.Z` Tag，并校验 Tag 和 Gradle 版本一致，然后构建以下 `linux/amd64` 镜像：
+
+```text
+ghcr.io/fishered/firefly:X.Y.Z
+ghcr.io/fishered/firefly:X.Y
+ghcr.io/fishered/firefly:latest          # 可选
+
+ghcr.io/fishered/firefly-admin:X.Y.Z
+ghcr.io/fishered/firefly-admin:X.Y
+ghcr.io/fishered/firefly-admin:latest    # 可选
+```
+
+首次使用前，在仓库 `Settings -> Actions -> General -> Workflow permissions` 确认 Actions 允许读写 Package。发布 `1.0.1`：
+
+```powershell
+gh workflow run publish-container-images.yml `
+  --ref master `
+  -f version=1.0.1 `
+  -f publish_latest=true
+
+gh run list --workflow publish-container-images.yml --limit 5
+gh run watch <RUN_ID> --exit-status
+```
+
+也可以在 GitHub 的 `Actions -> publish-container-images -> Run workflow` 中输入版本。工作流必须从已经存在且不可变的版本 Tag 构建，不允许用普通分支提交冒充正式镜像。
+
+第一次发布完成后，进入 GitHub 个人主页的 `Packages`，分别打开 `firefly` 和 `firefly-admin`：
+
+```text
+Package settings -> Danger Zone -> Change visibility -> Public
+```
+
+两个 Package 都设为 Public 后，未登录用户才能直接拉取。验证公开访问和平台信息：
+
+```powershell
+docker logout ghcr.io
+docker pull ghcr.io/fishered/firefly:1.0.1
+docker pull ghcr.io/fishered/firefly-admin:1.0.1
+docker buildx imagetools inspect ghcr.io/fishered/firefly:1.0.1
+docker buildx imagetools inspect ghcr.io/fishered/firefly-admin:1.0.1
+```
+
+GHCR 标签在技术上可以覆盖，但 Firefly 的 `X.Y.Z` 标签按不可变版本管理。失败重试必须继续使用同一个未移动的 Git Tag；版本代码发生变化时创建新版本，不能覆盖已公开镜像。
 
 ## 分别运行容器
 
@@ -124,12 +171,12 @@ docker run -d --name firefly-server --network firefly `
   -e FIREFLY_JDBC_SCHEMA_MODE=initialize-if-empty `
   -e FIREFLY_SECURITY_JWT_ENABLED=true `
   -e FIREFLY_SECURITY_JWT_SECRET=change-me-to-a-long-random-signing-secret `
-  firefly/firefly-server:1.0.0
+  ghcr.io/fishered/firefly:1.0.1
 
 docker run -d --name firefly-admin-ui --network firefly `
   -p 9720:9720 `
   -e FIREFLY_ADMIN_API=http://firefly-server:9710 `
-  firefly/firefly-admin-ui:1.0.0
+  ghcr.io/fishered/firefly-admin:1.0.1
 ```
 
 `FIREFLY_ADMIN_API` 必须是前端容器可以访问的地址。容器内的 `127.0.0.1:9710` 指向前端容器自身，不能

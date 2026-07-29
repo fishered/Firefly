@@ -68,10 +68,10 @@ npm.cmd run check
 Build the independent UI image:
 
 ```powershell
-docker build -t firefly/firefly-admin-ui:1.0.0 -f Dockerfile .
+docker build -t ghcr.io/fishered/firefly-admin:1.0.1 -f Dockerfile .
 docker run --rm -p 9720:9720 `
   -e FIREFLY_ADMIN_API=http://host.docker.internal:9710 `
-  firefly/firefly-admin-ui:1.0.0
+  ghcr.io/fishered/firefly-admin:1.0.1
 ```
 
 The container listens on `0.0.0.0:9720`. `/ui/health` is its liveness endpoint. In Compose,

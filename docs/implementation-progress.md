@@ -158,7 +158,7 @@ DELETE /api/executor-definitions/{executorName}
 - Admin UI 已提供中文、英文切换，语言选择保存在浏览器本地；导航、表格、表单、对话框、提示、错误和动态状态均使用同一翻译入口，切换语言不会重新请求业务数据。
 - UI 数据加载已按页面拆分，页面切换优先显示缓存并只请求当前页面依赖的接口；5 秒新鲜度窗口避免重复读取，并发的相同 GET 请求会自动合并。手动刷新和写操作完成后仍会强制读取最新数据。
 - Node UI 服务在内存中缓存静态资源并生成内容 ETag，支持浏览器 `304`；API 代理改为流式转发响应，安全方法不再读取无意义的请求体。
-- Docker 部署已拆为 `firefly-server` 和 `firefly-admin-ui` 两个独立镜像；Compose 同时编排 PostgreSQL，运行配置集中在 `.env`，支持从源码构建或从私有仓库直接拉取。两个应用容器均使用非 root 用户和健康检查，前端通过容器 DNS 代理 Admin API。
+- Docker 部署已拆为 `ghcr.io/fishered/firefly` 和 `ghcr.io/fishered/firefly-admin` 两个独立镜像；手动 Actions 工作流从版本 Tag 发布带 SBOM/provenance 的 GHCR 镜像。Compose 运行配置集中在 `.env`，支持从源码构建或从公共/私有仓库直接拉取。两个应用容器均使用非 root 用户和健康检查，前端通过容器 DNS 代理 Admin API。
 - 当前 UI 页面模块包括：
 
 ```text
