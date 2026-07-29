@@ -7,11 +7,11 @@ dependencies {
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
     testImplementation "com.h2database:h2:2.2.224"
-    testImplementation "org.testcontainers:junit-jupiter:1.17.3"
-    testImplementation "org.testcontainers:postgresql:1.17.3"
-    testImplementation "org.testcontainers:mysql:1.17.3"
-    testImplementation "org.postgresql:postgresql:42.1.4"
-    testImplementation "com.mysql:mysql-connector-j:8.0.32"
+    testImplementation "org.testcontainers:junit-jupiter:1.21.4"
+    testImplementation "org.testcontainers:postgresql:1.21.4"
+    testImplementation "org.testcontainers:mysql:1.21.4"
+    testImplementation "org.postgresql:postgresql:42.7.13"
+    testImplementation "com.mysql:mysql-connector-j:9.7.0"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"
 }
 
@@ -28,5 +28,12 @@ tasks.register("realDatabaseTest", Test) {
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
         includeTags("real-database")
+    }
+    testLogging {
+        events "failed"
+        exceptionFormat "full"
+        showCauses true
+        showExceptions true
+        showStackTraces true
     }
 }
