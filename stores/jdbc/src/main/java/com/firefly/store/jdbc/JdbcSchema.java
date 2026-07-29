@@ -318,13 +318,18 @@ public final class JdbcSchema {
 
     private static void executeFullSchema(Statement statement, JdbcDialect dialect) throws SQLException {
         for (String sql : JdbcSchemaScript.load(dialect)) {
-            String normalized = sql.toLowerCase(Locale.ROOT);
-            if (!normalized.contains("idx_firefly_job_shard_due")
-                    && !normalized.contains("idx_firefly_execution_timeout")
-                    && !normalized.contains("idx_firefly_outbox_role_claim")) {
+            if (!isManagedIndexStatement(sql)) {
                 statement.execute(sql);
             }
         }
+    }
+
+    static boolean isManagedIndexStatement(String sql) {
+        String normalized = sql.stripLeading().toLowerCase(Locale.ROOT);
+        if (!normalized.startsWith("create index")) return false;
+        return normalized.contains("idx_firefly_job_shard_due")
+                || normalized.contains("idx_firefly_execution_timeout")
+                || normalized.contains("idx_firefly_outbox_role_claim");
     }
 
     private static void migrateLegacySchema(Connection connection, JdbcDialect dialect) throws SQLException {
