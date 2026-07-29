@@ -18,6 +18,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcExecutionRepositoryTest {
     @Test
+    void manualExecutionGetsADeadlineBeforeAnExecutorAcceptsIt() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-07-18T09:00:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> now);
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource, ignored -> now);
+        com.firefly.domain.JobDefinition job = com.firefly.domain.JobDefinition.builder()
+                .id("waiting-job").name("Waiting job").handlerName("remote:orders:run")
+                .schedule(new com.firefly.domain.CronSchedule("0 * * * * *"))
+                .timeout(java.time.Duration.ofSeconds(45)).build();
+
+        assertTrue(jobs.enqueueManual(new com.firefly.engine.ExecutionCommand(
+                "waiting-exec", job, now, now, "node-a", 7L
+        )));
+
+        ExecutionRecord execution = executions.findExecution("waiting-exec").orElseThrow();
+        assertEquals(ExecutionStatus.DISPATCHING, execution.status());
+        assertEquals(now.plusSeconds(45), execution.timeoutAt());
+    }
+
+    @Test
     void cancellationAtomicallyStopsTargetsAndOutbox() {
         DataSource dataSource = JdbcTestSupport.dataSource();
         Instant now = Instant.parse("2026-07-18T10:00:00Z");

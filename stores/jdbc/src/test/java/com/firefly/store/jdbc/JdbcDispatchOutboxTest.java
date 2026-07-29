@@ -134,6 +134,8 @@ class JdbcDispatchOutboxTest {
                 .findFirst().orElseThrow();
         assertEquals("retry-exec", retry.command().rootExecutionId());
         assertEquals(1, retry.command().runAttempt());
+        assertEquals(now.plusSeconds(5).plus(job.timeout()),
+                executions.findExecution(retry.command().executionId()).orElseThrow().timeoutAt());
     }
 
     @Test
