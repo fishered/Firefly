@@ -327,7 +327,12 @@ public final class JdbcJobRepository implements JobRepository {
                         select outbox_id, root_execution_id, run_attempt, scheduled_fire_time, dispatch_time,
                                owner_node_id, fencing_token, attempt, dispatch_type, snapshot_payload
                         from firefly_dispatch_outbox
-                        where dispatch_type in (%s) and available_at <= ? and (
+                        where dispatch_type in (%s) and exists (
+                            select 1 from firefly_execution execution
+                            where execution.execution_id=firefly_dispatch_outbox.execution_id
+                              and execution.status in ('DISPATCHING','DISPATCHED','RUNNING')
+                              and (execution.timeout_at is null or execution.timeout_at > ?)
+                        ) and available_at <= ? and (
                             status in ('PENDING','RETRY')
                             or status='SENT' and ack_deadline <= ?
                             or status='CLAIMED' and claim_until <= ?)
@@ -338,6 +343,7 @@ public final class JdbcJobRepository implements JobRepository {
                     for (DispatchType dispatchType : dispatchTypes) {
                         select.setString(selectIndex++, dispatchType.name());
                     }
+                    select.setTimestamp(selectIndex++, Timestamp.from(databaseNow));
                     select.setTimestamp(selectIndex++, Timestamp.from(databaseNow));
                     select.setTimestamp(selectIndex++, Timestamp.from(databaseNow));
                     select.setTimestamp(selectIndex, Timestamp.from(databaseNow));

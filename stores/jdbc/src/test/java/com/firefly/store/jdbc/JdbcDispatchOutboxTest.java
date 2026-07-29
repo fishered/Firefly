@@ -22,6 +22,41 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcDispatchOutboxTest {
     @Test
+    void deferredDispatchRemainsClaimableWhenAnExecutorReturnsBeforeTheDeadline() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-07-18T08:00:00Z");
+        AtomicReference<Instant> databaseNow = new AtomicReference<>(now);
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> databaseNow.get());
+        JobDefinition job = JobDefinition.builder()
+                .id("recovering-job").name("Recovering job").handlerName("remote:orders:run")
+                .schedule(new CronSchedule("0 * * * * *"))
+                .timeout(Duration.ofSeconds(10)).build();
+        ExecutionCommand command = new ExecutionCommand(
+                "recovering-exec", job, now, now, "node-a", 1L
+        );
+        assertTrue(jobs.enqueueManual(command));
+
+        var firstClaim = jobs.claimDispatches(
+                "gateway-without-route", now, 1, Duration.ofSeconds(2)
+        ).getFirst();
+        assertTrue(jobs.deferClaimedDispatch(
+                command.executionId(), "gateway-without-route", firstClaim.attempt(),
+                Duration.ofSeconds(1), "no executor route"
+        ));
+
+        databaseNow.set(now.plusSeconds(1));
+        var recoveredClaim = jobs.claimDispatches(
+                "gateway-with-route", databaseNow.get(), 1, Duration.ofSeconds(2)
+        ).getFirst();
+        assertEquals(1, recoveredClaim.attempt());
+        assertTrue(jobs.markClaimedDispatchSentFor(
+                command.executionId(), "gateway-with-route", recoveredClaim.attempt(),
+                Duration.ofSeconds(2)
+        ));
+        assertEquals(1L, jobs.outboxCounts().get(DispatchOutboxStatus.SENT));
+    }
+
+    @Test
     void atomicallyAdvancesTheCursorAndRedeliversUntilAcknowledged() {
         DataSource dataSource = JdbcTestSupport.dataSource();
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
