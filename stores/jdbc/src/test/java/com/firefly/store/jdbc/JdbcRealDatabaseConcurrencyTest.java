@@ -1,6 +1,7 @@
 package com.firefly.store.jdbc;
 
 import com.firefly.domain.JobDefinition;
+import com.firefly.domain.CronSchedule;
 import com.firefly.engine.ExecutionCommand;
 import com.firefly.store.DispatchOutboxRecord;
 import com.firefly.store.DispatchType;
@@ -123,7 +124,8 @@ class JdbcRealDatabaseConcurrencyTest {
         Instant now = Instant.now().minusSeconds(1);
         String suffix = UUID.randomUUID().toString();
         JobDefinition job = JobDefinition.builder()
-                .id("real-db-" + suffix).name("real db").handlerName("remote:orders:run").build();
+                .id("real-db-" + suffix).name("real db").handlerName("remote:orders:run")
+                .schedule(new CronSchedule("0 * * * * *")).build();
         for (int index = 0; index < 20; index++) {
             String executionId = "real-db-execution-" + suffix + "-" + index;
             assertTrue(jobs.enqueueManual(new ExecutionCommand(executionId, job, now, now, "node-a", 1L)));
@@ -161,12 +163,10 @@ class JdbcRealDatabaseConcurrencyTest {
             String dialect
     ) {
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
-        container.stop();
-        try {
-            assertThrows(RuntimeException.class, () -> JdbcSchema.validate(dataSource, JdbcSchemaOptions.of(dialect)));
-        } finally {
-            container.start();
-        }
+        restartContainer(container, dataSource, () -> assertThrows(
+                RuntimeException.class,
+                () -> JdbcSchema.validate(dataSource, JdbcSchemaOptions.of(dialect))
+        ));
         JdbcSchema.validate(dataSource, JdbcSchemaOptions.of(dialect));
     }
 
@@ -176,7 +176,8 @@ class JdbcRealDatabaseConcurrencyTest {
         Instant now = Instant.now().minusSeconds(1);
         String suffix = UUID.randomUUID().toString();
         JobDefinition job = JobDefinition.builder()
-                .id("reclaim-" + suffix).name("reclaim").handlerName("remote:orders:run").build();
+                .id("reclaim-" + suffix).name("reclaim").handlerName("remote:orders:run")
+                .schedule(new CronSchedule("0 * * * * *")).build();
         assertTrue(jobs.enqueueManual(new ExecutionCommand(
                 "reclaim-execution-" + suffix, job, now, now, "node-a", 1L
         )));
@@ -206,15 +207,47 @@ class JdbcRealDatabaseConcurrencyTest {
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
         JdbcShardManager shards = new JdbcShardManager(dataSource);
         assertTrue(shards.acquire(7, "node-a", Instant.now(), Duration.ofSeconds(30)).isPresent());
-        container.stop();
-        try {
-            assertThrows(RuntimeException.class, () ->
-                    shards.acquire(7, "node-b", Instant.now(), Duration.ofMillis(1)));
-        } finally {
-            container.start();
-        }
+        restartContainer(container, dataSource, () -> assertThrows(
+                RuntimeException.class,
+                () -> shards.acquire(7, "node-b", Instant.now(), Duration.ofMillis(1))
+        ));
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
         assertTrue(shards.acquire(7, "node-a", Instant.now(), Duration.ofSeconds(30)).isPresent());
+    }
+
+    private void restartContainer(
+            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            DataSource dataSource,
+            Runnable whileStopped
+    ) {
+        var docker = DockerClientFactory.instance().client();
+        String containerId = container.getContainerId();
+        docker.stopContainerCmd(containerId).withTimeout(10).exec();
+        try {
+            whileStopped.run();
+        } finally {
+            docker.startContainerCmd(containerId).exec();
+            awaitDatabase(dataSource);
+        }
+    }
+
+    private void awaitDatabase(DataSource dataSource) {
+        Instant deadline = Instant.now().plusSeconds(30);
+        SQLException lastFailure = null;
+        while (Instant.now().isBefore(deadline)) {
+            try (Connection connection = dataSource.getConnection()) {
+                if (connection.isValid(2)) return;
+            } catch (SQLException e) {
+                lastFailure = e;
+            }
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while waiting for database restart", e);
+            }
+        }
+        throw new AssertionError("database did not recover within 30 seconds", lastFailure);
     }
 
     private void assertConcurrentSchemaInitialization(DataSource dataSource, String dialect) throws Exception {
@@ -248,10 +281,15 @@ class JdbcRealDatabaseConcurrencyTest {
             String dialect
     ) throws SQLException {
         String database = "firefly_" + UUID.randomUUID().toString().replace("-", "");
+        String adminUsername = dialect.equals("mysql") ? "root" : container.getUsername();
         try (Connection connection = DriverManager.getConnection(
-                container.getJdbcUrl(), container.getUsername(), container.getPassword()
+                container.getJdbcUrl(), adminUsername, container.getPassword()
         ); var statement = connection.createStatement()) {
             statement.execute("create database " + database);
+            if (dialect.equals("mysql")) {
+                statement.execute("grant all privileges on " + database + ".* to '"
+                        + container.getUsername() + "'@'%'");
+            }
         }
         return dataSource(withDatabase(container.getJdbcUrl(), database), container.getUsername(), container.getPassword());
     }

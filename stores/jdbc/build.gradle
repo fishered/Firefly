@@ -10,7 +10,7 @@ dependencies {
     testImplementation "org.testcontainers:junit-jupiter:1.17.3"
     testImplementation "org.testcontainers:postgresql:1.17.3"
     testImplementation "org.testcontainers:mysql:1.17.3"
-    testImplementation "org.postgresql:postgresql:42.1.4"
+    testImplementation "org.postgresql:postgresql:42.7.7"
     testImplementation "com.mysql:mysql-connector-j:8.0.32"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"
 }
