@@ -57,7 +57,7 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
     private final java.util.function.BiConsumer<String, Boolean> retryScheduler;
     private final SchedulerMetrics metrics;
     private final NettyExecutorGatewayOptions options;
-    private final java.util.concurrent.ThreadPoolExecutor resultPersistenceExecutor;
+    private final NettyResultPersistenceExecutor resultPersistenceExecutor;
     private final ReloadingNettyTlsContext tlsContext;
     private final ExecutorInstanceDirectory instanceDirectory;
     private final NettyGatewayForwardingTransport forwardingTransport;
@@ -253,19 +253,7 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
                 schedulerCatalog, connectionRegistry, instanceDirectory, clock, executionRepository,
                 gatewayNodeId, forwardingTransport, codec
         );
-        this.resultPersistenceExecutor = new java.util.concurrent.ThreadPoolExecutor(
-                1,
-                1,
-                0L,
-                java.util.concurrent.TimeUnit.MILLISECONDS,
-                new java.util.concurrent.ArrayBlockingQueue<>(options.resultQueueCapacity()),
-                r -> {
-                    Thread thread = new Thread(r, "firefly-execution-results");
-                    thread.setDaemon(false);
-                    return thread;
-                },
-                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
-        );
+        this.resultPersistenceExecutor = new NettyResultPersistenceExecutor(options.resultQueueCapacity());
     }
 
     public void start() throws InterruptedException {
@@ -437,17 +425,9 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         if (bossGroup != null) {
             bossGroup.shutdownGracefully().syncUninterruptibly();
         }
-        resultPersistenceExecutor.shutdown();
         forwardingTransport.close();
         tlsContext.close();
-        try {
-            if (!resultPersistenceExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                resultPersistenceExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            resultPersistenceExecutor.shutdownNow();
-        }
+        resultPersistenceExecutor.close();
     }
 
     private NettyExecutorMessage triggerMessage(ExecutionCommand command) {

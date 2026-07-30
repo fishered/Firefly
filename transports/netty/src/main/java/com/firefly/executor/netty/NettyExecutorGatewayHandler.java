@@ -451,33 +451,70 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
     }
 
     private void persist(ChannelHandlerContext context, Runnable task) {
-        try {
-            resultPersistenceExecutor.execute(() -> {
-                try {
-                    task.run();
-                } finally {
-                    resumeReadsBelowLowWatermark(context);
-                }
-            });
-        } catch (java.util.concurrent.RejectedExecutionException saturated) {
-            if (context.channel().config().isAutoRead()) {
-                context.channel().config().setAutoRead(false);
-                log.warning("pausing executor channel reads because result persistence is saturated");
+        Runnable persistedTask = () -> {
+            try {
+                task.run();
+            } finally {
+                resumeReadsBelowLowWatermark(context);
             }
-            context.executor().schedule(() -> persist(context, task), 10, java.util.concurrent.TimeUnit.MILLISECONDS);
+        };
+        if (resultPersistenceExecutor instanceof NettyResultPersistenceExecutor retryingExecutor) {
+            NettyResultPersistenceExecutor.Submission submission = retryingExecutor.submit(
+                    persistedTask, () -> persistenceRetryExhausted(context)
+            );
+            if (submission == NettyResultPersistenceExecutor.Submission.RETRYING) {
+                pauseReads(context);
+            } else if (submission == NettyResultPersistenceExecutor.Submission.REJECTED) {
+                persistenceRetryExhausted(context);
+            }
+            return;
+        }
+        try {
+            resultPersistenceExecutor.execute(persistedTask);
+        } catch (java.util.concurrent.RejectedExecutionException saturated) {
+            persistenceRetryExhausted(context);
         }
     }
 
     private void resumeReadsBelowLowWatermark(ChannelHandlerContext context) {
-        if (!(resultPersistenceExecutor instanceof java.util.concurrent.ThreadPoolExecutor pool)) return;
-        int capacity = pool.getQueue().size() + pool.getQueue().remainingCapacity();
-        if (pool.getQueue().size() > capacity / 2 || !context.channel().isActive()) return;
+        boolean belowLowWatermark;
+        if (resultPersistenceExecutor instanceof NettyResultPersistenceExecutor retryingExecutor) {
+            belowLowWatermark = retryingExecutor.belowLowWatermark();
+        } else if (resultPersistenceExecutor instanceof java.util.concurrent.ThreadPoolExecutor pool) {
+            int capacity = pool.getQueue().size() + pool.getQueue().remainingCapacity();
+            belowLowWatermark = pool.getQueue().size() <= capacity / 2;
+        } else {
+            return;
+        }
+        if (!belowLowWatermark || !context.channel().isActive()) return;
         context.executor().execute(() -> {
             if (!context.channel().config().isAutoRead()) {
                 context.channel().config().setAutoRead(true);
                 context.read();
             }
         });
+    }
+
+    private void pauseReads(ChannelHandlerContext context) {
+        if (!context.channel().config().isAutoRead()) return;
+        context.channel().config().setAutoRead(false);
+        log.warning("pausing executor channel reads because result persistence is saturated");
+    }
+
+    private void persistenceRetryExhausted(ChannelHandlerContext context) {
+        Runnable close = () -> {
+            log.severe("closing executor channel because result persistence retries were exhausted");
+            context.close();
+        };
+        if (context.executor().inEventLoop()) {
+            close.run();
+            return;
+        }
+        try {
+            context.executor().execute(close);
+        } catch (java.util.concurrent.RejectedExecutionException closedEventLoop) {
+            context.close();
+        }
     }
 
     private boolean validReporter(ChannelHandlerContext context, Map<String, String> payload) {
