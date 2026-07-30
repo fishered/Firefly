@@ -3,19 +3,9 @@ package com.firefly.api.admin.http;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.firefly.cluster.FireflyNode;
-import com.firefly.domain.ConcurrencyPolicy;
-import com.firefly.domain.CronSchedule;
 import com.firefly.domain.ExecutorDefinition;
-import com.firefly.domain.ExecutorCompletionPolicy;
-import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorInstance;
 import com.firefly.domain.ExecutorProtocol;
-import com.firefly.domain.ExecutorRoutingStrategy;
-import com.firefly.domain.ExecutorRetryScope;
-import com.firefly.domain.JobDefinition;
-import com.firefly.domain.JobDestination;
-import com.firefly.domain.ExecutionRetryPolicy;
-import com.firefly.domain.MisfirePolicy;
 import com.firefly.plugin.FireflyPlugin;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.store.ScheduledJobRecord;
@@ -26,9 +16,7 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -96,7 +84,12 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             AdminScheduleController scheduleController = new AdminScheduleController(
                     this.context, requestReader, responses
             );
-            registerRoutes(new AdminHttpRouter(server, dispatcher), authController, scheduleController);
+            AdminJobController jobController = new AdminJobController(
+                    this.context, requestReader, responses, audit
+            );
+            registerRoutes(
+                    new AdminHttpRouter(server, dispatcher), authController, scheduleController, jobController
+            );
             server.start();
         } catch (IOException e) {
             throw new UncheckedIOException("failed to start Firefly admin HTTP API", e);
@@ -133,23 +126,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 AdminHttpJson.overview(jobs(), onlineNodes(), executorInstances(), startedAt));
     }
 
-    private void handleJobs(HttpExchange exchange) throws IOException {
-        String path = exchange.getRequestURI().getPath();
-        if (path.startsWith("/api/jobs/") && path.length() > "/api/jobs/".length()) {
-            updateOrDeleteJob(exchange, path.substring("/api/jobs/".length()));
-            return;
-        }
-        if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            respond(exchange, 200, "application/json; charset=utf-8", AdminHttpJson.jobs(jobs()));
-            return;
-        }
-        if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            createRemoteJob(exchange);
-            return;
-        }
-        respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
-    }
-
     private void handleExecutors(HttpExchange exchange) throws IOException {
         respond(exchange, 200, "application/json; charset=utf-8", AdminHttpJson.executors(
                 executorDefinitions(),
@@ -183,151 +159,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             return;
         }
         respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
-    }
-
-    private void updateOrDeleteJob(HttpExchange exchange, String jobId) throws IOException {
-        var repository = context.jobRepository()
-                .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
-        if (jobId.endsWith("/history") && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            String actualJobId = URLDecoder.decode(
-                    jobId.substring(0, jobId.length() - "/history".length()), StandardCharsets.UTF_8
-            );
-            var history = context.jobHistoryRepository()
-                    .map(store -> store.listByJob(actualJobId, 100))
-                    .orElse(List.of());
-            respond(exchange, 200, "application/json; charset=utf-8", AdminHttpJson.jobHistory(history));
-            return;
-        }
-        if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            String actualJobId = URLDecoder.decode(jobId, StandardCharsets.UTF_8);
-            var record = repository.find(actualJobId).orElse(null);
-            if (record == null) {
-                respond(exchange, 404, "application/json; charset=utf-8", "{\"error\":\"job_not_found\"}");
-                return;
-            }
-            respond(exchange, 200, "application/json; charset=utf-8", AdminHttpJson.jobs(List.of(record)));
-            return;
-        }
-        if (jobId.endsWith("/trigger") && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            String actualJobId = jobId.substring(0, jobId.length() - "/trigger".length());
-            var record = repository.find(actualJobId)
-                    .orElseThrow(() -> new IllegalArgumentException("job not found: " + actualJobId));
-            Instant now = context.clock().instant();
-            String executionId = actualJobId + "@manual:" + java.util.UUID.randomUUID();
-            repository.enqueueManual(new com.firefly.engine.ExecutionCommand(
-                    executionId, record.definition(), now, now, "manual-api", 1L
-            ));
-            respond(exchange, 202, "application/json; charset=utf-8",
-                    "{\"status\":\"queued\",\"executionId\":\"" + executionId + "\"}");
-            return;
-        }
-        if ("PUT".equalsIgnoreCase(exchange.getRequestMethod())) {
-            updateJob(exchange, jobId);
-            return;
-        }
-        if ("DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
-            var before = repository.find(jobId).orElse(null);
-            if (!repository.delete(jobId)) {
-                respond(exchange, 404, "application/json; charset=utf-8", "{\"error\":\"job_not_found\"}");
-                return;
-            }
-            recordJobHistory(exchange, jobId, "DELETE", before, null);
-            respond(exchange, 200, "application/json; charset=utf-8", "{\"status\":\"deleted\"}");
-            return;
-        }
-        if ("PATCH".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = requestReader.object(exchange);
-            boolean enabled = Boolean.parseBoolean(required(request, "enabled"));
-            var before = repository.find(jobId).orElse(null);
-            if (!repository.setEnabled(jobId, enabled)) {
-                respond(exchange, 404, "application/json; charset=utf-8", "{\"error\":\"job_not_found\"}");
-                return;
-            }
-            recordJobHistory(exchange, jobId, "SET_ENABLED", before, repository.find(jobId).orElse(null));
-            respond(exchange, 200, "application/json; charset=utf-8",
-                    "{\"status\":\"updated\",\"enabled\":" + enabled + "}");
-            return;
-        }
-        respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
-    }
-
-    private void updateJob(HttpExchange exchange, String jobId) throws IOException {
-        var repository = context.jobRepository()
-                .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
-        var current = repository.find(jobId)
-                .orElseThrow(() -> new IllegalArgumentException("job not found: " + jobId));
-        Map<String, String> request = requestReader.object(exchange);
-        JobDefinition previous = current.definition();
-        String executorName = request.getOrDefault(
-                "executorName",
-                previous.remote() ? previous.destination().executorName() : ""
-        );
-        if (executorName.isBlank()) {
-            throw new IllegalArgumentException("executorName is required for remote jobs");
-        }
-        ExecutorDefinition executorDefinition = context.schedulerCatalog()
-                .flatMap(catalog -> catalog.findExecutor(executorName))
-                .orElseThrow(() -> new IllegalArgumentException("unknown executor definition: " + executorName));
-        if (!executorDefinition.enabled()) {
-            throw new IllegalArgumentException("executor definition is disabled: " + executorName);
-        }
-        String handlerName = request.getOrDefault("handlerName", previous.businessHandlerName());
-        ZoneId zoneId = ZoneId.of(request.getOrDefault("zoneId", previous.zoneId().getId()));
-        String cron = request.getOrDefault("cron", previous.schedule().toString());
-        Map<String, String> parameters = new HashMap<>(previous.parameters());
-        request.entrySet().stream()
-                .filter(entry -> entry.getKey().startsWith("param."))
-                .forEach(entry -> parameters.put(entry.getKey().substring("param.".length()), entry.getValue()));
-        parameters.put("executorName", executorName);
-        parameters.put("handlerName", handlerName);
-        JobDefinition updated = JobDefinition.builder()
-                .id(previous.id())
-                .groupId(request.getOrDefault("groupId", previous.groupId()))
-                .name(request.getOrDefault("name", previous.name()))
-                .handlerName(handlerName)
-                .destination(JobDestination.remote(executorName))
-                .schedule(new CronSchedule(cron))
-                .zoneId(zoneId)
-                .misfirePolicy(enumValue(MisfirePolicy.class, request.getOrDefault(
-                        "misfirePolicy", previous.misfirePolicy().name())))
-                .misfireGrace(Duration.parse(request.getOrDefault(
-                        "misfireGrace", previous.misfireGrace().toString())))
-                .concurrencyPolicy(enumValue(ConcurrencyPolicy.class, request.getOrDefault(
-                        "concurrencyPolicy", previous.concurrencyPolicy().name())))
-                .maxCatchUpCount(Integer.parseInt(request.getOrDefault(
-                        "maxCatchUpCount", Integer.toString(previous.maxCatchUpCount()))))
-                .timeout(Duration.parse(request.getOrDefault("timeout", previous.timeout().toString())))
-                .parameters(parameters)
-                .retryPolicy(new ExecutionRetryPolicy(
-                        Integer.parseInt(request.getOrDefault("retryMaxAttempts", Integer.toString(previous.retryPolicy().maxAttempts()))),
-                        Duration.parse(request.getOrDefault("retryInitialDelay", previous.retryPolicy().initialDelay().toString())),
-                        Double.parseDouble(request.getOrDefault("retryMultiplier", Double.toString(previous.retryPolicy().multiplier()))),
-                        Duration.parse(request.getOrDefault("retryMaxDelay", previous.retryPolicy().maxDelay().toString())),
-                        Boolean.parseBoolean(request.getOrDefault("retryOnFailure", Boolean.toString(previous.retryPolicy().retryOnFailure()))),
-                        Boolean.parseBoolean(request.getOrDefault("retryOnTimeout", Boolean.toString(previous.retryPolicy().retryOnTimeout())))
-                ))
-                .dispatchMode(enumValue(ExecutorDispatchMode.class, request.getOrDefault(
-                        "dispatchMode", previous.dispatchMode().name())))
-                .routingStrategy(enumValue(ExecutorRoutingStrategy.class, request.getOrDefault(
-                        "routingStrategy", previous.routingStrategy().name())))
-                .completionPolicy(enumValue(ExecutorCompletionPolicy.class, request.getOrDefault(
-                        "completionPolicy", previous.completionPolicy().name())))
-                .shardCount(Integer.parseInt(request.getOrDefault(
-                        "shardCount", Integer.toString(previous.shardCount()))))
-                .routingKey(request.getOrDefault("routingKey", previous.routingKey()))
-                .retryScope(enumValue(ExecutorRetryScope.class, request.getOrDefault(
-                        "retryScope", previous.retryScope().name())))
-                .enabled(Boolean.parseBoolean(request.getOrDefault(
-                        "enabled", Boolean.toString(previous.enabled()))))
-                .build();
-        Instant now = context.clock().instant();
-        Instant nextFireTime = updated.enabled()
-                ? updated.schedule().nextAfter(now, updated.zoneId())
-                : current.nextFireTime();
-        repository.save(updated, nextFireTime);
-        recordJobHistory(exchange, jobId, "UPDATE", current, repository.find(jobId).orElse(null));
-        respond(exchange, 200, "application/json; charset=utf-8", "{\"status\":\"updated\",\"id\":\""
-                + jsonEscape(jobId) + "\"}");
     }
 
     private void handleExecutions(HttpExchange exchange) throws IOException {
@@ -675,7 +506,8 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     private void registerRoutes(
             AdminHttpRouter router,
             AdminAuthController authController,
-            AdminScheduleController scheduleController
+            AdminScheduleController scheduleController,
+            AdminJobController jobController
     ) {
         router.route("/", this::handleIndex)
                 .route("/api/health", this::handleHealth)
@@ -687,7 +519,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 .route("/api/schedules/preview", scheduleController::preview)
                 .route("/api/schedules/timezones", scheduleController::timezones)
                 .route("/api/overview", this::handleOverview)
-                .route("/api/jobs", this::handleJobs)
+                .route("/api/jobs", jobController::jobs)
                 .route("/api/users", authController::users)
                 .route("/api/executions", this::handleExecutions)
                 .route("/api/outbox", this::handleOutbox)
@@ -707,78 +539,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private List<ExecutorDefinition> executorDefinitions() {
         return context.schedulerCatalog().map(catalog -> catalog.listExecutors()).orElse(List.of());
-    }
-
-    private void createRemoteJob(HttpExchange exchange) throws IOException {
-        Map<String, String> request = requestReader.object(exchange);
-        String executorName = required(request, "executorName");
-        String businessHandlerName = required(request, "handlerName");
-        String jobId = required(request, "id");
-        String cron = request.getOrDefault("cron", "*/5 * * * * *");
-        ZoneId zoneId = ZoneId.of(request.getOrDefault("zoneId", "UTC"));
-        ExecutorDefinition executorDefinition = context.schedulerCatalog()
-                .flatMap(catalog -> catalog.findExecutor(executorName))
-                .orElseThrow(() -> new IllegalArgumentException("unknown executor definition: " + executorName));
-        if (!executorDefinition.enabled()) {
-            throw new IllegalArgumentException("executor definition is disabled: " + executorName);
-        }
-
-        var repository = context.jobRepository()
-                .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
-        if (repository.find(jobId).isPresent()) {
-            respond(exchange, 409, "application/json; charset=utf-8", "{\"error\":\"job_already_exists\"}");
-            return;
-        }
-
-        Map<String, String> parameters = new HashMap<>();
-        request.entrySet().stream()
-                .filter(entry -> entry.getKey().startsWith("param."))
-                .forEach(entry -> parameters.put(entry.getKey().substring("param.".length()), entry.getValue()));
-
-        JobDefinition job = JobDefinition.builder()
-                .id(jobId)
-                .name(request.getOrDefault("name", jobId))
-                .groupId(request.getOrDefault("groupId", "default"))
-                .handlerName(businessHandlerName)
-                .destination(JobDestination.remote(executorName))
-                .schedule(new CronSchedule(cron))
-                .zoneId(zoneId)
-                .misfirePolicy(MisfirePolicy.FIRE_ONCE)
-                .misfireGrace(Duration.ofSeconds(5))
-                .concurrencyPolicy(ConcurrencyPolicy.FORBID)
-                .timeout(Duration.ofSeconds(30))
-                .retryPolicy(new ExecutionRetryPolicy(
-                        Integer.parseInt(request.getOrDefault("retryMaxAttempts", "1")),
-                        Duration.parse(request.getOrDefault("retryInitialDelay", "PT1S")),
-                        Double.parseDouble(request.getOrDefault("retryMultiplier", "2.0")),
-                        Duration.parse(request.getOrDefault("retryMaxDelay", "PT30S")),
-                        Boolean.parseBoolean(request.getOrDefault("retryOnFailure", "true")),
-                        Boolean.parseBoolean(request.getOrDefault("retryOnTimeout", "true"))
-                ))
-                .parameters(parameters)
-                .dispatchMode(enumValue(
-                        ExecutorDispatchMode.class,
-                        request.getOrDefault("dispatchMode", "UNICAST")
-                ))
-                .routingStrategy(enumValue(
-                        ExecutorRoutingStrategy.class,
-                        request.getOrDefault("routingStrategy", "ROUND_ROBIN")
-                ))
-                .completionPolicy(enumValue(
-                        ExecutorCompletionPolicy.class,
-                        request.getOrDefault("completionPolicy", "ALL_SUCCESS")
-                ))
-                .shardCount(Integer.parseInt(request.getOrDefault("shardCount", "1")))
-                .routingKey(request.getOrDefault("routingKey", ""))
-                .retryScope(enumValue(
-                        ExecutorRetryScope.class,
-                        request.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")
-                ))
-                .enabled(Boolean.parseBoolean(request.getOrDefault("enabled", "true")))
-                .build();
-        repository.save(job, job.schedule().nextAfter(context.clock().instant(), job.zoneId()));
-        recordJobHistory(exchange, jobId, "CREATE", null, repository.find(jobId).orElse(null));
-        respond(exchange, 201, "application/json; charset=utf-8", "{\"status\":\"created\",\"id\":\"" + jobId + "\"}");
     }
 
     private void createExecutorDefinition(HttpExchange exchange) throws IOException {
@@ -816,10 +576,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         return Set.copyOf(protocols);
     }
 
-    private <T extends Enum<T>> T enumValue(Class<T> type, String value) {
-        return Enum.valueOf(type, value.trim().toUpperCase(java.util.Locale.ROOT));
-    }
-
     private void respond(HttpExchange exchange, String contentType, String body) throws IOException {
         responses.ok(exchange, contentType, body);
     }
@@ -830,13 +586,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private void respond(HttpExchange exchange, int status, String contentType, String body) throws IOException {
         responses.respond(exchange, status, contentType, body);
-    }
-
-    private void recordJobHistory(
-            HttpExchange exchange, String jobId, String action,
-            ScheduledJobRecord before, ScheduledJobRecord after
-    ) {
-        audit.recordJobHistory(exchange, jobId, action, before, after);
     }
 
     private String required(Map<String, String> request, String key) {
