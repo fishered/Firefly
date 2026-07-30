@@ -9,7 +9,6 @@ import com.firefly.domain.ExecutorProtocol;
 import com.firefly.plugin.FireflyPlugin;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.store.ScheduledJobRecord;
-import com.firefly.execution.ExecutionRecord;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -87,8 +86,12 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             AdminJobController jobController = new AdminJobController(
                     this.context, requestReader, responses, audit
             );
+            AdminExecutionController executionController = new AdminExecutionController(
+                    this.context, requestReader, responses
+            );
             registerRoutes(
-                    new AdminHttpRouter(server, dispatcher), authController, scheduleController, jobController
+                    new AdminHttpRouter(server, dispatcher), authController, scheduleController,
+                    jobController, executionController
             );
             server.start();
         } catch (IOException e) {
@@ -161,84 +164,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
     }
 
-    private void handleExecutions(HttpExchange exchange) throws IOException {
-        String path = exchange.getRequestURI().getPath();
-        if ("/api/executions/batch-cancel".equals(path)
-                && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            batchCancelExecutions(exchange);
-            return;
-        }
-        if (path.startsWith("/api/executions/root/") && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            String rootExecutionId = URLDecoder.decode(
-                    path.substring("/api/executions/root/".length()), StandardCharsets.UTF_8
-            );
-            var repository = context.executionRepository()
-                    .orElseThrow(() -> new IllegalStateException("executionRepository is required"));
-            respond(exchange, 200, "application/json; charset=utf-8",
-                    AdminHttpJson.executionHistory(repository.listByRootExecutionId(rootExecutionId)));
-            return;
-        }
-        if (path.startsWith("/api/executions/") && path.length() > "/api/executions/".length()) {
-            if (path.endsWith("/cancel") && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                cancelExecution(exchange, path);
-                return;
-            }
-            String executionId = URLDecoder.decode(
-                    path.substring("/api/executions/".length()),
-                    StandardCharsets.UTF_8
-            );
-            var repository = context.executionRepository()
-                    .orElseThrow(() -> new IllegalStateException("executionRepository is required"));
-            ExecutionRecord execution = repository.findExecution(executionId).orElse(null);
-            if (execution == null) {
-                respond(exchange, 404, "application/json; charset=utf-8", "{\"error\":\"execution_not_found\"}");
-                return;
-            }
-            respond(exchange, 200, "application/json; charset=utf-8",
-                    AdminHttpJson.executionDetail(execution, repository.listTargets(executionId)));
-            return;
-        }
-        List<ExecutionRecord> executions = context.executionRepository()
-                .map(repository -> repository.listRecent(100))
-                .orElse(List.of());
-        String json = executions.isEmpty()
-                ? AdminHttpJson.executions(jobs(), context.clock().instant())
-                : AdminHttpJson.executionHistory(executions);
-        respond(exchange, 200, "application/json; charset=utf-8", json);
-    }
-
-    private void cancelExecution(HttpExchange exchange, String path) throws IOException {
-        String executionId = URLDecoder.decode(
-                path.substring("/api/executions/".length(), path.length() - "/cancel".length()),
-                StandardCharsets.UTF_8
-        );
-        var executions = context.executionRepository()
-                .orElseThrow(() -> new IllegalStateException("executionRepository is required"));
-        ExecutionRecord current = executions.findExecution(executionId).orElse(null);
-        if (current == null) {
-            respond(exchange, 404, "application/json; charset=utf-8", "{\"error\":\"execution_not_found\"}");
-            return;
-        }
-        if (current.status().terminal()) {
-            respond(exchange, 409, "application/json; charset=utf-8", "{\"error\":\"execution_already_terminal\"}");
-            return;
-        }
-        Map<String, String> request = requestReader.optionalObject(exchange);
-        String reason = request.getOrDefault("reason", "cancelled by operator");
-        Instant now = context.clock().instant();
-        if (!executions.cancelExecution(executionId, now, reason)) {
-            respond(exchange, 409, "application/json; charset=utf-8", "{\"error\":\"execution_not_cancellable\"}");
-            return;
-        }
-        context.jobRepository().ifPresent(repository -> repository.cancelDispatch(executionId, now, reason));
-        int notifiedTargets = context.executionCancellationDispatcher()
-                .map(dispatcher -> dispatcher.cancel(executionId, reason))
-                .orElse(0);
-        respond(exchange, 202, "application/json; charset=utf-8",
-                "{\"status\":\"cancelled\",\"executionId\":\"" + jsonEscape(executionId)
-                        + "\",\"notifiedTargets\":" + notifiedTargets + "}");
-    }
-
     private void handleNodes(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
         if (path.startsWith("/api/nodes/") && path.endsWith("/drain-status")
@@ -269,52 +194,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         respond(exchange, 200, "application/json; charset=utf-8", AdminHttpJson.audit(records));
     }
 
-    private void handleOutbox(HttpExchange exchange) throws IOException {
-        String path = exchange.getRequestURI().getPath();
-        var repository = context.jobRepository()
-                .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
-        if ("/api/outbox/dead".equals(path) && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            respond(exchange, 200, "application/json; charset=utf-8",
-                    AdminHttpJson.deadDispatches(repository.listDeadDispatches(100)));
-            return;
-        }
-        if ("/api/outbox/batch-requeue".equals(path)
-                && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = readObject(exchange);
-            List<String> outboxIds = ids(request, "outboxIds");
-            Instant now = context.clock().instant();
-            int requeued = 0;
-            StringBuilder items = new StringBuilder();
-            for (String outboxId : outboxIds) {
-                boolean accepted = repository.requeueDeadDispatch(outboxId, now);
-                if (accepted) requeued++;
-                if (!items.isEmpty()) items.append(',');
-                items.append("{\"outboxId\":\"").append(jsonEscape(outboxId))
-                        .append("\",\"status\":\"")
-                        .append(accepted ? "REQUEUED" : "NOT_FOUND_OR_NOT_DEAD").append("\"}");
-            }
-            respond(exchange, 202, "application/json; charset=utf-8",
-                    "{\"status\":\"requeued\",\"requested\":" + outboxIds.size()
-                            + ",\"requeued\":" + requeued + ",\"items\":[" + items + "]}");
-            return;
-        }
-        if (path.startsWith("/api/outbox/") && path.endsWith("/requeue")
-                && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            String outboxId = URLDecoder.decode(
-                    path.substring("/api/outbox/".length(), path.length() - "/requeue".length()),
-                    StandardCharsets.UTF_8
-            );
-            if (!repository.requeueDeadDispatch(outboxId, context.clock().instant())) {
-                respond(exchange, 404, "application/json; charset=utf-8", "{\"error\":\"dead_outbox_not_found\"}");
-                return;
-            }
-            respond(exchange, 202, "application/json; charset=utf-8",
-                    "{\"status\":\"requeued\",\"outboxId\":\"" + jsonEscape(outboxId) + "\"}");
-            return;
-        }
-        respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
-    }
-
     private List<ScheduledJobRecord> jobs() {
         return context.jobRepository().map(repository -> repository.list()).orElse(List.of());
     }
@@ -330,43 +209,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         return context.nodeRegistry()
                 .map(registry -> registry.listOnline(now, options.heartbeatTimeout()))
                 .orElse(List.of());
-    }
-
-    private void batchCancelExecutions(HttpExchange exchange) throws IOException {
-        Map<String, String> request = readObject(exchange);
-        List<String> executionIds = ids(request, "executionIds");
-        String reason = request.getOrDefault("reason", "cancelled by batch operator");
-        int cancelled = 0;
-        int notified = 0;
-        StringBuilder items = new StringBuilder();
-        for (String executionId : executionIds) {
-            int sent = cancelOne(executionId, reason);
-            if (sent >= 0) {
-                cancelled++;
-                notified += sent;
-            }
-            if (!items.isEmpty()) items.append(',');
-            items.append("{\"executionId\":\"").append(jsonEscape(executionId))
-                    .append("\",\"status\":\"").append(sent >= 0 ? "CANCELLED" : "SKIPPED")
-                    .append("\",\"notifiedTargets\":").append(Math.max(0, sent)).append('}');
-        }
-        respond(exchange, 202, "application/json; charset=utf-8",
-                "{\"status\":\"cancelled\",\"requested\":" + executionIds.size()
-                        + ",\"cancelled\":" + cancelled + ",\"notifiedTargets\":" + notified
-                        + ",\"items\":[" + items + "]}");
-    }
-
-    private int cancelOne(String executionId, String reason) {
-        var executions = context.executionRepository()
-                .orElseThrow(() -> new IllegalStateException("executionRepository is required"));
-        ExecutionRecord current = executions.findExecution(executionId).orElse(null);
-        if (current == null || current.status().terminal()) return -1;
-        Instant now = context.clock().instant();
-        if (!executions.cancelExecution(executionId, now, reason)) return -1;
-        context.jobRepository().ifPresent(repository -> repository.cancelDispatch(executionId, now, reason));
-        return context.executionCancellationDispatcher()
-                .map(dispatcher -> dispatcher.cancel(executionId, reason))
-                .orElse(0);
     }
 
     private void updateNodeStatus(HttpExchange exchange, String path) throws IOException {
@@ -499,15 +341,12 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 "{\"status\":\"deleted\",\"executorName\":\"" + jsonEscape(executorName) + "\"}");
     }
 
-    private Map<String, String> readObject(HttpExchange exchange) throws IOException {
-        return requestReader.object(exchange);
-    }
-
     private void registerRoutes(
             AdminHttpRouter router,
             AdminAuthController authController,
             AdminScheduleController scheduleController,
-            AdminJobController jobController
+            AdminJobController jobController,
+            AdminExecutionController executionController
     ) {
         router.route("/", this::handleIndex)
                 .route("/api/health", this::handleHealth)
@@ -521,16 +360,12 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 .route("/api/overview", this::handleOverview)
                 .route("/api/jobs", jobController::jobs)
                 .route("/api/users", authController::users)
-                .route("/api/executions", this::handleExecutions)
-                .route("/api/outbox", this::handleOutbox)
+                .route("/api/executions", executionController::executions)
+                .route("/api/outbox", executionController::outbox)
                 .route("/api/executors", this::handleExecutors)
                 .route("/api/executor-definitions", this::handleExecutorDefinitions)
                 .route("/api/nodes", this::handleNodes)
                 .route("/api/audit", this::handleAudit);
-    }
-
-    private List<String> ids(Map<String, String> request, String field) {
-        return requestReader.ids(request, field);
     }
 
     private List<ExecutorInstance> executorInstances() {
