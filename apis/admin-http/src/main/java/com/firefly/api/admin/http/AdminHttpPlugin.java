@@ -93,7 +93,10 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             AdminAuthController authController = new AdminAuthController(
                     options, this.context, integrationKeys, requestReader, responses, audit
             );
-            registerRoutes(new AdminHttpRouter(server, dispatcher), authController);
+            AdminScheduleController scheduleController = new AdminScheduleController(
+                    this.context, requestReader, responses
+            );
+            registerRoutes(new AdminHttpRouter(server, dispatcher), authController, scheduleController);
             server.start();
         } catch (IOException e) {
             throw new UncheckedIOException("failed to start Firefly admin HTTP API", e);
@@ -123,73 +126,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         java.util.List<com.firefly.plugin.FireflyPluginDescriptor> plugins = context.pluginStatusProvider()
                 .map(com.firefly.plugin.PluginStatusProvider::plugins).orElse(java.util.List.of());
         respond(exchange, 200, "application/json; charset=utf-8", AdminHttpJson.plugins(plugins));
-    }
-
-    private void handleSchedulePreview(HttpExchange exchange) throws IOException {
-        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
-            return;
-        }
-        Map<String, String> request = requestReader.object(exchange);
-        String expression = required(request, "cron");
-        ZoneId zoneId = ZoneId.of(request.getOrDefault("zoneId", "UTC"));
-        int count = Math.max(1, Math.min(20, Integer.parseInt(request.getOrDefault("count", "5"))));
-        CronSchedule schedule = new CronSchedule(expression);
-        Instant cursor = context.clock().instant();
-        StringBuilder json = new StringBuilder("{\"cron\":\"").append(jsonEscape(expression))
-                .append("\",\"zoneId\":\"").append(jsonEscape(zoneId.getId())).append("\",\"nextFireTimes\":[");
-        for (int i = 0; i < count; i++) {
-            cursor = schedule.nextAfter(cursor, zoneId);
-            if (i > 0) json.append(',');
-            json.append("{\"instant\":\"").append(cursor).append("\",\"local\":\"")
-                    .append(cursor.atZone(zoneId).toLocalDateTime()).append("\"}");
-        }
-        respond(exchange, 200, "application/json; charset=utf-8", json.append("]}").toString());
-    }
-
-    private void handleTimezones(HttpExchange exchange) throws IOException {
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
-            return;
-        }
-        String query = queryParameter(exchange, "query").trim().toLowerCase(java.util.Locale.ROOT);
-        List<String> zones = ZoneId.getAvailableZoneIds().stream()
-                .filter(zone -> timezoneScore(zone, query) < Integer.MAX_VALUE)
-                .sorted(Comparator.comparingInt((String zone) -> timezoneScore(zone, query))
-                        .thenComparing(java.util.function.Function.identity()))
-                .limit(100).toList();
-        String body = zones.stream().map(zone -> "\"" + jsonEscape(zone) + "\"")
-                .collect(java.util.stream.Collectors.joining(",", "{\"timezones\":[", "]}"));
-        respond(exchange, 200, "application/json; charset=utf-8", body);
-    }
-
-    private int timezoneScore(String zone, String query) {
-        if (query.isBlank()) {
-            List<String> preferred = List.of(
-                    "UTC", "Asia/Shanghai", "Asia/Hong_Kong", "Asia/Tokyo", "Asia/Singapore",
-                    "Europe/London", "Europe/Paris", "America/New_York", "America/Los_Angeles"
-            );
-            int index = preferred.indexOf(zone);
-            return index < 0 ? 100 : index;
-        }
-        String candidate = zone.toLowerCase(java.util.Locale.ROOT);
-        if (candidate.equals(query)) return 0;
-        if (candidate.startsWith(query)) return 1;
-        if (java.util.Arrays.stream(candidate.split("[/_-]")).anyMatch(part -> part.startsWith(query))) return 2;
-        if (candidate.contains(query)) return 3;
-        return fuzzySubsequence(normalizeTimezone(candidate), normalizeTimezone(query)) ? 4 : Integer.MAX_VALUE;
-    }
-
-    private String normalizeTimezone(String value) {
-        return value.replace("/", "").replace("_", "").replace("-", "").replace(" ", "");
-    }
-
-    private boolean fuzzySubsequence(String candidate, String query) {
-        int queryIndex = 0;
-        for (int index = 0; index < candidate.length() && queryIndex < query.length(); index++) {
-            if (candidate.charAt(index) == query.charAt(queryIndex)) queryIndex++;
-        }
-        return queryIndex == query.length();
     }
 
     private void handleOverview(HttpExchange exchange) throws IOException {
@@ -736,7 +672,11 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         return requestReader.object(exchange);
     }
 
-    private void registerRoutes(AdminHttpRouter router, AdminAuthController authController) {
+    private void registerRoutes(
+            AdminHttpRouter router,
+            AdminAuthController authController,
+            AdminScheduleController scheduleController
+    ) {
         router.route("/", this::handleIndex)
                 .route("/api/health", this::handleHealth)
                 .route("/api/auth/config", authController::config)
@@ -744,8 +684,8 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 .route("/api/auth/password", authController::passwordChange)
                 .route("/api/integration-key", authController::integrationKey)
                 .route("/api/plugins", this::handlePlugins)
-                .route("/api/schedules/preview", this::handleSchedulePreview)
-                .route("/api/schedules/timezones", this::handleTimezones)
+                .route("/api/schedules/preview", scheduleController::preview)
+                .route("/api/schedules/timezones", scheduleController::timezones)
                 .route("/api/overview", this::handleOverview)
                 .route("/api/jobs", this::handleJobs)
                 .route("/api/users", authController::users)
@@ -882,10 +822,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private void respond(HttpExchange exchange, String contentType, String body) throws IOException {
         responses.ok(exchange, contentType, body);
-    }
-
-    private String queryParameter(HttpExchange exchange, String name) {
-        return requestReader.queryParameter(exchange, name);
     }
 
     private String jsonEscape(String value) {
