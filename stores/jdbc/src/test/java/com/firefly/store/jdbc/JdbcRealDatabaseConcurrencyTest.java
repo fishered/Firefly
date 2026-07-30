@@ -10,7 +10,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.ToxiproxyContainer;
 import org.testcontainers.DockerClientFactory;
 
 import javax.sql.DataSource;
@@ -35,26 +37,42 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @Tag("real-database")
 class JdbcRealDatabaseConcurrencyTest {
-    private static final Duration DATABASE_RESTART_TIMEOUT = Duration.ofSeconds(90);
+    private static final Duration DATABASE_RECOVERY_TIMEOUT = Duration.ofSeconds(30);
+    private static Network network;
     private static PostgreSQLContainer<?> postgres;
     private static MySQLContainer<?> mysql;
+    private static ToxiproxyContainer toxiproxy;
+    private static ToxiproxyContainer.ContainerProxy postgresProxy;
+    private static ToxiproxyContainer.ContainerProxy mysqlProxy;
 
     @BeforeAll
     static void startContainers() {
         assumeTrue(DockerClientFactory.instance().isDockerAvailable(), "Docker is not available");
-        postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+        network = Network.newNetwork();
+        postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+                .withNetwork(network)
+                .withNetworkAliases("postgres");
         mysql = new MySQLContainer<>("mysql:8.0.36")
                 .withDatabaseName("firefly")
                 .withUsername("firefly")
-                .withPassword("firefly");
+                .withPassword("firefly")
+                .withNetwork(network)
+                .withNetworkAliases("mysql");
+        toxiproxy = new ToxiproxyContainer("shopify/toxiproxy:2.1.4")
+                .withNetwork(network);
         postgres.start();
         mysql.start();
+        toxiproxy.start();
+        postgresProxy = toxiproxy.getProxy(postgres, 5432);
+        mysqlProxy = toxiproxy.getProxy(mysql, 3306);
     }
 
     @AfterAll
     static void stopContainers() {
+        if (toxiproxy != null) toxiproxy.stop();
         if (mysql != null) mysql.stop();
         if (postgres != null) postgres.stop();
+        if (network != null) network.close();
     }
 
     @Test
@@ -68,31 +86,31 @@ class JdbcRealDatabaseConcurrencyTest {
     }
 
     @Test
-    void postgresInterruptionFailsFastAndRecoversAfterRestart() throws Exception {
+    void postgresInterruptionFailsFastAndRecoversAfterConnectionRestore() throws Exception {
         assertInterruptionRecovery(
-                postgres, dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()), "postgresql"
+                postgresProxy, proxiedDataSource(postgres, postgresProxy), "postgresql"
         );
     }
 
     @Test
-    void mysqlInterruptionFailsFastAndRecoversAfterRestart() throws Exception {
+    void mysqlInterruptionFailsFastAndRecoversAfterConnectionRestore() throws Exception {
         assertInterruptionRecovery(
-                mysql, dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()), "mysql"
+                mysqlProxy, proxiedDataSource(mysql, mysqlProxy), "mysql"
         );
     }
 
     @Test
-    void postgresRepositoryOperationFailsDuringOutageAndRecoversAfterRestart() throws Exception {
+    void postgresRepositoryOperationFailsDuringOutageAndRecoversAfterConnectionRestore() throws Exception {
         assertRepositoryOperationRecovery(
-                postgres, dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()),
+                postgresProxy, proxiedDataSource(postgres, postgresProxy),
                 "postgresql"
         );
     }
 
     @Test
-    void mysqlRepositoryOperationFailsDuringOutageAndRecoversAfterRestart() throws Exception {
+    void mysqlRepositoryOperationFailsDuringOutageAndRecoversAfterConnectionRestore() throws Exception {
         assertRepositoryOperationRecovery(
-                mysql, dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()), "mysql"
+                mysqlProxy, proxiedDataSource(mysql, mysqlProxy), "mysql"
         );
     }
 
@@ -111,16 +129,16 @@ class JdbcRealDatabaseConcurrencyTest {
     }
 
     @Test
-    void postgresShardLeaseRecoversAfterDatabaseRestart() throws Exception {
-        assertShardLeaseRecoversAfterRestart(
-                postgres, dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()), "postgresql"
+    void postgresShardLeaseRecoversAfterConnectionRestore() throws Exception {
+        assertShardLeaseRecoversAfterConnectionRestore(
+                postgresProxy, proxiedDataSource(postgres, postgresProxy), "postgresql"
         );
     }
 
     @Test
-    void mysqlShardLeaseRecoversAfterDatabaseRestart() throws Exception {
-        assertShardLeaseRecoversAfterRestart(
-                mysql, dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()), "mysql"
+    void mysqlShardLeaseRecoversAfterConnectionRestore() throws Exception {
+        assertShardLeaseRecoversAfterConnectionRestore(
+                mysqlProxy, proxiedDataSource(mysql, mysqlProxy), "mysql"
         );
     }
 
@@ -174,12 +192,12 @@ class JdbcRealDatabaseConcurrencyTest {
     }
 
     private void assertInterruptionRecovery(
-            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            ToxiproxyContainer.ContainerProxy proxy,
             DataSource dataSource,
             String dialect
-    ) {
+    ) throws Exception {
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
-        restartContainer(container, dataSource, () -> assertThrows(
+        interruptConnection(proxy, dataSource, () -> assertThrows(
                 RuntimeException.class,
                 () -> JdbcSchema.validate(dataSource, JdbcSchemaOptions.of(dialect))
         ));
@@ -187,10 +205,10 @@ class JdbcRealDatabaseConcurrencyTest {
     }
 
     private void assertRepositoryOperationRecovery(
-            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            ToxiproxyContainer.ContainerProxy proxy,
             DataSource dataSource,
             String dialect
-    ) {
+    ) throws Exception {
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
         JdbcJobRepository jobs = new JdbcJobRepository(dataSource);
         Instant now = Instant.now().minusSeconds(1);
@@ -203,7 +221,7 @@ class JdbcRealDatabaseConcurrencyTest {
                 .build();
         jobs.save(job, now.plusSeconds(60));
 
-        restartContainer(container, dataSource, () -> {
+        interruptConnection(proxy, dataSource, () -> {
             assertThrows(RuntimeException.class, () -> jobs.list());
             assertThrows(RuntimeException.class, () -> jobs.setEnabled(job.id(), false));
         });
@@ -246,15 +264,15 @@ class JdbcRealDatabaseConcurrencyTest {
         assertEquals(first.get(0).outboxId(), reclaimed.get(0).outboxId());
     }
 
-    private void assertShardLeaseRecoversAfterRestart(
-            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+    private void assertShardLeaseRecoversAfterConnectionRestore(
+            ToxiproxyContainer.ContainerProxy proxy,
             DataSource dataSource,
             String dialect
-    ) {
+    ) throws Exception {
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
         JdbcShardManager shards = new JdbcShardManager(dataSource);
         assertTrue(shards.acquire(7, "node-a", Instant.now(), Duration.ofSeconds(30)).isPresent());
-        restartContainer(container, dataSource, () -> assertThrows(
+        interruptConnection(proxy, dataSource, () -> assertThrows(
                 RuntimeException.class,
                 () -> shards.acquire(7, "node-b", Instant.now(), Duration.ofMillis(1))
         ));
@@ -262,27 +280,22 @@ class JdbcRealDatabaseConcurrencyTest {
         assertTrue(shards.acquire(7, "node-a", Instant.now(), Duration.ofSeconds(30)).isPresent());
     }
 
-    private void restartContainer(
-            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+    private void interruptConnection(
+            ToxiproxyContainer.ContainerProxy proxy,
             DataSource dataSource,
-            Runnable whileStopped
-    ) {
-        var docker = DockerClientFactory.instance().client();
-        String containerId = container.getContainerId();
-        docker.stopContainerCmd(containerId).withTimeout(10).exec();
+            Runnable whileUnavailable
+    ) throws Exception {
+        proxy.setConnectionCut(true);
         try {
-            whileStopped.run();
+            whileUnavailable.run();
         } finally {
-            docker.startContainerCmd(containerId).exec();
-            awaitDatabase(container, dataSource);
+            proxy.setConnectionCut(false);
+            awaitDatabase(dataSource);
         }
     }
 
-    private void awaitDatabase(
-            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
-            DataSource dataSource
-    ) {
-        Instant deadline = Instant.now().plus(DATABASE_RESTART_TIMEOUT);
+    private void awaitDatabase(DataSource dataSource) {
+        Instant deadline = Instant.now().plus(DATABASE_RECOVERY_TIMEOUT);
         SQLException lastFailure = null;
         while (Instant.now().isBefore(deadline)) {
             try (Connection connection = dataSource.getConnection()) {
@@ -294,12 +307,11 @@ class JdbcRealDatabaseConcurrencyTest {
                 Thread.sleep(250);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new AssertionError("interrupted while waiting for database restart", e);
+                throw new AssertionError("interrupted while waiting for database connection recovery", e);
             }
         }
         throw new AssertionError(
-                "database did not recover within " + DATABASE_RESTART_TIMEOUT.toSeconds()
-                        + " seconds; containerRunning=" + container.isRunning(),
+                "database connection did not recover within " + DATABASE_RECOVERY_TIMEOUT.toSeconds() + " seconds",
                 lastFailure
         );
     }
@@ -346,6 +358,20 @@ class JdbcRealDatabaseConcurrencyTest {
             }
         }
         return dataSource(withDatabase(container.getJdbcUrl(), database), container.getUsername(), container.getPassword());
+    }
+
+    private DataSource proxiedDataSource(
+            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            ToxiproxyContainer.ContainerProxy proxy
+    ) {
+        String directEndpoint = container.getHost() + ":"
+                + container.getMappedPort(container.getExposedPorts().getFirst());
+        String proxyEndpoint = proxy.getContainerIpAddress() + ":" + proxy.getProxyPort();
+        return dataSource(
+                container.getJdbcUrl().replace(directEndpoint, proxyEndpoint),
+                container.getUsername(),
+                container.getPassword()
+        );
     }
 
     private String withDatabase(String jdbcUrl, String database) {
