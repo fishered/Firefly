@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @Tag("real-database")
 class JdbcRealDatabaseConcurrencyTest {
+    private static final Duration DATABASE_RESTART_TIMEOUT = Duration.ofSeconds(90);
     private static PostgreSQLContainer<?> postgres;
     private static MySQLContainer<?> mysql;
 
@@ -273,12 +274,15 @@ class JdbcRealDatabaseConcurrencyTest {
             whileStopped.run();
         } finally {
             docker.startContainerCmd(containerId).exec();
-            awaitDatabase(dataSource);
+            awaitDatabase(container, dataSource);
         }
     }
 
-    private void awaitDatabase(DataSource dataSource) {
-        Instant deadline = Instant.now().plusSeconds(30);
+    private void awaitDatabase(
+            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            DataSource dataSource
+    ) {
+        Instant deadline = Instant.now().plus(DATABASE_RESTART_TIMEOUT);
         SQLException lastFailure = null;
         while (Instant.now().isBefore(deadline)) {
             try (Connection connection = dataSource.getConnection()) {
@@ -293,7 +297,11 @@ class JdbcRealDatabaseConcurrencyTest {
                 throw new AssertionError("interrupted while waiting for database restart", e);
             }
         }
-        throw new AssertionError("database did not recover within 30 seconds", lastFailure);
+        throw new AssertionError(
+                "database did not recover within " + DATABASE_RESTART_TIMEOUT.toSeconds()
+                        + " seconds; containerRunning=" + container.isRunning(),
+                lastFailure
+        );
     }
 
     private void assertConcurrentSchemaInitialization(DataSource dataSource, String dialect) throws Exception {
