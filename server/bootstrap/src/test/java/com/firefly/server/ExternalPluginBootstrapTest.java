@@ -14,6 +14,7 @@ final class ExternalPluginBootstrapTest {
         ClasspathTestPlugin.STARTED.set(0);
         ClasspathTestPlugin.CLOSED.set(0);
         ClasspathTestPlugin.configuredValue = null;
+        FutureApiClasspathTestPlugin.STARTED.set(0);
     }
 
     @Test
@@ -40,5 +41,21 @@ final class ExternalPluginBootstrapTest {
         }, Map.of());
 
         assertThrows(IllegalArgumentException.class, () -> FireflyBootstrap.start(options));
+    }
+
+    @Test
+    void rejectsConfiguredPluginForAnUnsupportedApiLevelBeforePluginStartup() {
+        ServerOptions options = ServerOptions.parse(new String[]{
+                "--firefly.node.roles=scheduler",
+                "--firefly.plugins=future-api-test"
+        }, Map.of());
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class, () -> FireflyBootstrap.start(options)
+        );
+
+        org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("future-api-test"));
+        org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("host API level is 1"));
+        assertEquals(0, FutureApiClasspathTestPlugin.STARTED.get());
     }
 }
