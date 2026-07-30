@@ -81,6 +81,21 @@ class JdbcRealDatabaseConcurrencyTest {
     }
 
     @Test
+    void postgresRepositoryOperationFailsDuringOutageAndRecoversAfterRestart() throws Exception {
+        assertRepositoryOperationRecovery(
+                postgres, dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()),
+                "postgresql"
+        );
+    }
+
+    @Test
+    void mysqlRepositoryOperationFailsDuringOutageAndRecoversAfterRestart() throws Exception {
+        assertRepositoryOperationRecovery(
+                mysql, dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()), "mysql"
+        );
+    }
+
+    @Test
     void postgresReclaimsOutboxAfterClaimLeaseExpires() throws Exception {
         assertOutboxReclaimAfterLeaseExpiry(
                 dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()), "postgresql"
@@ -168,6 +183,37 @@ class JdbcRealDatabaseConcurrencyTest {
                 () -> JdbcSchema.validate(dataSource, JdbcSchemaOptions.of(dialect))
         ));
         JdbcSchema.validate(dataSource, JdbcSchemaOptions.of(dialect));
+    }
+
+    private void assertRepositoryOperationRecovery(
+            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            DataSource dataSource,
+            String dialect
+    ) {
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource);
+        Instant now = Instant.now().minusSeconds(1);
+        String suffix = UUID.randomUUID().toString();
+        JobDefinition job = JobDefinition.builder()
+                .id("outage-operation-" + suffix)
+                .name("outage operation")
+                .handlerName("remote:orders:run")
+                .schedule(new CronSchedule("0 * * * * *"))
+                .build();
+        jobs.save(job, now.plusSeconds(60));
+
+        restartContainer(container, dataSource, () -> {
+            assertThrows(RuntimeException.class, () -> jobs.list());
+            assertThrows(RuntimeException.class, () -> jobs.setEnabled(job.id(), false));
+        });
+
+        assertEquals(job.id(), jobs.find(job.id()).orElseThrow().definition().id());
+        assertTrue(jobs.setEnabled(job.id(), false));
+        assertTrue(jobs.enqueueManual(new ExecutionCommand(
+                "outage-recovered-execution-" + suffix, job, now, now, "node-a", 1L
+        )));
+        assertTrue(new JdbcExecutionRepository(dataSource)
+                .findExecution("outage-recovered-execution-" + suffix).isPresent());
     }
 
     private void assertOutboxReclaimAfterLeaseExpiry(DataSource dataSource, String dialect) throws Exception {
