@@ -12,26 +12,35 @@ public record AdminHttpOptions(
         Duration heartbeatTimeout,
         String apiToken,
         java.util.Map<String, AdminRole> tokenRoles,
-        com.firefly.security.JwtService jwtService
+        com.firefly.security.JwtService jwtService,
+        AdminRequestLimits requestLimits
 ) {
     public AdminHttpOptions(String host, int port, Duration heartbeatTimeout) {
-        this(host, port, heartbeatTimeout, "", java.util.Map.of(), null);
+        this(host, port, heartbeatTimeout, "", java.util.Map.of(), null, AdminRequestLimits.defaults());
     }
 
     public AdminHttpOptions(String host, int port, Duration heartbeatTimeout, String apiToken) {
-        this(host, port, heartbeatTimeout, apiToken, java.util.Map.of(), null);
+        this(host, port, heartbeatTimeout, apiToken, java.util.Map.of(), null, AdminRequestLimits.defaults());
     }
 
     public AdminHttpOptions(
             String host, int port, Duration heartbeatTimeout, String apiToken,
             java.util.Map<String, AdminRole> tokenRoles
     ) {
-        this(host, port, heartbeatTimeout, apiToken, tokenRoles, null);
+        this(host, port, heartbeatTimeout, apiToken, tokenRoles, null, AdminRequestLimits.defaults());
+    }
+
+    public AdminHttpOptions(
+            String host, int port, Duration heartbeatTimeout, String apiToken,
+            java.util.Map<String, AdminRole> tokenRoles, com.firefly.security.JwtService jwtService
+    ) {
+        this(host, port, heartbeatTimeout, apiToken, tokenRoles, jwtService, AdminRequestLimits.defaults());
     }
 
     public AdminHttpOptions {
         Objects.requireNonNull(host, "host");
         Objects.requireNonNull(heartbeatTimeout, "heartbeatTimeout");
+        requestLimits = Objects.requireNonNull(requestLimits, "requestLimits");
         apiToken = apiToken == null ? "" : apiToken.trim();
         java.util.HashMap<String, AdminRole> roles = new java.util.HashMap<>();
         if (tokenRoles != null) {
@@ -54,6 +63,9 @@ public record AdminHttpOptions(
     }
 
     public static AdminHttpOptions defaults() {
-        return new AdminHttpOptions("127.0.0.1", 9710, Duration.ofSeconds(30), "", java.util.Map.of(), null);
+        return new AdminHttpOptions(
+                "127.0.0.1", 9710, Duration.ofSeconds(30), "", java.util.Map.of(), null,
+                AdminRequestLimits.defaults()
+        );
     }
 }

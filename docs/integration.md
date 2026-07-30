@@ -313,6 +313,20 @@ firefly.security.jwt.access-token-ttl=PT1H
 
 全新 JDBC schema 会初始化默认管理账号 `admin/admin`，首次登录后应立即改密。该账号不再由运行时配置创建。
 
+Admin API 在 JDK `HttpServer` 入口统一限制请求体、查询字符串、JSON 深度、JSON 字符串和批量操作数量。
+默认值适合管理面请求，可通过 properties、命令行参数或对应的大写下划线环境变量调整：
+
+```properties
+firefly.admin-http.max-request-body-bytes=1048576
+firefly.admin-http.max-query-length=4096
+firefly.admin-http.max-json-nesting-depth=32
+firefly.admin-http.max-json-string-length=65536
+firefly.admin-http.max-batch-size=1000
+```
+
+请求体超限返回 `413 request_too_large`，查询字符串超限返回 `414 uri_too_long`，批量数量超限返回
+`400 batch_limit_exceeded`。生产环境不应通过调大限制来承载数据导入，批量导入需要独立的异步边界。
+
 `ADMIN` 可操作全部 Admin API 和 `/api/users`；`READER` 只读；`OPERATOR` 可触发、启停和取消。
 引导配置只在账号不存在时执行一次，之后修改配置不会重置数据库密码。
 

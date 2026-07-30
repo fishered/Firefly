@@ -45,6 +45,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             "com.firefly.audit.admin"
     );
     private final AdminHttpOptions options;
+    private final AdminRequestReader requestReader;
     private final com.firefly.security.Pbkdf2PasswordHasher passwordHasher =
             new com.firefly.security.Pbkdf2PasswordHasher();
     private HttpServer server;
@@ -58,6 +59,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     public AdminHttpPlugin(AdminHttpOptions options) {
         this.options = Objects.requireNonNull(options, "options");
+        this.requestReader = new AdminRequestReader(options.requestLimits());
     }
 
     @Override
@@ -178,9 +180,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                     "{\"error\":\"admin_authentication_disabled\"}");
             return;
         }
-        Map<String, String> request = AdminHttpJson.object(new String(
-                exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8
-        ));
+        Map<String, String> request = requestReader.object(exchange);
         String username = required(request, "username").trim();
         char[] password = required(request, "password").toCharArray();
         try {
@@ -351,7 +351,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     }
 
     private Map<String, String> requestObject(HttpExchange exchange) throws IOException {
-        return AdminHttpJson.object(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        return requestReader.object(exchange);
     }
 
     private Set<com.firefly.security.FireflyRole> adminRoles(String value) {
@@ -385,9 +385,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             respond(exchange, 405, "application/json; charset=utf-8", "{\"error\":\"method_not_allowed\"}");
             return;
         }
-        Map<String, String> request = AdminHttpJson.object(new String(
-                exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8
-        ));
+        Map<String, String> request = requestReader.object(exchange);
         String expression = required(request, "cron");
         ZoneId zoneId = ZoneId.of(request.getOrDefault("zoneId", "UTC"));
         int count = Math.max(1, Math.min(20, Integer.parseInt(request.getOrDefault("count", "5"))));
@@ -557,9 +555,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             return;
         }
         if ("PATCH".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = AdminHttpJson.object(new String(
-                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8
-            ));
+            Map<String, String> request = requestReader.object(exchange);
             boolean enabled = Boolean.parseBoolean(required(request, "enabled"));
             var before = repository.find(jobId).orElse(null);
             if (!repository.setEnabled(jobId, enabled)) {
@@ -579,9 +575,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
         var current = repository.find(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("job not found: " + jobId));
-        Map<String, String> request = AdminHttpJson.object(new String(
-                exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8
-        ));
+        Map<String, String> request = requestReader.object(exchange);
         JobDefinition previous = current.definition();
         String executorName = request.getOrDefault(
                 "executorName",
@@ -717,10 +711,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             respond(exchange, 409, "application/json; charset=utf-8", "{\"error\":\"execution_already_terminal\"}");
             return;
         }
-        byte[] bytes = exchange.getRequestBody().readAllBytes();
-        Map<String, String> request = bytes.length == 0
-                ? Map.of()
-                : AdminHttpJson.object(new String(bytes, StandardCharsets.UTF_8));
+        Map<String, String> request = requestReader.optionalObject(exchange);
         String reason = request.getOrDefault("reason", "cancelled by operator");
         Instant now = context.clock().instant();
         if (!executions.cancelExecution(executionId, now, reason)) {
@@ -997,21 +988,11 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     }
 
     private Map<String, String> readObject(HttpExchange exchange) throws IOException {
-        return AdminHttpJson.object(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        return requestReader.object(exchange);
     }
 
     private List<String> ids(Map<String, String> request, String field) {
-        String raw = required(request, field).trim();
-        if (raw.startsWith("[") && raw.endsWith("]")) raw = raw.substring(1, raw.length() - 1);
-        List<String> ids = java.util.Arrays.stream(raw.split(","))
-                .map(String::trim)
-                .map(value -> value.replaceAll("^\\\"|\\\"$", ""))
-                .filter(value -> !value.isBlank())
-                .distinct()
-                .toList();
-        if (ids.isEmpty()) throw new IllegalArgumentException(field + " must not be empty");
-        if (ids.size() > 1000) throw new IllegalArgumentException(field + " exceeds batch limit 1000");
-        return ids;
+        return requestReader.ids(request, field);
     }
 
     private List<ExecutorInstance> executorInstances() {
@@ -1023,8 +1004,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     }
 
     private void createRemoteJob(HttpExchange exchange) throws IOException {
-        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        Map<String, String> request = AdminHttpJson.object(body);
+        Map<String, String> request = requestReader.object(exchange);
         String executorName = required(request, "executorName");
         String businessHandlerName = required(request, "handlerName");
         String jobId = required(request, "id");
@@ -1096,8 +1076,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     }
 
     private void createExecutorDefinition(HttpExchange exchange) throws IOException {
-        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        Map<String, String> request = AdminHttpJson.object(body);
+        Map<String, String> request = requestReader.object(exchange);
         String name = required(request, "name");
         Set<ExecutorProtocol> protocols = parseProtocols(request.getOrDefault("protocols", "TCP"));
         Map<String, String> metadata = new HashMap<>();
@@ -1141,6 +1120,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
 
     private void handleSafely(HttpExchange exchange, ExchangeHandler handler) throws IOException {
         try {
+            requestReader.validate(exchange);
             Authorization authorization = authorize(exchange);
             if (!authorization.authenticated()) {
                 respond(exchange, 401, "application/json; charset=utf-8", "{\"error\":\"unauthorized\"}");
@@ -1153,6 +1133,10 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 return;
             }
             handler.handle(exchange);
+        } catch (AdminHttpException e) {
+            respond(exchange, e.status(), "application/json; charset=utf-8",
+                    "{\"error\":\"" + jsonEscape(e.error()) + "\",\"message\":\""
+                            + jsonEscape(e.getMessage()) + "\"}");
         } catch (IllegalArgumentException e) {
             respond(exchange, 400, "application/json; charset=utf-8",
                     "{\"error\":\"bad_request\",\"message\":\"" + jsonEscape(e.getMessage()) + "\"}");
@@ -1236,16 +1220,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     }
 
     private String queryParameter(HttpExchange exchange, String name) {
-        String query = exchange.getRequestURI().getRawQuery();
-        if (query == null || query.isBlank()) return "";
-        for (String pair : query.split("&")) {
-            int separator = pair.indexOf('=');
-            String key = separator < 0 ? pair : pair.substring(0, separator);
-            if (name.equals(URLDecoder.decode(key, StandardCharsets.UTF_8))) {
-                return separator < 0 ? "" : URLDecoder.decode(pair.substring(separator + 1), StandardCharsets.UTF_8);
-            }
-        }
-        return "";
+        return requestReader.queryParameter(exchange, name);
     }
 
     private AdminRole roleForToken(String provided) {
