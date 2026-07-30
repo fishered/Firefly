@@ -122,6 +122,111 @@ final class JdbcSchemaTest {
     }
 
     @Test
+    void onlineExpansionKeepsGatewayDataPlaneOnlineAndRecomputesJobs() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        java.time.Instant now = java.time.Instant.parse("2026-07-30T12:00:00Z");
+        JdbcNodeRegistry nodes = new JdbcNodeRegistry(dataSource);
+        nodes.register(new com.firefly.cluster.FireflyNode(
+                "gateway-only", java.util.Set.of(com.firefly.cluster.NodeRole.GATEWAY),
+                now, now, com.firefly.cluster.NodeStatus.ONLINE, java.util.Map.of()
+        ));
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, 32);
+        var job = com.firefly.domain.JobDefinition.builder()
+                .id("online-expand-job").name("Online expand job").handlerName("handler")
+                .schedule(new com.firefly.domain.CronSchedule("0 * * * * *")).build();
+        jobs.save(job, now);
+        assertTrue(new JdbcShardManager(dataSource)
+                .acquire(1, "old-scheduler", now, java.time.Duration.ofMinutes(1)).isPresent());
+
+        JdbcReshardTool.ReshardResult result = JdbcReshardTool.expandOnline(
+                dataSource, JdbcSchemaOptions.of("h2").withSchedulerShardCount(64), true
+        );
+
+        assertEquals(32, result.oldShardCount());
+        assertEquals(64, result.newShardCount());
+        assertEquals(1, result.affectedJobs());
+        assertEquals(1, result.deletedLeases());
+        assertEquals(com.firefly.cluster.NodeStatus.ONLINE,
+                nodes.find("gateway-only").orElseThrow().status());
+        JdbcSchema.validate(dataSource, JdbcSchemaOptions.of("h2").withSchedulerShardCount(64));
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("select shard_id from firefly_job where job_id=?")) {
+            statement.setString(1, job.id());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                assertTrue(resultSet.next());
+                assertEquals(com.firefly.cluster.ShardHasher.shardFor(job.id(), 64), resultSet.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void onlineExpansionRejectsShardAwareNodesThatAreNotOffline() {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        java.time.Instant now = java.time.Instant.parse("2026-07-30T12:00:00Z");
+        new JdbcNodeRegistry(dataSource).register(new com.firefly.cluster.FireflyNode(
+                "scheduler-a", java.util.Set.of(
+                        com.firefly.cluster.NodeRole.SCHEDULER, com.firefly.cluster.NodeRole.GATEWAY
+                ), now, now, com.firefly.cluster.NodeStatus.DRAINING, java.util.Map.of()
+        ));
+
+        JdbcException failure = assertThrows(JdbcException.class, () -> JdbcReshardTool.expandOnline(
+                dataSource, JdbcSchemaOptions.of("h2").withSchedulerShardCount(64), true
+        ));
+
+        assertTrue(failure.getMessage().contains("scheduler-a"));
+        assertTrue(failure.getMessage().contains("DRAINING"));
+    }
+
+    @Test
+    void onlineExpansionRejectsShardCountReduction() {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(
+                dataSource, JdbcSchemaOptions.of("h2").withSchedulerShardCount(64)
+        );
+
+        JdbcException failure = assertThrows(JdbcException.class, () -> JdbcReshardTool.expandOnline(
+                dataSource, JdbcSchemaOptions.of("h2").withSchedulerShardCount(32), true
+        ));
+
+        assertTrue(failure.getMessage().contains("only supports shard expansion"));
+    }
+
+    @Test
+    void onlineExpansionIsIdempotentAtTheTargetShardCount() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchemaOptions options = JdbcSchemaOptions.of("h2").withSchedulerShardCount(64);
+        JdbcSchema.initialize(dataSource, options);
+        long revisionBefore = metadataLong(dataSource, "jobs.revision");
+
+        JdbcReshardTool.ReshardResult result = JdbcReshardTool.expandOnline(dataSource, options, true);
+
+        assertEquals(64, result.oldShardCount());
+        assertEquals(64, result.newShardCount());
+        assertEquals(0, result.affectedJobs());
+        assertEquals(0, result.deletedLeases());
+        assertEquals(revisionBefore, metadataLong(dataSource, "jobs.revision"));
+    }
+
+    @Test
+    void offlineReshardRejectsDrainingNodes() {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        java.time.Instant now = java.time.Instant.parse("2026-07-30T12:00:00Z");
+        new JdbcNodeRegistry(dataSource).register(new com.firefly.cluster.FireflyNode(
+                "draining-gateway", java.util.Set.of(com.firefly.cluster.NodeRole.GATEWAY),
+                now, now, com.firefly.cluster.NodeStatus.DRAINING, java.util.Map.of()
+        ));
+
+        JdbcException failure = assertThrows(JdbcException.class, () -> JdbcReshardTool.reshard(
+                dataSource, JdbcSchemaOptions.of("h2").withSchedulerShardCount(64), true
+        ));
+
+        assertTrue(failure.getMessage().contains("all Firefly nodes to be offline"));
+    }
+
+    @Test
     void reshardRejectsActiveExecutions() throws Exception {
         DataSource dataSource = rawH2DataSource();
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
@@ -326,5 +431,18 @@ final class JdbcSchemaTest {
         dataSource.setUser("sa");
         dataSource.setPassword("");
         return dataSource;
+    }
+
+    private long metadataLong(DataSource dataSource, String key) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("""
+                     select metadata_value from firefly_cluster_metadata where metadata_key=?
+                     """)) {
+            statement.setString(1, key);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                assertTrue(resultSet.next());
+                return Long.parseLong(resultSet.getString(1));
+            }
+        }
     }
 }

@@ -28,10 +28,15 @@ public final class SchemaTool {
         JdbcSchemaOptions schemaOptions = JdbcSchemaOptions.of(store.jdbcDialect())
                 .withSchedulerShardCount(options.schedulerShards().shardCount());
         java.util.Map<String, String> flags = ServerFlagParser.parse(args);
-        if ("reshard".equalsIgnoreCase(flags.get("firefly.schema.action"))) {
+        String action = flags.get("firefly.schema.action");
+        boolean offlineReshard = "reshard".equalsIgnoreCase(action);
+        boolean onlineExpansion = "expand-online".equalsIgnoreCase(action);
+        if (offlineReshard || onlineExpansion) {
             boolean confirmed = reshardConfirmed(flags);
-            JdbcReshardTool.ReshardResult result = JdbcReshardTool.reshard(dataSource, schemaOptions, confirmed);
-            System.out.println("Firefly scheduler reshard completed: old-shard-count="
+            JdbcReshardTool.ReshardResult result = onlineExpansion
+                    ? JdbcReshardTool.expandOnline(dataSource, schemaOptions, confirmed)
+                    : JdbcReshardTool.reshard(dataSource, schemaOptions, confirmed);
+            System.out.println("Firefly scheduler " + action + " completed: old-shard-count="
                     + result.oldShardCount()
                     + ", new-shard-count=" + result.newShardCount()
                     + ", affected-jobs=" + result.affectedJobs()
