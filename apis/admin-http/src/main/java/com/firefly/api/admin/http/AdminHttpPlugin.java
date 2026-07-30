@@ -41,16 +41,15 @@ import java.util.TreeSet;
  * Provides operational HTTP APIs without introducing a web framework into Firefly core.
  */
 public final class AdminHttpPlugin implements FireflyPlugin {
-    private static final java.util.logging.Logger auditLog = java.util.logging.Logger.getLogger(
-            "com.firefly.audit.admin"
-    );
     private final AdminHttpOptions options;
     private final AdminRequestReader requestReader;
+    private final AdminHttpResponder responses = new AdminHttpResponder();
     private final com.firefly.security.Pbkdf2PasswordHasher passwordHasher =
             new com.firefly.security.Pbkdf2PasswordHasher();
     private HttpServer server;
     private FireflyPluginContext context;
     private com.firefly.security.IntegrationKeyService integrationKeys;
+    private AdminAuditService audit;
     private Instant startedAt;
 
     public AdminHttpPlugin() {
@@ -86,24 +85,14 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 .orElse(null);
         try {
             server = HttpServer.create(new InetSocketAddress(options.host(), options.port()), 0);
-            server.createContext("/", exchange -> handleSafely(exchange, this::handleIndex));
-            server.createContext("/api/health", exchange -> handleSafely(exchange, this::handleHealth));
-            server.createContext("/api/auth/config", exchange -> handleSafely(exchange, this::handleAuthConfig));
-            server.createContext("/api/auth/login", exchange -> handleSafely(exchange, this::handleLogin));
-            server.createContext("/api/auth/password", exchange -> handleSafely(exchange, this::handlePasswordChange));
-            server.createContext("/api/integration-key", exchange -> handleSafely(exchange, this::handleIntegrationKey));
-            server.createContext("/api/plugins", exchange -> handleSafely(exchange, this::handlePlugins));
-            server.createContext("/api/schedules/preview", exchange -> handleSafely(exchange, this::handleSchedulePreview));
-            server.createContext("/api/schedules/timezones", exchange -> handleSafely(exchange, this::handleTimezones));
-            server.createContext("/api/overview", exchange -> handleSafely(exchange, this::handleOverview));
-            server.createContext("/api/jobs", exchange -> handleSafely(exchange, this::handleJobs));
-            server.createContext("/api/users", exchange -> handleSafely(exchange, this::handleUsers));
-            server.createContext("/api/executions", exchange -> handleSafely(exchange, this::handleExecutions));
-            server.createContext("/api/outbox", exchange -> handleSafely(exchange, this::handleOutbox));
-            server.createContext("/api/executors", exchange -> handleSafely(exchange, this::handleExecutors));
-            server.createContext("/api/executor-definitions", exchange -> handleSafely(exchange, this::handleExecutorDefinitions));
-            server.createContext("/api/nodes", exchange -> handleSafely(exchange, this::handleNodes));
-            server.createContext("/api/audit", exchange -> handleSafely(exchange, this::handleAudit));
+            audit = new AdminAuditService(this.context);
+            AdminHttpDispatcher dispatcher = new AdminHttpDispatcher(
+                    requestReader,
+                    new AdminAuthorizationService(options, this.context, integrationKeys),
+                    audit,
+                    responses
+            );
+            registerRoutes(new AdminHttpRouter(server, dispatcher));
             server.start();
         } catch (IOException e) {
             throw new UncheckedIOException("failed to start Firefly admin HTTP API", e);
@@ -991,6 +980,27 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         return requestReader.object(exchange);
     }
 
+    private void registerRoutes(AdminHttpRouter router) {
+        router.route("/", this::handleIndex)
+                .route("/api/health", this::handleHealth)
+                .route("/api/auth/config", this::handleAuthConfig)
+                .route("/api/auth/login", this::handleLogin)
+                .route("/api/auth/password", this::handlePasswordChange)
+                .route("/api/integration-key", this::handleIntegrationKey)
+                .route("/api/plugins", this::handlePlugins)
+                .route("/api/schedules/preview", this::handleSchedulePreview)
+                .route("/api/schedules/timezones", this::handleTimezones)
+                .route("/api/overview", this::handleOverview)
+                .route("/api/jobs", this::handleJobs)
+                .route("/api/users", this::handleUsers)
+                .route("/api/executions", this::handleExecutions)
+                .route("/api/outbox", this::handleOutbox)
+                .route("/api/executors", this::handleExecutors)
+                .route("/api/executor-definitions", this::handleExecutorDefinitions)
+                .route("/api/nodes", this::handleNodes)
+                .route("/api/audit", this::handleAudit);
+    }
+
     private List<String> ids(Map<String, String> request, String field) {
         return requestReader.ids(request, field);
     }
@@ -1115,220 +1125,30 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     }
 
     private void respond(HttpExchange exchange, String contentType, String body) throws IOException {
-        respond(exchange, 200, contentType, body);
-    }
-
-    private void handleSafely(HttpExchange exchange, ExchangeHandler handler) throws IOException {
-        try {
-            requestReader.validate(exchange);
-            Authorization authorization = authorize(exchange);
-            if (!authorization.authenticated()) {
-                respond(exchange, 401, "application/json; charset=utf-8", "{\"error\":\"unauthorized\"}");
-                return;
-            }
-            if (!authorization.allowed()) {
-                String error = attribute(exchange, "firefly.authorization.error");
-                respond(exchange, 403, "application/json; charset=utf-8",
-                        "{\"error\":\"" + jsonEscape(error.isBlank() ? "forbidden" : error) + "\"}");
-                return;
-            }
-            handler.handle(exchange);
-        } catch (AdminHttpException e) {
-            respond(exchange, e.status(), "application/json; charset=utf-8",
-                    "{\"error\":\"" + jsonEscape(e.error()) + "\",\"message\":\""
-                            + jsonEscape(e.getMessage()) + "\"}");
-        } catch (IllegalArgumentException e) {
-            respond(exchange, 400, "application/json; charset=utf-8",
-                    "{\"error\":\"bad_request\",\"message\":\"" + jsonEscape(e.getMessage()) + "\"}");
-        } catch (SecurityException e) {
-            respond(exchange, 403, "application/json; charset=utf-8",
-                    "{\"error\":\"forbidden\",\"message\":\"" + jsonEscape(e.getMessage()) + "\"}");
-        } catch (Exception e) {
-            respond(exchange, 500, "application/json; charset=utf-8",
-                    "{\"error\":\"internal_error\",\"message\":\"" + jsonEscape(e.getMessage()) + "\"}");
-        } finally {
-            auditMutation(exchange);
-        }
-    }
-
-    private Authorization authorize(HttpExchange exchange) {
-        String path = exchange.getRequestURI().getPath();
-        if ("/api/health".equals(path) || "/api/auth/config".equals(path) || "/api/auth/login".equals(path)) {
-            return new Authorization(true, true);
-        }
-        String integrationKey = exchange.getRequestHeaders().getFirst("X-Firefly-Integration-Key");
-        if (integrationKey != null && !integrationKey.isBlank()) {
-            boolean valid = integrationKeys != null && integrationKeys.verify(integrationKey);
-            exchange.setAttribute("firefly.admin.role", valid ? "INTEGRATION" : "UNKNOWN");
-            exchange.setAttribute("firefly.admin.actor", "integration-key");
-            return new Authorization(valid, valid && integrationJobSyncAllowed(exchange));
-        }
-        String token = exchange.getRequestHeaders().getFirst("X-Firefly-Token");
-        String authorization = exchange.getRequestHeaders().getFirst("Authorization");
-        if ((token == null || token.isBlank()) && authorization != null && authorization.startsWith("Bearer ")) {
-            token = authorization.substring("Bearer ".length());
-        }
-        if (options.jwtService() != null && token != null && !token.isBlank()) {
-            try {
-                com.firefly.security.FireflyPrincipal principal = options.jwtService().verify(token);
-                com.firefly.security.AdminUser user = context.adminUserRepository()
-                        .flatMap(repository -> repository.find(principal.subject())).orElse(null);
-                if (user == null || !user.enabled() || user.version() != principal.identityVersion()
-                        || !user.roles().equals(principal.roles())) {
-                    return new Authorization(false, false);
-                }
-                exchange.setAttribute("firefly.principal", principal);
-                exchange.setAttribute("firefly.admin.role", principal.roles().toString());
-                exchange.setAttribute("firefly.admin.actor", principal.subject());
-                if ("/api/auth/password".equals(path)) {
-                    return new Authorization(true, "POST".equalsIgnoreCase(exchange.getRequestMethod()));
-                }
-                if (user.passwordChangeRequired()) {
-                    exchange.setAttribute("firefly.authorization.error", "password_change_required");
-                    return new Authorization(true, false);
-                }
-                return new Authorization(true, principal.allows(requiredJwtRole(exchange)));
-            } catch (IllegalArgumentException invalidJwt) {
-                return new Authorization(false, false);
-            }
-        }
-        if (options.tokenRoles().isEmpty() && options.jwtService() == null) {
-            exchange.setAttribute("firefly.admin.role", "UNRESTRICTED");
-            return new Authorization(true, true);
-        }
-        AdminRole role = roleForToken(token);
-        exchange.setAttribute("firefly.admin.role", role == null ? "UNKNOWN" : role.name());
-        if (role == null) return new Authorization(false, false);
-        return new Authorization(true, role.allows(requiredRole(exchange)));
-    }
-
-    private com.firefly.security.FireflyRole requiredJwtRole(HttpExchange exchange) {
-        return switch (requiredRole(exchange)) {
-            case READER -> com.firefly.security.FireflyRole.READER;
-            case OPERATOR -> com.firefly.security.FireflyRole.OPERATOR;
-            case ADMIN -> com.firefly.security.FireflyRole.ADMIN;
-        };
-    }
-
-    private boolean integrationJobSyncAllowed(HttpExchange exchange) {
-        String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
-        String path = exchange.getRequestURI().getPath();
-        return ((Set.of("GET", "HEAD").contains(method) && path.startsWith("/api/jobs/"))
-                || ("POST".equals(method) && "/api/jobs".equals(path))
-                || ("PUT".equals(method) && path.startsWith("/api/jobs/")
-                && !path.substring("/api/jobs/".length()).contains("/")));
+        responses.ok(exchange, contentType, body);
     }
 
     private String queryParameter(HttpExchange exchange, String name) {
         return requestReader.queryParameter(exchange, name);
     }
 
-    private AdminRole roleForToken(String provided) {
-        if (provided == null) return null;
-        byte[] candidate = provided.getBytes(StandardCharsets.UTF_8);
-        return options.tokenRoles().entrySet().stream()
-                .filter(entry -> java.security.MessageDigest.isEqual(
-                        entry.getKey().getBytes(StandardCharsets.UTF_8), candidate
-                ))
-                .map(Map.Entry::getValue)
-                .max(Comparator.comparingInt(Enum::ordinal))
-                .orElse(null);
-    }
-
-    private AdminRole requiredRole(HttpExchange exchange) {
-        String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
-        String path = exchange.getRequestURI().getPath();
-        if (path.startsWith("/api/users") || path.startsWith("/api/integration-key")) return AdminRole.ADMIN;
-        if ("GET".equals(method) || "HEAD".equals(method)) return AdminRole.READER;
-        if ("PATCH".equals(method) || "PUT".equals(method)
-                || ("POST".equals(method) && path.endsWith("/trigger"))
-                || ("POST".equals(method) && path.startsWith("/api/executions/") && path.endsWith("/cancel"))
-                || ("POST".equals(method) && path.equals("/api/executions/batch-cancel"))
-                || ("POST".equals(method) && path.equals("/api/outbox/batch-requeue"))
-                || ("POST".equals(method) && path.startsWith("/api/outbox/") && path.endsWith("/requeue"))) {
-            return AdminRole.OPERATOR;
-        }
-        return AdminRole.ADMIN;
-    }
-
     private String jsonEscape(String value) {
-        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+        return responses.escape(value);
     }
 
     private void respond(HttpExchange exchange, int status, String contentType, String body) throws IOException {
-        exchange.setAttribute("firefly.response.status", status);
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
-    }
-
-    private void auditMutation(HttpExchange exchange) {
-        String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
-        if ("GET".equals(method) || "HEAD".equals(method)) return;
-        Object status = exchange.getAttribute("firefly.response.status");
-        Object role = exchange.getAttribute("firefly.admin.role");
-        auditLog.info(() -> "admin_mutation method=" + method
-                + " path=" + exchange.getRequestURI().getPath()
-                + " role=" + (role == null ? "UNKNOWN" : role)
-                + " status=" + (status == null ? 500 : status)
-                + " remote=" + exchange.getRemoteAddress());
-        context.auditRepository().ifPresent(repository -> {
-            try {
-                int responseStatus = status instanceof Integer value ? value : 500;
-                repository.append(new com.firefly.audit.AuditRecord(
-                        java.util.UUID.randomUUID().toString(), context.clock().instant(),
-                        actor(exchange), role == null ? "UNKNOWN" : role.toString(),
-                        method + " " + exchange.getRequestURI().getPath(),
-                        auditResourceType(exchange), auditResourceId(exchange),
-                        responseStatus >= 200 && responseStatus < 300 ? "SUCCESS" : "FAILURE",
-                        attribute(exchange, "firefly.audit.before"),
-                        attribute(exchange, "firefly.audit.after"),
-                        "status=" + responseStatus + ", remote=" + exchange.getRemoteAddress()
-                ));
-            } catch (RuntimeException e) {
-                auditLog.log(java.util.logging.Level.SEVERE, "failed to persist admin audit record", e);
-            }
-        });
+        responses.respond(exchange, status, contentType, body);
     }
 
     private void recordJobHistory(
             HttpExchange exchange, String jobId, String action,
             ScheduledJobRecord before, ScheduledJobRecord after
     ) {
-        String beforePayload = before == null ? "" : AdminHttpJson.jobPayload(before);
-        String afterPayload = after == null ? "" : AdminHttpJson.jobPayload(after);
-        exchange.setAttribute("firefly.audit.before", beforePayload);
-        exchange.setAttribute("firefly.audit.after", afterPayload);
-        context.jobHistoryRepository().ifPresent(repository -> repository.append(
-                new com.firefly.store.JobHistoryRecord(
-                        java.util.UUID.randomUUID().toString(), jobId, context.clock().millis(),
-                        action, actor(exchange), beforePayload, afterPayload, context.clock().instant()
-                )
-        ));
+        audit.recordJobHistory(exchange, jobId, action, before, after);
     }
 
     private String actor(HttpExchange exchange) {
-        Object authenticatedActor = exchange.getAttribute("firefly.admin.actor");
-        if (authenticatedActor != null) return authenticatedActor.toString();
-        String actor = exchange.getRequestHeaders().getFirst("X-Firefly-Actor");
-        return actor == null || actor.isBlank() ? exchange.getRemoteAddress().toString() : actor;
-    }
-
-    private String auditResourceType(HttpExchange exchange) {
-        String[] parts = exchange.getRequestURI().getPath().split("/");
-        return parts.length > 2 ? parts[2] : "admin";
-    }
-
-    private String auditResourceId(HttpExchange exchange) {
-        String[] parts = exchange.getRequestURI().getPath().split("/");
-        return parts.length > 3 ? URLDecoder.decode(parts[3], StandardCharsets.UTF_8) : "";
-    }
-
-    private String attribute(HttpExchange exchange, String name) {
-        Object value = exchange.getAttribute(name);
-        return value == null ? "" : value.toString();
+        return audit.actor(exchange);
     }
 
     private String required(Map<String, String> request, String key) {
@@ -1337,14 +1157,6 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             throw new IllegalArgumentException("missing required field: " + key);
         }
         return value;
-    }
-
-    @FunctionalInterface
-    private interface ExchangeHandler {
-        void handle(HttpExchange exchange) throws Exception;
-    }
-
-    private record Authorization(boolean authenticated, boolean allowed) {
     }
 
 }
