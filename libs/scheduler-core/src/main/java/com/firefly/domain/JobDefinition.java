@@ -43,6 +43,11 @@ public record JobDefinition(
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(handlerName, "handlerName");
         Objects.requireNonNull(schedule, "schedule");
+        if (!schedule.type().executable()) {
+            throw new IllegalArgumentException(
+                    "unsupported schedule type: " + schedule.getClass().getName()
+            );
+        }
         Objects.requireNonNull(zoneId, "zoneId");
         Objects.requireNonNull(misfirePolicy, "misfirePolicy");
         Objects.requireNonNull(misfireGrace, "misfireGrace");

@@ -20,6 +20,11 @@ public final class FixedRateSchedule implements Schedule {
     }
 
     @Override
+    public ScheduleType type() {
+        return ScheduleType.FIXED_RATE;
+    }
+
+    @Override
     public Instant nextAfter(Instant after, ZoneId zoneId) {
         return after.plus(interval);
     }
