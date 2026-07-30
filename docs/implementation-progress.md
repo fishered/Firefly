@@ -90,7 +90,7 @@ examples/*                   Embedded 与 Netty executor 示例
 - `firefly.node.mode=cluster` 已要求 JDBC 共享存储，并要求每个节点配置唯一的 `firefly.node.name`。
 - `firefly.scheduler.shard-count` 支持 CLI、环境变量 `FIREFLY_SCHEDULER_SHARD_COUNT` 和 properties 配置；该值是集群级不可变契约，不提供在线静默重分片。
 - Scheduler 每 tick 处理预算和最大空闲唤醒间隔已通过 `firefly.scheduler.max-due-records-per-tick`、`firefly.scheduler.max-idle-wakeup` 配置化。
-- `SchemaTool` 已提供显式停机式 reshard 操作：需要 `firefly.schema.action=reshard` 和 `firefly.schema.reshard.confirm=true`，并会拒绝在线节点、活跃 execution 与未完成 Outbox，随后重算 job shard、清理旧 lease、更新集群元数据。
+- `SchemaTool` 已提供显式停机式 `reshard` 和受控 `expand-online` 操作；两者都需要 `firefly.schema.reshard.confirm=true`。在线扩容只允许增加分片数，要求 Scheduler/Standby/API 节点已排空并下线，但纯 Gateway/Executor 数据面可以保持在线；工具会拒绝活跃 execution 与未完成 Outbox，随后在单事务中重算 job shard、清理旧 lease、更新集群元数据。
 - 配置已收敛为主配置加 profile 覆盖：
 
 ```text
