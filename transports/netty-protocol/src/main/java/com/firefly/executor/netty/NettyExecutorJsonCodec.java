@@ -15,9 +15,7 @@ public final class NettyExecutorJsonCodec {
     public String encode(NettyExecutorMessage message) {
         try {
             return objectMapper.writeValueAsString(new JsonEnvelope(
-                    message.messageId(),
-                    message.type().name(),
-                    message.payload()
+                    message.messageId(), message.type().name(), message.payload()
             ));
         } catch (JsonProcessingException e) {
             throw new UncheckedIOException(e);
@@ -37,10 +35,6 @@ public final class NettyExecutorJsonCodec {
         }
     }
 
-    private record JsonEnvelope(
-            String messageId,
-            String type,
-            Map<String, String> payload
-    ) {
+    private record JsonEnvelope(String messageId, String type, Map<String, String> payload) {
     }
 }
