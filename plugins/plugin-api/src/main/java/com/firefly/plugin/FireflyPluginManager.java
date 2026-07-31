@@ -18,8 +18,14 @@ public final class FireflyPluginManager implements AutoCloseable {
     }
 
     public FireflyPluginManager(List<FireflyPlugin> plugins, AutoCloseable discovery) {
-        this.plugins = List.copyOf(Objects.requireNonNull(plugins, "plugins"));
         this.discovery = Objects.requireNonNull(discovery, "discovery");
+        try {
+            this.plugins = List.copyOf(Objects.requireNonNull(plugins, "plugins"));
+            this.plugins.forEach(FireflyPluginManager::requireCompatible);
+        } catch (RuntimeException | Error failure) {
+            closeDiscoveryAfterValidationFailure(failure);
+            throw failure;
+        }
     }
 
     public void start(FireflyPluginContext context) {
@@ -56,6 +62,27 @@ public final class FireflyPluginManager implements AutoCloseable {
     private String source(FireflyPlugin plugin) {
         ClassLoader loader = plugin.getClass().getClassLoader();
         return loader instanceof java.net.URLClassLoader ? "EXTERNAL" : "CLASSPATH";
+    }
+
+    private static void requireCompatible(FireflyPlugin plugin) {
+        Objects.requireNonNull(plugin, "plugin");
+        FireflyPluginCompatibility compatibility = Objects.requireNonNull(
+                plugin.compatibility(), "plugin compatibility"
+        );
+        if (compatibility.supports(FireflyPluginCompatibility.CURRENT_API_LEVEL)) return;
+        throw new IllegalArgumentException(
+                "Firefly plugin '" + plugin.id() + "' supports API levels "
+                        + compatibility.minimumApiLevel() + ".." + compatibility.maximumApiLevel()
+                        + " but the host API level is " + FireflyPluginCompatibility.CURRENT_API_LEVEL
+        );
+    }
+
+    private void closeDiscoveryAfterValidationFailure(Throwable failure) {
+        try {
+            discovery.close();
+        } catch (Exception closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
     }
 
     @Override
