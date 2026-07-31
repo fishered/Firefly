@@ -472,12 +472,4 @@ final class AdminHttpJson {
         return handlerName;
     }
 
-    private static String unquote(String value) {
-        if (value.startsWith("\"") && value.endsWith("\"")) {
-            return value.substring(1, value.length() - 1)
-                    .replace("\\\"", "\"")
-                    .replace("\\\\", "\\");
-        }
-        return value;
-    }
 }

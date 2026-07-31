@@ -132,7 +132,7 @@ client.registerIdempotentHandler(
 
 Spring Boot 可直接声明 `NamedJobHandler` Bean；Starter 会按 `handlerName()` 自动注册。需要幂等时，也可声明 `FireflyJobHandlerRegistration.idempotent(...)` Bean，并注入业务侧 `BusinessIdempotencyStore`。Spring 与非 Spring 使用同一套语义，不把业务 exactly-once 错误地交给调度中心数据库。
 
-客户端模块提供 `JdbcBusinessIdempotencyStore`。它使用业务数据库时间、行锁、过期 claim 接管和 claim token fencing；旧 owner 在接管后不能提交或释放新 claim。初始化 SQL 位于：
+客户端模块提供 `JdbcBusinessIdempotencyStore`。它使用业务数据库时间、行锁、过期 claim 接管和单调递增的 claim generation；完成与释放是带 generation 的条件状态转换，旧 owner 在接管后不能提交或释放新 claim。这里不能直接使用 JUC 锁替代：JUC 只协调单 JVM 线程，而 claim 需要协调多个 Executor 进程。初始化 SQL 位于：
 
 ```text
 clients/executor-netty/src/main/resources/com/firefly/executor/idempotency/jdbc/h2.sql

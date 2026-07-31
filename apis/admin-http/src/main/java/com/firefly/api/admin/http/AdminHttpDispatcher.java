@@ -1,5 +1,7 @@
 package com.firefly.api.admin.http;
 
+import com.firefly.api.admin.http.routing.AdminRequestTarget;
+import com.firefly.api.admin.http.routing.AdminRoutePolicy;
 import com.sun.net.httpserver.HttpExchange;
 
 import java.io.IOException;
@@ -22,10 +24,18 @@ final class AdminHttpDispatcher {
         this.responder = java.util.Objects.requireNonNull(responder, "responder");
     }
 
-    void dispatch(HttpExchange exchange, AdminExchangeHandler handler) throws IOException {
+    void dispatch(
+            HttpExchange exchange,
+            String routePath,
+            AdminRoutePolicy policy,
+            AdminExchangeHandler handler
+    ) throws IOException {
         try {
             requestReader.validate(exchange);
-            AdminAuthorizationService.Authorization result = authorization.authorize(exchange);
+            AdminRequestTarget target = new AdminRequestTarget(
+                    exchange.getRequestMethod(), exchange.getRequestURI().getPath(), routePath
+            );
+            AdminAuthorizationService.Authorization result = authorization.authorize(exchange, policy, target);
             if (!result.authenticated()) {
                 responder.respond(exchange, 401, AdminHttpResponder.JSON, "{\"error\":\"unauthorized\"}");
                 return;

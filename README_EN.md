@@ -258,8 +258,7 @@ Firefly is moving toward separate runtime, API, UI, transport, and client module
 `	ext
 libs/scheduler-core        pure Java scheduling core
 server                     runtime wiring, startup, lifecycle
-apis/admin-model          Admin DTOs and view models
-apis/admin-http           Admin HTTP APIs
+apis/admin-http           Admin HTTP APIs, route policies, and wire JSON
 ui/admin                  Node-based Admin UI
 plugins/plugin-api        plugin SPI
 plugins/metrics-prometheus Prometheus metrics plugin

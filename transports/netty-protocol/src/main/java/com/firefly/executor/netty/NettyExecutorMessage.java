@@ -4,7 +4,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * JSON protocol envelope used by the Netty executor transport.
+ * Protocol message used by the Netty executor transport.
+ *
+ * <p>The record is not {@link java.io.Serializable}. Its stable JSON wire shape is
+ * owned by {@link NettyExecutorJsonCodec}, so Java implementation changes cannot
+ * silently switch the network protocol to native object serialization.</p>
  */
 public record NettyExecutorMessage(
         String messageId,

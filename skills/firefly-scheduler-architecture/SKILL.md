@@ -130,7 +130,6 @@ Update docs when changing user-visible scheduling semantics.
 
 - Keep libs/scheduler-core as the pure scheduling domain core.
 - Treat server as runtime wiring, bootstrap, and lifecycle. Do not turn it into a mixed UI/API/plugin blob.
-- Put Admin DTOs and ViewModels in apis/admin-model.
 - Put management HTTP endpoints in apis/admin-http.
 - Put Node-based Admin UI source or build outputs under ui/admin.
 - Keep plugins for optional runtime extensions such as metrics-prometheus, not for the long-term Admin UI shape.

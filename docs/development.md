@@ -55,6 +55,7 @@
 
 ## 质量门禁
 
+- `compatibility/spring-boot-consumer` 是 `verifySpringBootCompatibility` 的隔离 Maven 消费者工程，CI 用它验证 Spring Boot 3.3、3.4、3.5 和 4.0；它不是运行时模块，也不是无用目录。
 - 新行为必须有正常路径、边界条件和失败路径测试。
 - JDBC 一致性变更至少覆盖 H2，并在真实 PostgreSQL/MySQL CI 中覆盖方言或并发差异。
 - 协议变更必须定义版本兼容策略，并覆盖新旧端组合。

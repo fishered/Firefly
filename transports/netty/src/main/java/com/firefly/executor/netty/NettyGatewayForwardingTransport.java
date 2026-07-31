@@ -1,6 +1,5 @@
 package com.firefly.executor.netty;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -23,7 +22,8 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
     private final NettyExecutorGatewayOptions options;
     private final com.firefly.metrics.SchedulerMetrics metrics;
     private final ConcurrentHashMap<String, Long> acceptedNonces = new ConcurrentHashMap<>();
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final GatewayForwardingJsonCodec json = new GatewayForwardingJsonCodec();
+    private final NettyExecutorJsonCodec executorFrames = new NettyExecutorJsonCodec();
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(2))
             .build();
@@ -64,7 +64,7 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
     boolean forward(String address, String executorName, String instanceId, String sessionId, String frame) {
         if (address == null || address.isBlank()) return false;
         try {
-            byte[] body = mapper.writeValueAsBytes(new ForwardRequest(
+            byte[] body = json.encode(new GatewayForwardingJsonCodec.ForwardRequest(
                     executorName, instanceId, sessionId, frame
             ));
             return post(address, "/internal/executor/dispatch", body);
@@ -76,7 +76,7 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
     boolean isolate(String address, String executorName) {
         if (address == null || address.isBlank()) return false;
         try {
-            byte[] body = mapper.writeValueAsBytes(java.util.Map.of("executorName", executorName));
+            byte[] body = json.encode(new GatewayForwardingJsonCodec.IsolateRequest(executorName));
             return post(address, "/internal/executor/isolate", body);
         } catch (Exception e) {
             return false;
@@ -119,10 +119,14 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
             respond(exchange, 403);
             return;
         }
-        ForwardRequest request;
+        GatewayForwardingJsonCodec.ForwardRequest request;
         try {
-            request = mapper.readValue(body, ForwardRequest.class);
+            request = json.decodeForward(body);
         } catch (Exception invalid) {
+            respond(exchange, 400);
+            return;
+        }
+        if (!request.valid()) {
             respond(exchange, 400);
             return;
         }
@@ -134,7 +138,7 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
         }
         NettyExecutorMessage forwarded;
         try {
-            forwarded = new NettyExecutorJsonCodec().decode(request.frame());
+            forwarded = executorFrames.decode(request.frame());
         } catch (RuntimeException invalid) {
             respond(exchange, 400);
             return;
@@ -159,19 +163,18 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
             respond(exchange, 403);
             return;
         }
-        java.util.Map<?, ?> request;
+        GatewayForwardingJsonCodec.IsolateRequest request;
         try {
-            request = mapper.readValue(body, java.util.Map.class);
+            request = json.decodeIsolate(body);
         } catch (Exception invalid) {
             respond(exchange, 400);
             return;
         }
-        Object executorName = request.get("executorName");
-        if (!(executorName instanceof String value) || value.isBlank()) {
+        if (!request.valid()) {
             respond(exchange, 400);
             return;
         }
-        connections.closeExecutor(value);
+        connections.closeExecutor(request.executorName());
         respond(exchange, 202);
     }
 
@@ -248,8 +251,5 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
     @Override
     public void close() {
         if (server != null) server.stop(0);
-    }
-
-    private record ForwardRequest(String executorName, String instanceId, String sessionId, String frame) {
     }
 }

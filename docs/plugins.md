@@ -312,8 +312,7 @@ Java 代码只负责插件生命周期和 JSON API，不应内嵌完整 HTML 页
 Admin HTTP API 不再作为长期插件形态扩展。目标是：
 
 ```text
-apis/admin-model   Admin DTO 和 ViewModel
-apis/admin-http    Admin HTTP API
+apis/admin-http    Admin HTTP API、路由策略和 wire JSON
 ui/admin           Node 前端工程
 ```
 

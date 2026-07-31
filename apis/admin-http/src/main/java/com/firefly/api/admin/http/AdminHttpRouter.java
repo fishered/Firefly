@@ -1,5 +1,6 @@
 package com.firefly.api.admin.http;
 
+import com.firefly.api.admin.http.routing.AdminRoutePolicy;
 import com.sun.net.httpserver.HttpServer;
 
 final class AdminHttpRouter {
@@ -11,8 +12,8 @@ final class AdminHttpRouter {
         this.dispatcher = java.util.Objects.requireNonNull(dispatcher, "dispatcher");
     }
 
-    AdminHttpRouter route(String path, AdminExchangeHandler handler) {
-        server.createContext(path, exchange -> dispatcher.dispatch(exchange, handler));
+    AdminHttpRouter route(String path, AdminExchangeHandler handler, AdminRoutePolicy policy) {
+        server.createContext(path, exchange -> dispatcher.dispatch(exchange, path, policy, handler));
         return this;
     }
 }

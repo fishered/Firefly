@@ -4,19 +4,19 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.UncheckedIOException;
-import java.util.Map;
 
 /**
  * Encodes executor protocol messages as newline-delimited JSON frames.
+ *
+ * <p>This codec is the only serialization boundary for {@link NettyExecutorMessage};
+ * protocol messages never use Java native serialization.</p>
  */
 public final class NettyExecutorJsonCodec {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public String encode(NettyExecutorMessage message) {
         try {
-            return objectMapper.writeValueAsString(new JsonEnvelope(
-                    message.messageId(), message.type().name(), message.payload()
-            ));
+            return objectMapper.writeValueAsString(NettyExecutorWireMessage.from(message));
         } catch (JsonProcessingException e) {
             throw new UncheckedIOException(e);
         }
@@ -24,17 +24,9 @@ public final class NettyExecutorJsonCodec {
 
     public NettyExecutorMessage decode(String frame) {
         try {
-            JsonEnvelope envelope = objectMapper.readValue(frame, JsonEnvelope.class);
-            return new NettyExecutorMessage(
-                    envelope.messageId(),
-                    NettyExecutorMessageType.valueOf(envelope.type()),
-                    envelope.payload() == null ? Map.of() : Map.copyOf(envelope.payload())
-            );
-        } catch (JsonProcessingException e) {
+            return objectMapper.readValue(frame, NettyExecutorWireMessage.class).toMessage();
+        } catch (JsonProcessingException | IllegalArgumentException e) {
             throw new IllegalArgumentException("invalid executor json frame", e);
         }
-    }
-
-    private record JsonEnvelope(String messageId, String type, Map<String, String> payload) {
     }
 }
