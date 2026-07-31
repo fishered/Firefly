@@ -20,6 +20,13 @@ public interface FireflyPlugin extends AutoCloseable {
         return "";
     }
 
+    /**
+     * Declares compatible host API levels. The default preserves plugins built against API level 1.
+     */
+    default FireflyPluginCompatibility compatibility() {
+        return FireflyPluginCompatibility.current();
+    }
+
     void start(FireflyPluginContext context);
 
     @Override

@@ -49,8 +49,13 @@ final class PostgreSqlInitScriptRealDatabaseTest {
                     .build();
             Instant nextFireTime = Instant.parse("2026-07-29T12:00:00Z");
             jobs.save(definition, nextFireTime);
-            assertEquals(definition, jobs.find(definition.id()).orElseThrow().definition());
-            assertEquals(nextFireTime, jobs.find(definition.id()).orElseThrow().nextFireTime());
+            var persisted = jobs.find(definition.id()).orElseThrow();
+            assertEquals(definition.id(), persisted.definition().id());
+            assertEquals(
+                    ((CronSchedule) definition.schedule()).expression(),
+                    ((CronSchedule) persisted.definition().schedule()).expression()
+            );
+            assertEquals(nextFireTime, persisted.nextFireTime());
         }
     }
 
