@@ -7,7 +7,6 @@ import com.firefly.domain.ExecutionContext;
 import com.firefly.domain.ExecutorCompletionPolicy;
 import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorRoutingStrategy;
-import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.executor.ExecutorRegistry;
 import com.firefly.executor.InMemoryExecutorRegistry;
 import com.firefly.executor.ExecutorInstanceDirectory;
@@ -18,7 +17,6 @@ import com.firefly.executor.RemoteDispatchResult;
 import com.firefly.executor.RemoteExecutorTransport;
 import com.firefly.execution.ExecutionRecord;
 import com.firefly.execution.ExecutionRepository;
-import com.firefly.execution.ExecutionStatus;
 import com.firefly.execution.ExecutionTargetRecord;
 import com.firefly.execution.InMemoryExecutionRepository;
 import com.firefly.metrics.SchedulerMetrics;
@@ -59,12 +57,11 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
     private final java.util.function.BiConsumer<String, Boolean> retryScheduler;
     private final SchedulerMetrics metrics;
     private final NettyExecutorGatewayOptions options;
-    private final java.util.concurrent.ThreadPoolExecutor resultPersistenceExecutor;
+    private final NettyResultPersistenceExecutor resultPersistenceExecutor;
     private final ReloadingNettyTlsContext tlsContext;
     private final ExecutorInstanceDirectory instanceDirectory;
     private final NettyGatewayForwardingTransport forwardingTransport;
-    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>
-            routingCursors = new java.util.concurrent.ConcurrentHashMap<>();
+    private final NettyExecutorDispatchService dispatchService;
     private volatile java.util.function.BooleanSupplier registrationAdmission = () -> true;
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
     private EventLoopGroup bossGroup;
@@ -252,19 +249,11 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         this.tlsContext = new ReloadingNettyTlsContext(options.tls(), options.tlsReloadInterval());
         this.instanceDirectory = Objects.requireNonNull(instanceDirectory, "instanceDirectory");
         this.forwardingTransport = new NettyGatewayForwardingTransport(connectionRegistry, options, metrics);
-        this.resultPersistenceExecutor = new java.util.concurrent.ThreadPoolExecutor(
-                1,
-                1,
-                0L,
-                java.util.concurrent.TimeUnit.MILLISECONDS,
-                new java.util.concurrent.ArrayBlockingQueue<>(options.resultQueueCapacity()),
-                r -> {
-                    Thread thread = new Thread(r, "firefly-execution-results");
-                    thread.setDaemon(false);
-                    return thread;
-                },
-                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+        this.dispatchService = new NettyExecutorDispatchService(
+                schedulerCatalog, connectionRegistry, instanceDirectory, clock, executionRepository,
+                gatewayNodeId, forwardingTransport, codec
         );
+        this.resultPersistenceExecutor = new NettyResultPersistenceExecutor(options.resultQueueCapacity());
     }
 
     public void start() throws InterruptedException {
@@ -344,15 +333,7 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
     }
 
     public RemoteDispatchResult dispatch(RemoteDispatchRequest request) {
-        if (schedulerCatalog.findExecutor(request.executorName())
-                .map(definition -> !definition.enabled()).orElse(false)) {
-            return RemoteDispatchResult.unavailable();
-        }
-        return switch (request.dispatchMode()) {
-            case UNICAST -> dispatchUnicast(request);
-            case BROADCAST -> dispatchBroadcast(request);
-            case SHARDING -> dispatchShards(request);
-        };
+        return dispatchService.dispatch(request);
     }
 
     public ExecutorRegistry executorRegistry() {
@@ -364,8 +345,7 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
     }
 
     public boolean hasRoute(String executorName) {
-        return !connectionRegistry.list(executorName).isEmpty()
-                || !instanceDirectory.listOnline(executorName, clock.instant()).isEmpty();
+        return dispatchService.hasRoute(executorName);
     }
 
     public void setRegistrationAdmission(java.util.function.BooleanSupplier registrationAdmission) {
@@ -434,449 +414,6 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         );
     }
 
-    private RemoteDispatchResult dispatchUnicast(RemoteDispatchRequest request) {
-        var sharedTarget = selectSharedLocation(
-                request.executorName(), request.routingStrategy(), request.routingKey()
-        );
-        if (sharedTarget.isPresent()) {
-            return dispatchDirectoryPlans(request, 1, java.util.List.of(new DirectoryTargetPlan(
-                    sharedTarget.get(), request.context().executionId(), null, null
-            )), java.util.List.of());
-        }
-        var target = connectionRegistry.select(
-                request.executorName(),
-                request.routingStrategy(),
-                request.routingKey()
-        );
-        if (target.isEmpty()) {
-            saveDispatch(request, 1, java.util.List.of());
-            return new RemoteDispatchResult(1, 0, java.util.List.of());
-        }
-        return dispatchPlans(request, 1, java.util.List.of(new TargetPlan(
-                target.get(), request.context().executionId(), null, null
-        )));
-    }
-
-    private RemoteDispatchResult dispatchBroadcast(RemoteDispatchRequest request) {
-        java.util.List<ExecutorInstanceLocation> sharedLocations = onlineLocations(request.executorName());
-        if (!sharedLocations.isEmpty()) return dispatchBroadcastShared(request, sharedLocations);
-        java.util.List<ExecutionTargetRecord> existingTargets =
-                executionRepository.listTargets(request.context().executionId());
-        if (!existingTargets.isEmpty()) {
-            java.util.List<TargetPlan> retryPlans = existingTargets.stream()
-                    .map(existing -> connectionRegistry.find(request.executorName(), existing.instanceId())
-                            .map(target -> new TargetPlan(
-                                    target, existing.targetExecutionId(), existing.shardIndex(), null
-                            )))
-                    .flatMap(java.util.Optional::stream)
-                    .toList();
-            return dispatchPlans(request, existingTargets.size(), retryPlans);
-        }
-        java.util.Optional<java.util.List<ExecutionTargetRecord>> retryTargets = retrySourceTargets(request);
-        if (retryTargets.isPresent()) {
-            java.util.List<ExecutionTargetRecord> sourceTargets = retryTargets.get();
-            java.util.List<ExecutionTargetRecord> requestedTargets = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
-                    ? sourceTargets
-                    : sourceTargets.stream()
-                            .filter(target -> target.status() != ExecutionStatus.SUCCEEDED)
-                            .toList();
-            java.util.List<TargetPlan> plans = requestedTargets.stream()
-                    .map(existing -> connectionRegistry.find(request.executorName(), existing.instanceId())
-                            .map(target -> new TargetPlan(
-                                    target,
-                                    request.context().executionId() + "@instance:" + existing.instanceId(),
-                                    null,
-                                    null
-                            )))
-                    .flatMap(java.util.Optional::stream)
-                    .toList();
-            int parentExpectedTargets = retrySourceExecution(request)
-                    .map(ExecutionRecord::expectedTargets)
-                    .orElse(sourceTargets.size());
-            return dispatchRetryPlans(
-                    request, parentExpectedTargets, requestedTargets.size(), plans, sourceTargets
-            );
-        }
-        java.util.List<NettyExecutorConnectionRegistry.ConnectionTarget> targets =
-                connectionRegistry.list(request.executorName());
-        java.util.List<TargetPlan> plans = targets.stream()
-                .map(target -> new TargetPlan(
-                        target,
-                        request.context().executionId() + "@instance:" + target.instanceId(),
-                        null,
-                        null
-                ))
-                .toList();
-        return dispatchPlans(request, targets.size(), plans);
-    }
-
-    private RemoteDispatchResult dispatchShards(RemoteDispatchRequest request) {
-        java.util.List<ExecutorInstanceLocation> sharedLocations = onlineLocations(request.executorName());
-        if (!sharedLocations.isEmpty()) return dispatchShardsShared(request, sharedLocations);
-        java.util.List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(java.util.List.of());
-        java.util.Set<Integer> successfulShards = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
-                ? java.util.Set.of()
-                : sourceTargets
-                .stream()
-                .filter(target -> target.status() == ExecutionStatus.SUCCEEDED)
-                .map(ExecutionTargetRecord::shardIndex)
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        java.util.ArrayList<TargetPlan> plans = new java.util.ArrayList<>();
-        for (int shard = 0; shard < request.shardCount(); shard++) {
-            int shardIndex = shard;
-            if (successfulShards.contains(shardIndex)) continue;
-            String shardKey = request.routingKey() + ":" + shard;
-            connectionRegistry.select(request.executorName(), request.routingStrategy(), shardKey)
-                    .ifPresent(target -> {
-                        String childExecutionId = request.context().executionId() + "@shard:" + shardIndex;
-                        plans.add(new TargetPlan(target, childExecutionId, shardIndex, request.shardCount()));
-                    });
-        }
-        int requestedTargets = request.shardCount() - successfulShards.size();
-        if (request.runAttempt() > 0 && retrySourceExecution(request).isPresent()) {
-            return dispatchRetryPlans(
-                    request, request.shardCount(), requestedTargets, plans, sourceTargets
-            );
-        }
-        return dispatchPlans(request, request.shardCount(), plans);
-    }
-
-    private java.util.Optional<java.util.List<ExecutionTargetRecord>> retrySourceTargets(
-            RemoteDispatchRequest request
-    ) {
-        return retrySourceExecution(request)
-                .map(source -> executionRepository.listTargets(source.executionId()));
-    }
-
-    private java.util.Optional<ExecutionRecord> retrySourceExecution(RemoteDispatchRequest request) {
-        if (request.runAttempt() <= 0) return java.util.Optional.empty();
-        String sourceExecutionId = request.runAttempt() == 1
-                ? request.rootExecutionId()
-                : request.rootExecutionId() + "@attempt:" + (request.runAttempt() - 1);
-        return executionRepository.findExecution(sourceExecutionId);
-    }
-
-    private RemoteDispatchResult dispatchBroadcastShared(
-            RemoteDispatchRequest request, java.util.List<ExecutorInstanceLocation> locations
-    ) {
-        java.util.List<ExecutionTargetRecord> existingTargets =
-                executionRepository.listTargets(request.context().executionId());
-        if (!existingTargets.isEmpty()) {
-            java.util.List<DirectoryTargetPlan> plans = existingTargets.stream()
-                    .map(existing -> findLocation(locations, existing.instanceId())
-                            .map(location -> new DirectoryTargetPlan(
-                                    location, existing.targetExecutionId(), existing.shardIndex(), null
-                            )))
-                    .flatMap(java.util.Optional::stream)
-                    .toList();
-            return dispatchDirectoryPlans(request, existingTargets.size(), plans, java.util.List.of());
-        }
-        java.util.List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(java.util.List.of());
-        if (!sourceTargets.isEmpty()) {
-            java.util.List<ExecutionTargetRecord> requested = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
-                    ? sourceTargets
-                    : sourceTargets.stream().filter(target -> target.status() != ExecutionStatus.SUCCEEDED).toList();
-            java.util.List<DirectoryTargetPlan> plans = requested.stream()
-                    .map(existing -> findLocation(locations, existing.instanceId())
-                            .map(location -> new DirectoryTargetPlan(
-                                    location,
-                                    request.context().executionId() + "@instance:" + existing.instanceId(),
-                                    existing.shardIndex(), null
-                            )))
-                    .flatMap(java.util.Optional::stream)
-                    .toList();
-            java.util.List<ExecutionTargetRecord> carried = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
-                    ? java.util.List.of()
-                    : sourceTargets.stream().filter(target -> target.status() == ExecutionStatus.SUCCEEDED).toList();
-            int expected = retrySourceExecution(request).map(ExecutionRecord::expectedTargets)
-                    .orElse(sourceTargets.size());
-            return dispatchDirectoryPlans(request, expected, plans, carried, requested.size());
-        }
-        java.util.List<DirectoryTargetPlan> plans = locations.stream()
-                .map(location -> new DirectoryTargetPlan(
-                        location, request.context().executionId() + "@instance:" + location.instanceId(),
-                        null, null
-                ))
-                .toList();
-        return dispatchDirectoryPlans(request, locations.size(), plans, java.util.List.of());
-    }
-
-    private RemoteDispatchResult dispatchShardsShared(
-            RemoteDispatchRequest request, java.util.List<ExecutorInstanceLocation> locations
-    ) {
-        java.util.List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(java.util.List.of());
-        java.util.Set<Integer> successfulShards = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
-                ? java.util.Set.of()
-                : sourceTargets.stream()
-                .filter(target -> target.status() == ExecutionStatus.SUCCEEDED)
-                .map(ExecutionTargetRecord::shardIndex)
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        java.util.ArrayList<DirectoryTargetPlan> plans = new java.util.ArrayList<>();
-        for (int shard = 0; shard < request.shardCount(); shard++) {
-            if (successfulShards.contains(shard)) continue;
-            int shardIndex = shard;
-            selectLocation(locations, request.routingStrategy(), request.routingKey() + ":" + shard)
-                    .ifPresent(location -> plans.add(new DirectoryTargetPlan(
-                            location, request.context().executionId() + "@shard:" + shardIndex,
-                            shardIndex, request.shardCount()
-                    )));
-        }
-        java.util.List<ExecutionTargetRecord> carried = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
-                ? java.util.List.of()
-                : sourceTargets.stream().filter(target -> target.status() == ExecutionStatus.SUCCEEDED).toList();
-        int requested = request.shardCount() - successfulShards.size();
-        return dispatchDirectoryPlans(request, request.shardCount(), plans, carried, requested);
-    }
-
-    private RemoteDispatchResult dispatchDirectoryPlans(
-            RemoteDispatchRequest request, int expectedTargets,
-            java.util.List<DirectoryTargetPlan> plans,
-            java.util.List<ExecutionTargetRecord> carriedTargets
-    ) {
-        return dispatchDirectoryPlans(request, expectedTargets, plans, carriedTargets, expectedTargets);
-    }
-
-    private RemoteDispatchResult dispatchDirectoryPlans(
-            RemoteDispatchRequest request, int expectedTargets,
-            java.util.List<DirectoryTargetPlan> plans,
-            java.util.List<ExecutionTargetRecord> carriedTargets,
-            int requestedTargets
-    ) {
-        saveDirectoryDispatch(request, expectedTargets, plans, carriedTargets);
-        int accepted = 0;
-        java.util.ArrayList<String> instances = new java.util.ArrayList<>();
-        for (DirectoryTargetPlan plan : plans) {
-            if (sendDirectory(plan, request)) {
-                accepted++;
-                instances.add(plan.location().instanceId());
-            }
-        }
-        return new RemoteDispatchResult(requestedTargets, accepted, java.util.List.copyOf(instances));
-    }
-
-    private void saveDirectoryDispatch(
-            RemoteDispatchRequest request, int expectedTargets,
-            java.util.List<DirectoryTargetPlan> plans,
-            java.util.List<ExecutionTargetRecord> carriedTargets
-    ) {
-        Instant now = clock.instant();
-        executionRepository.saveExecution(new ExecutionRecord(
-                request.context().executionId(), request.rootExecutionId(), request.runAttempt(),
-                request.context().jobId(), request.context().scheduledFireTime(), request.context().dispatchTime(),
-                request.dispatchMode(), request.completionPolicy(),
-                plans.isEmpty() && carriedTargets.isEmpty() ? ExecutionStatus.FAILED : ExecutionStatus.DISPATCHED,
-                expectedTargets, plans.size() + carriedTargets.size(), request.ownerNodeId(), request.fencingToken(),
-                now, now
-        ));
-        java.util.List<ExecutionTargetRecord> planned = plans.stream().map(plan -> new ExecutionTargetRecord(
-                plan.targetExecutionId(), request.context().executionId(), plan.location().instanceId(),
-                plan.location().gatewayNodeId(), plan.shardIndex(), ExecutionStatus.DISPATCHED,
-                1, null, null, "", now, now
-        )).toList();
-        java.util.List<ExecutionTargetRecord> carried = carriedTargets.stream().map(source ->
-                new ExecutionTargetRecord(
-                        carriedTargetExecutionId(request, source), request.context().executionId(),
-                        source.instanceId(), source.gatewayNodeId(), source.shardIndex(), ExecutionStatus.SUCCEEDED,
-                        source.attempt(), now, now, "", now, now
-                )
-        ).toList();
-        executionRepository.saveTargets(java.util.stream.Stream.concat(planned.stream(), carried.stream()).toList());
-    }
-
-    private boolean sendDirectory(DirectoryTargetPlan plan, RemoteDispatchRequest request) {
-        String frame = codec.encode(triggerMessage(
-                request, plan.targetExecutionId(), plan.location().instanceId(),
-                plan.shardIndex(), plan.shardTotal()
-        ));
-        var local = connectionRegistry.find(request.executorName(), plan.location().instanceId())
-                .filter(target -> target.sessionId().equals(plan.location().sessionId()));
-        if (local.isPresent()) {
-            local.get().channel().writeAndFlush(frame + "\n");
-            return true;
-        }
-        return forwardingTransport.forward(
-                plan.location().gatewayAddress(), request.executorName(), plan.location().instanceId(),
-                plan.location().sessionId(), frame
-        );
-    }
-
-    private java.util.List<ExecutorInstanceLocation> onlineLocations(String executorName) {
-        return instanceDirectory.listOnline(executorName, clock.instant());
-    }
-
-    private java.util.Optional<ExecutorInstanceLocation> selectSharedLocation(
-            String executorName, ExecutorRoutingStrategy strategy, String routingKey
-    ) {
-        return selectLocation(onlineLocations(executorName), strategy, routingKey);
-    }
-
-    private java.util.Optional<ExecutorInstanceLocation> selectLocation(
-            java.util.List<ExecutorInstanceLocation> locations,
-            ExecutorRoutingStrategy strategy,
-            String routingKey
-    ) {
-        if (locations.isEmpty()) return java.util.Optional.empty();
-        if (strategy == ExecutorRoutingStrategy.CONSISTENT_HASH) {
-            return locations.stream().max((left, right) -> Long.compareUnsigned(
-                    rendezvousScore(routingKey, left.instanceId()),
-                    rendezvousScore(routingKey, right.instanceId())
-            ));
-        }
-        int index = strategy == ExecutorRoutingStrategy.RANDOM
-                ? java.util.concurrent.ThreadLocalRandom.current().nextInt(locations.size())
-                : Math.floorMod(routingCursors.computeIfAbsent(routingKey,
-                        ignored -> new java.util.concurrent.atomic.AtomicInteger()).getAndIncrement(), locations.size());
-        return java.util.Optional.of(locations.get(index));
-    }
-
-    private java.util.Optional<ExecutorInstanceLocation> findLocation(
-            java.util.List<ExecutorInstanceLocation> locations, String instanceId
-    ) {
-        return locations.stream().filter(location -> location.instanceId().equals(instanceId)).findFirst();
-    }
-
-    private long rendezvousScore(String routingKey, String instanceId) {
-        long hash = 0xcbf29ce484222325L;
-        String value = routingKey + '\u0000' + instanceId;
-        for (int index = 0; index < value.length(); index++) {
-            hash ^= value.charAt(index);
-            hash *= 0x100000001b3L;
-        }
-        return hash;
-    }
-
-    private RemoteDispatchResult dispatchPlans(
-            RemoteDispatchRequest request,
-            int expectedTargets,
-            java.util.List<TargetPlan> plans
-    ) {
-        saveDispatch(request, expectedTargets, plans);
-        plans.forEach(plan -> send(
-                plan.target(), request, plan.targetExecutionId(), plan.shardIndex(), plan.shardTotal()
-        ));
-        return new RemoteDispatchResult(
-                expectedTargets,
-                plans.size(),
-                plans.stream().map(plan -> plan.target().instanceId()).toList()
-        );
-    }
-
-    private RemoteDispatchResult dispatchRetryPlans(
-            RemoteDispatchRequest request,
-            int parentExpectedTargets,
-            int requestedTargets,
-            java.util.List<TargetPlan> plans,
-            java.util.List<ExecutionTargetRecord> sourceTargets
-    ) {
-        java.util.List<ExecutionTargetRecord> carried = sourceTargets.stream()
-                .filter(target -> request.retryScope() == ExecutorRetryScope.FAILED_TARGETS_ONLY)
-                .filter(target -> target.status() == ExecutionStatus.SUCCEEDED)
-                .toList();
-        saveDispatch(request, parentExpectedTargets, plans, carried);
-        plans.forEach(plan -> send(
-                plan.target(), request, plan.targetExecutionId(), plan.shardIndex(), plan.shardTotal()
-        ));
-        return new RemoteDispatchResult(
-                requestedTargets,
-                plans.size(),
-                plans.stream().map(plan -> plan.target().instanceId()).toList()
-        );
-    }
-
-    private void saveDispatch(
-            RemoteDispatchRequest request,
-            int expectedTargets,
-            java.util.List<TargetPlan> plans
-    ) {
-        saveDispatch(request, expectedTargets, plans, java.util.List.of());
-    }
-
-    private void saveDispatch(
-            RemoteDispatchRequest request,
-            int expectedTargets,
-            java.util.List<TargetPlan> plans,
-            java.util.List<ExecutionTargetRecord> carriedTargets
-    ) {
-        Instant now = clock.instant();
-        executionRepository.saveExecution(new ExecutionRecord(
-                request.context().executionId(),
-                request.rootExecutionId(),
-                request.runAttempt(),
-                request.context().jobId(),
-                request.context().scheduledFireTime(),
-                request.context().dispatchTime(),
-                request.dispatchMode(),
-                request.completionPolicy(),
-                plans.isEmpty() && carriedTargets.isEmpty() ? ExecutionStatus.FAILED : ExecutionStatus.DISPATCHED,
-                expectedTargets,
-                plans.size() + carriedTargets.size(),
-                request.ownerNodeId(),
-                request.fencingToken(),
-                now,
-                now
-        ));
-        java.util.List<ExecutionTargetRecord> plannedTargets = plans.stream().map(plan -> new ExecutionTargetRecord(
-                plan.targetExecutionId(),
-                request.context().executionId(),
-                plan.target().instanceId(),
-                gatewayNodeId,
-                plan.shardIndex(),
-                ExecutionStatus.DISPATCHED,
-                1,
-                null,
-                null,
-                "",
-                now,
-                now
-        )).toList();
-        java.util.List<ExecutionTargetRecord> carried = carriedTargets.stream().map(source ->
-                new ExecutionTargetRecord(
-                        carriedTargetExecutionId(request, source),
-                        request.context().executionId(),
-                        source.instanceId(),
-                        source.gatewayNodeId(),
-                        source.shardIndex(),
-                        ExecutionStatus.SUCCEEDED,
-                        source.attempt(),
-                        now,
-                        now,
-                        "",
-                        now,
-                        now
-                )
-        ).toList();
-        executionRepository.saveTargets(java.util.stream.Stream.concat(
-                plannedTargets.stream(), carried.stream()
-        ).toList());
-    }
-
-    private String carriedTargetExecutionId(
-            RemoteDispatchRequest request, ExecutionTargetRecord source
-    ) {
-        String suffix = source.shardIndex() == null
-                ? "instance:" + source.instanceId()
-                : "shard:" + source.shardIndex();
-        return request.context().executionId() + "@carry:" + suffix;
-    }
-
-    private void send(
-            NettyExecutorConnectionRegistry.ConnectionTarget target,
-            RemoteDispatchRequest request,
-            String executionId,
-            Integer shardIndex,
-            Integer shardTotal
-    ) {
-        target.channel().writeAndFlush(codec.encode(triggerMessage(
-                request,
-                executionId,
-                target.instanceId(),
-                shardIndex,
-                shardTotal
-        )) + "\n");
-    }
-
     @Override
     public void close() {
         if (serverChannel != null) {
@@ -888,17 +425,9 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         if (bossGroup != null) {
             bossGroup.shutdownGracefully().syncUninterruptibly();
         }
-        resultPersistenceExecutor.shutdown();
         forwardingTransport.close();
         tlsContext.close();
-        try {
-            if (!resultPersistenceExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                resultPersistenceExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            resultPersistenceExecutor.shutdownNow();
-        }
+        resultPersistenceExecutor.close();
     }
 
     private NettyExecutorMessage triggerMessage(ExecutionCommand command) {
@@ -920,53 +449,4 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         );
     }
 
-    private NettyExecutorMessage triggerMessage(
-            RemoteDispatchRequest request,
-            String executionId,
-            String targetInstanceId,
-            Integer shardIndex,
-            Integer shardTotal
-    ) {
-        ExecutionContext context = request.context();
-        Map<String, String> payload = new LinkedHashMap<>();
-        payload.put("executionId", executionId);
-        payload.put("parentExecutionId", context.executionId());
-        payload.put("rootExecutionId", request.rootExecutionId());
-        payload.put("runAttempt", Integer.toString(request.runAttempt()));
-        payload.put("jobId", context.jobId());
-        payload.put("handlerName", request.handlerName());
-        payload.put("targetInstanceId", targetInstanceId);
-        payload.put("dispatchMode", request.dispatchMode().name());
-        payload.put("completionPolicy", request.completionPolicy().name());
-        payload.put("ownerNodeId", request.ownerNodeId());
-        payload.put("fencingToken", Long.toString(request.fencingToken()));
-        payload.put("scheduledFireTime", context.scheduledFireTime().toString());
-        payload.put("dispatchTime", context.dispatchTime().toString());
-        context.parameters().forEach((key, value) -> payload.put("param." + key, value));
-        if (shardIndex != null && shardTotal != null) {
-            payload.put("param.firefly.shard.index", shardIndex.toString());
-            payload.put("param.firefly.shard.total", shardTotal.toString());
-        }
-        return new NettyExecutorMessage(
-                UUID.randomUUID().toString(),
-                NettyExecutorMessageType.TRIGGER_JOB,
-                payload
-        );
-    }
-
-    private record TargetPlan(
-            NettyExecutorConnectionRegistry.ConnectionTarget target,
-            String targetExecutionId,
-            Integer shardIndex,
-            Integer shardTotal
-    ) {
-    }
-
-    private record DirectoryTargetPlan(
-            ExecutorInstanceLocation location,
-            String targetExecutionId,
-            Integer shardIndex,
-            Integer shardTotal
-    ) {
-    }
 }

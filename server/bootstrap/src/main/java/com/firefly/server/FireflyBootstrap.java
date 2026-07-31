@@ -20,6 +20,7 @@ import com.firefly.plugin.FireflyPluginDiscovery;
 import com.firefly.plugin.FireflyPluginManager;
 import com.firefly.api.admin.http.AdminHttpOptions;
 import com.firefly.api.admin.http.AdminHttpPlugin;
+import com.firefly.api.admin.http.AdminRequestLimits;
 import com.firefly.plugin.metrics.PrometheusMetricsOptions;
 import com.firefly.plugin.metrics.PrometheusMetricsPlugin;
 import com.firefly.registry.JobHandlerRegistry;
@@ -362,7 +363,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                     options.adminHttpHost(),
                     options.adminHttpPort(),
                     Duration.ofSeconds(30),
-                    options.adminApiToken(), adminTokenRoles(options), jwtService
+                    options.adminApiToken(), adminTokenRoles(options), jwtService,
+                    adminRequestLimits(options)
             )));
             log.info("Admin HTTP: http://" + options.adminHttpHost() + ":" + options.adminHttpPort() + "/");
         }
@@ -407,6 +409,33 @@ public final class FireflyBootstrap implements AutoCloseable {
             discovery.close();
             throw e;
         }
+    }
+
+    private static AdminRequestLimits adminRequestLimits(ServerOptions options) {
+        var configuration = options.pluginConfiguration();
+        AdminRequestLimits defaults = AdminRequestLimits.defaults();
+        return new AdminRequestLimits(
+                Integer.parseInt(configuration.property(
+                        "firefly.admin-http.max-request-body-bytes",
+                        Integer.toString(defaults.maxRequestBodyBytes())
+                )),
+                Integer.parseInt(configuration.property(
+                        "firefly.admin-http.max-query-length",
+                        Integer.toString(defaults.maxQueryLength())
+                )),
+                Integer.parseInt(configuration.property(
+                        "firefly.admin-http.max-json-nesting-depth",
+                        Integer.toString(defaults.maxJsonNestingDepth())
+                )),
+                Integer.parseInt(configuration.property(
+                        "firefly.admin-http.max-json-string-length",
+                        Integer.toString(defaults.maxJsonStringLength())
+                )),
+                Integer.parseInt(configuration.property(
+                        "firefly.admin-http.max-batch-size",
+                        Integer.toString(defaults.maxBatchSize())
+                ))
+        );
     }
 
     private static DispatchOutboxWorker startOutboxWorker(
