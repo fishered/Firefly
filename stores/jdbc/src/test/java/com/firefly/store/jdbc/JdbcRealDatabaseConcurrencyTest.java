@@ -248,7 +248,7 @@ class JdbcRealDatabaseConcurrencyTest {
         )));
 
         List<DispatchOutboxRecord> first = jobs.claimDispatches(
-                "worker-a", Instant.now(), 1, Duration.ofMillis(500), Set.of(DispatchType.REMOTE)
+                "worker-a", Instant.now(), 1, Duration.ofSeconds(2), Set.of(DispatchType.REMOTE)
         );
         assertEquals(1, first.size());
         assertEquals(0, jobs.claimDispatches(
