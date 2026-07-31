@@ -47,6 +47,7 @@ subprojects {
 def publishedProjects = [
         ":libs:scheduler-core",
         ":plugins:plugin-api",
+        ":transports:netty-protocol",
         ":transports:netty",
         ":clients:executor-netty",
         ":integrations:firefly-spring-boot-autoconfigure",
@@ -56,6 +57,7 @@ def publishedProjects = [
 def publishedProjectDescriptions = [
         ":libs:scheduler-core"                            : "Core scheduling domain, execution model, routing, and storage contracts for Firefly.",
         ":plugins:plugin-api"                             : "Public plugin API for extending Firefly without coupling plugins to server internals.",
+        ":transports:netty-protocol"                      : "Shared wire protocol model for Firefly Netty gateways and executor clients.",
         ":transports:netty"                               : "Netty protocol and transport implementation shared by Firefly gateways and executors.",
         ":clients:executor-netty"                         : "Resilient Netty executor client for connecting business services to Firefly gateways.",
         ":integrations:firefly-spring-boot-autoconfigure" : "Spring Boot auto-configuration for Firefly executors and annotated jobs.",
