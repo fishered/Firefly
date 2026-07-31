@@ -29,9 +29,27 @@ apis
 public interface FireflyPlugin extends AutoCloseable {
     String id();
 
+    default FireflyPluginCompatibility compatibility() {
+        return FireflyPluginCompatibility.current();
+    }
+
     void start(FireflyPluginContext context);
 }
 ```
+
+`compatibility()` 声明插件可运行的宿主 Plugin API level 范围。当前 API level 为 `1`；兼容性新增保持
+level 不变，只有破坏二进制或行为契约的 SPI 变更才升级 level。未覆盖该方法的 1.x 旧插件通过接口默认方法
+继续声明 level 1，因此无需重新编译。需要提前声明兼容后续 level 时可覆盖该方法：
+
+```java
+@Override
+public FireflyPluginCompatibility compatibility() {
+    return new FireflyPluginCompatibility(1, 2);
+}
+```
+
+宿主在任何插件启动前统一校验全部已启用插件；范围不包含当前 level、返回空兼容信息或范围非法都会阻止
+节点启动。产品版本 `1.0.2` 与 API level 是两个不同概念，补丁版本升级不会自动导致插件不兼容。
 
 插件通过 `FireflyPluginContext` 读取可选运行时能力：
 

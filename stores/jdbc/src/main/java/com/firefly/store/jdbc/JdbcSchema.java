@@ -187,8 +187,10 @@ public final class JdbcSchema {
     }
 
     private static boolean tableExists(DatabaseMetaData metadata, String tableName) throws SQLException {
+        String catalog = metadata.getConnection().getCatalog();
+        String schema = metadata.getConnection().getSchema();
         for (String candidate : tableNameCandidates(tableName)) {
-            try (ResultSet resultSet = metadata.getTables(null, null, candidate, new String[]{"TABLE"})) {
+            try (ResultSet resultSet = metadata.getTables(catalog, schema, candidate, new String[]{"TABLE"})) {
                 if (resultSet.next()) {
                     return true;
                 }
@@ -199,8 +201,10 @@ public final class JdbcSchema {
 
     private static Set<String> columns(DatabaseMetaData metadata, String tableName) throws SQLException {
         java.util.HashSet<String> columns = new java.util.HashSet<>();
+        String catalog = metadata.getConnection().getCatalog();
+        String schema = metadata.getConnection().getSchema();
         for (String candidate : tableNameCandidates(tableName)) {
-            try (ResultSet resultSet = metadata.getColumns(null, null, candidate, null)) {
+            try (ResultSet resultSet = metadata.getColumns(catalog, schema, candidate, null)) {
                 while (resultSet.next()) {
                     columns.add(resultSet.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
                 }
