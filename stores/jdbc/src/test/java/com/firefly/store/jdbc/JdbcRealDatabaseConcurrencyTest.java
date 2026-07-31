@@ -255,13 +255,21 @@ class JdbcRealDatabaseConcurrencyTest {
                 "worker-b", Instant.now(), 1, Duration.ofSeconds(5), Set.of(DispatchType.REMOTE)
         ).size());
 
-        Thread.sleep(750);
-
-        List<DispatchOutboxRecord> reclaimed = jobs.claimDispatches(
-                "worker-b", Instant.now(), 1, Duration.ofSeconds(5), Set.of(DispatchType.REMOTE)
-        );
+        List<DispatchOutboxRecord> reclaimed = awaitReclaimedDispatch(jobs);
         assertEquals(1, reclaimed.size());
         assertEquals(first.get(0).outboxId(), reclaimed.get(0).outboxId());
+    }
+
+    private List<DispatchOutboxRecord> awaitReclaimedDispatch(JdbcJobRepository jobs) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(5);
+        while (Instant.now().isBefore(deadline)) {
+            List<DispatchOutboxRecord> reclaimed = jobs.claimDispatches(
+                    "worker-b", Instant.now(), 1, Duration.ofSeconds(5), Set.of(DispatchType.REMOTE)
+            );
+            if (!reclaimed.isEmpty()) return reclaimed;
+            Thread.sleep(100);
+        }
+        return List.of();
     }
 
     private void assertShardLeaseRecoversAfterConnectionRestore(
