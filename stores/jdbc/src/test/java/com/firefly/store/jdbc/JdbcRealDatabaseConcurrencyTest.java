@@ -188,7 +188,7 @@ class JdbcRealDatabaseConcurrencyTest {
     ) throws Exception {
         ready.countDown();
         start.await(10, TimeUnit.SECONDS);
-        return jobs.claimDispatches(worker, Instant.now(), 10, java.time.Duration.ofMinutes(1), Set.of(DispatchType.REMOTE));
+        return jobs.claimDispatches(worker, Instant.now(), 20, java.time.Duration.ofMinutes(1), Set.of(DispatchType.REMOTE));
     }
 
     private void assertInterruptionRecovery(
