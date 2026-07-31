@@ -77,32 +77,32 @@ class JdbcRealDatabaseConcurrencyTest {
 
     @Test
     void postgresClaimsEachOutboxRecordAtMostOnceAcrossWorkers() throws Exception {
-        assertNoDuplicateClaims(dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()), "postgresql");
+        assertNoDuplicateClaims(isolatedDataSource(postgres, "postgresql"), "postgresql");
     }
 
     @Test
     void mysqlClaimsEachOutboxRecordAtMostOnceAcrossWorkers() throws Exception {
-        assertNoDuplicateClaims(dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()), "mysql");
+        assertNoDuplicateClaims(isolatedDataSource(mysql, "mysql"), "mysql");
     }
 
     @Test
     void postgresInterruptionFailsFastAndRecoversAfterConnectionRestore() throws Exception {
         assertInterruptionRecovery(
-                postgresProxy, proxiedDataSource(postgres, postgresProxy), "postgresql"
+                postgresProxy, isolatedProxiedDataSource(postgres, postgresProxy, "postgresql"), "postgresql"
         );
     }
 
     @Test
     void mysqlInterruptionFailsFastAndRecoversAfterConnectionRestore() throws Exception {
         assertInterruptionRecovery(
-                mysqlProxy, proxiedDataSource(mysql, mysqlProxy), "mysql"
+                mysqlProxy, isolatedProxiedDataSource(mysql, mysqlProxy, "mysql"), "mysql"
         );
     }
 
     @Test
     void postgresRepositoryOperationFailsDuringOutageAndRecoversAfterConnectionRestore() throws Exception {
         assertRepositoryOperationRecovery(
-                postgresProxy, proxiedDataSource(postgres, postgresProxy),
+                postgresProxy, isolatedProxiedDataSource(postgres, postgresProxy, "postgresql"),
                 "postgresql"
         );
     }
@@ -110,35 +110,35 @@ class JdbcRealDatabaseConcurrencyTest {
     @Test
     void mysqlRepositoryOperationFailsDuringOutageAndRecoversAfterConnectionRestore() throws Exception {
         assertRepositoryOperationRecovery(
-                mysqlProxy, proxiedDataSource(mysql, mysqlProxy), "mysql"
+                mysqlProxy, isolatedProxiedDataSource(mysql, mysqlProxy, "mysql"), "mysql"
         );
     }
 
     @Test
     void postgresReclaimsOutboxAfterClaimLeaseExpires() throws Exception {
         assertOutboxReclaimAfterLeaseExpiry(
-                dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()), "postgresql"
+                isolatedDataSource(postgres, "postgresql"), "postgresql"
         );
     }
 
     @Test
     void mysqlReclaimsOutboxAfterClaimLeaseExpires() throws Exception {
         assertOutboxReclaimAfterLeaseExpiry(
-                dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()), "mysql"
+                isolatedDataSource(mysql, "mysql"), "mysql"
         );
     }
 
     @Test
     void postgresShardLeaseRecoversAfterConnectionRestore() throws Exception {
         assertShardLeaseRecoversAfterConnectionRestore(
-                postgresProxy, proxiedDataSource(postgres, postgresProxy), "postgresql"
+                postgresProxy, isolatedProxiedDataSource(postgres, postgresProxy, "postgresql"), "postgresql"
         );
     }
 
     @Test
     void mysqlShardLeaseRecoversAfterConnectionRestore() throws Exception {
         assertShardLeaseRecoversAfterConnectionRestore(
-                mysqlProxy, proxiedDataSource(mysql, mysqlProxy), "mysql"
+                mysqlProxy, isolatedProxiedDataSource(mysql, mysqlProxy, "mysql"), "mysql"
         );
     }
 
@@ -346,6 +346,17 @@ class JdbcRealDatabaseConcurrencyTest {
             org.testcontainers.containers.JdbcDatabaseContainer<?> container,
             String dialect
     ) throws SQLException {
+        return dataSource(
+                isolatedJdbcUrl(container, dialect),
+                container.getUsername(),
+                container.getPassword()
+        );
+    }
+
+    private String isolatedJdbcUrl(
+            org.testcontainers.containers.JdbcDatabaseContainer<?> container,
+            String dialect
+    ) throws SQLException {
         String database = "firefly_" + UUID.randomUUID().toString().replace("-", "");
         String adminUsername = dialect.equals("mysql") ? "root" : container.getUsername();
         try (Connection connection = DriverManager.getConnection(
@@ -357,17 +368,18 @@ class JdbcRealDatabaseConcurrencyTest {
                         + container.getUsername() + "'@'%'");
             }
         }
-        return dataSource(withDatabase(container.getJdbcUrl(), database), container.getUsername(), container.getPassword());
+        return withDatabase(container.getJdbcUrl(), database);
     }
 
-    private DataSource proxiedDataSource(
+    private DataSource isolatedProxiedDataSource(
             org.testcontainers.containers.JdbcDatabaseContainer<?> container,
-            ToxiproxyContainer.ContainerProxy proxy
-    ) {
+            ToxiproxyContainer.ContainerProxy proxy,
+            String dialect
+    ) throws SQLException {
         String directEndpoint = container.getHost() + ":"
                 + container.getMappedPort(container.getExposedPorts().getFirst());
         String proxyEndpoint = proxy.getContainerIpAddress() + ":" + proxy.getProxyPort();
-        String proxiedUrl = container.getJdbcUrl().replace(directEndpoint, proxyEndpoint);
+        String proxiedUrl = isolatedJdbcUrl(container, dialect).replace(directEndpoint, proxyEndpoint);
         String timeoutParameters = proxiedUrl.startsWith("jdbc:mysql:")
                 ? "connectTimeout=2000&socketTimeout=2000"
                 : "connectTimeout=2&socketTimeout=2";
