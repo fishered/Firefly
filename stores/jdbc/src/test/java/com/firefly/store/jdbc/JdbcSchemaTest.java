@@ -45,6 +45,25 @@ final class JdbcSchemaTest {
     }
 
     @Test
+    void ignoresFireflyTablesOutsideTheCurrentSchema() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.createStatement()) {
+            statement.execute("create schema other");
+            statement.execute("create table other.firefly_job (unrelated_id integer primary key)");
+        }
+
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+
+        try (Connection connection = dataSource.getConnection();
+             ResultSet resultSet = connection.getMetaData().getTables(
+                     connection.getCatalog(), connection.getSchema(), "FIREFLY_JOB", new String[]{"TABLE"}
+             )) {
+            assertTrue(resultSet.next());
+        }
+    }
+
+    @Test
     void initializesOnlyWhenSchemaIsEmpty() {
         DataSource dataSource = rawH2DataSource();
 
