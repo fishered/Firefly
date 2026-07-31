@@ -1,5 +1,7 @@
 package com.firefly.api.admin.http;
 
+import com.firefly.api.admin.http.routing.AdminRequestTarget;
+import com.firefly.api.admin.http.routing.AdminRoutePolicy;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.security.IntegrationKeyService;
 import com.sun.net.httpserver.HttpExchange;
@@ -7,7 +9,6 @@ import com.sun.net.httpserver.HttpExchange;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.Map;
-import java.util.Set;
 
 final class AdminAuthorizationService {
     private final AdminHttpOptions options;
@@ -24,9 +25,8 @@ final class AdminAuthorizationService {
         this.integrationKeys = integrationKeys;
     }
 
-    Authorization authorize(HttpExchange exchange) {
-        String path = exchange.getRequestURI().getPath();
-        if ("/api/health".equals(path) || "/api/auth/config".equals(path) || "/api/auth/login".equals(path)) {
+    Authorization authorize(HttpExchange exchange, AdminRoutePolicy policy, AdminRequestTarget target) {
+        if (policy.allowsAnonymous(target)) {
             return Authorization.ALLOWED;
         }
         String integrationKey = exchange.getRequestHeaders().getFirst("X-Firefly-Integration-Key");
@@ -34,7 +34,7 @@ final class AdminAuthorizationService {
             boolean valid = integrationKeys != null && integrationKeys.verify(integrationKey);
             exchange.setAttribute("firefly.admin.role", valid ? "INTEGRATION" : "UNKNOWN");
             exchange.setAttribute("firefly.admin.actor", "integration-key");
-            return new Authorization(valid, valid && integrationJobSyncAllowed(exchange));
+            return new Authorization(valid, valid && policy.allowsIntegrationKey(target));
         }
         String token = exchange.getRequestHeaders().getFirst("X-Firefly-Token");
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
@@ -42,7 +42,7 @@ final class AdminAuthorizationService {
             token = authorization.substring("Bearer ".length());
         }
         if (options.jwtService() != null && token != null && !token.isBlank()) {
-            return authorizeJwt(exchange, token, path);
+            return authorizeJwt(exchange, token, policy, target);
         }
         if (options.tokenRoles().isEmpty() && options.jwtService() == null) {
             exchange.setAttribute("firefly.admin.role", "UNRESTRICTED");
@@ -51,10 +51,15 @@ final class AdminAuthorizationService {
         AdminRole role = roleForToken(token);
         exchange.setAttribute("firefly.admin.role", role == null ? "UNKNOWN" : role.name());
         if (role == null) return Authorization.DENIED;
-        return new Authorization(true, role.allows(requiredRole(exchange)));
+        return new Authorization(true, role.allows(policy.requiredRole(target)));
     }
 
-    private Authorization authorizeJwt(HttpExchange exchange, String token, String path) {
+    private Authorization authorizeJwt(
+            HttpExchange exchange,
+            String token,
+            AdminRoutePolicy policy,
+            AdminRequestTarget target
+    ) {
         try {
             com.firefly.security.FireflyPrincipal principal = options.jwtService().verify(token);
             com.firefly.security.AdminUser user = context.adminUserRepository()
@@ -66,34 +71,25 @@ final class AdminAuthorizationService {
             exchange.setAttribute("firefly.principal", principal);
             exchange.setAttribute("firefly.admin.role", principal.roles().toString());
             exchange.setAttribute("firefly.admin.actor", principal.subject());
-            if ("/api/auth/password".equals(path)) {
-                return new Authorization(true, "POST".equalsIgnoreCase(exchange.getRequestMethod()));
+            if (policy.allowsPasswordChange(target)) {
+                return Authorization.ALLOWED;
             }
             if (user.passwordChangeRequired()) {
                 exchange.setAttribute("firefly.authorization.error", "password_change_required");
                 return new Authorization(true, false);
             }
-            return new Authorization(true, principal.allows(requiredJwtRole(exchange)));
+            return new Authorization(true, principal.allows(requiredJwtRole(policy.requiredRole(target))));
         } catch (IllegalArgumentException invalidJwt) {
             return Authorization.DENIED;
         }
     }
 
-    private com.firefly.security.FireflyRole requiredJwtRole(HttpExchange exchange) {
-        return switch (requiredRole(exchange)) {
+    private com.firefly.security.FireflyRole requiredJwtRole(AdminRole requiredRole) {
+        return switch (requiredRole) {
             case READER -> com.firefly.security.FireflyRole.READER;
             case OPERATOR -> com.firefly.security.FireflyRole.OPERATOR;
             case ADMIN -> com.firefly.security.FireflyRole.ADMIN;
         };
-    }
-
-    private boolean integrationJobSyncAllowed(HttpExchange exchange) {
-        String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
-        String path = exchange.getRequestURI().getPath();
-        return ((Set.of("GET", "HEAD").contains(method) && path.startsWith("/api/jobs/"))
-                || ("POST".equals(method) && "/api/jobs".equals(path))
-                || ("PUT".equals(method) && path.startsWith("/api/jobs/")
-                && !path.substring("/api/jobs/".length()).contains("/")));
     }
 
     private AdminRole roleForToken(String provided) {
@@ -106,22 +102,6 @@ final class AdminAuthorizationService {
                 .map(Map.Entry::getValue)
                 .max(Comparator.comparingInt(Enum::ordinal))
                 .orElse(null);
-    }
-
-    private AdminRole requiredRole(HttpExchange exchange) {
-        String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
-        String path = exchange.getRequestURI().getPath();
-        if (path.startsWith("/api/users") || path.startsWith("/api/integration-key")) return AdminRole.ADMIN;
-        if ("GET".equals(method) || "HEAD".equals(method)) return AdminRole.READER;
-        if ("PATCH".equals(method) || "PUT".equals(method)
-                || ("POST".equals(method) && path.endsWith("/trigger"))
-                || ("POST".equals(method) && path.startsWith("/api/executions/") && path.endsWith("/cancel"))
-                || ("POST".equals(method) && path.equals("/api/executions/batch-cancel"))
-                || ("POST".equals(method) && path.equals("/api/outbox/batch-requeue"))
-                || ("POST".equals(method) && path.startsWith("/api/outbox/") && path.endsWith("/requeue"))) {
-            return AdminRole.OPERATOR;
-        }
-        return AdminRole.ADMIN;
     }
 
     record Authorization(boolean authenticated, boolean allowed) {
