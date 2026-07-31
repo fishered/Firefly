@@ -395,6 +395,9 @@ firefly/
 
 ## 在线文档
 
+仓库开发文档从 [docs/README.md](docs/README.md) 进入，分支、提交和架构约束见
+[docs/development.md](docs/development.md)。
+
 | 文档 | 内容 |
 | --- | --- |
 | [Starter 快速手册](https://fishered.github.io/firefly-home/guide/quick-start) | 引入 Starter、配置 Executor，并通过注解声明任务 |
