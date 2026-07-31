@@ -80,7 +80,7 @@ new owner loads jobs and resumes scheduling
 jobId -> ShardHasher -> shardId
 ```
 
-分片总数由 `firefly.scheduler.shard-count` 指定，默认 `32`。它会在集群首次初始化时写入共享元数据，之后所有节点必须保持一致；启动时会在迁移前和迁移锁内校验，避免并发首启覆盖。当前不做在线自动重分片。
+分片总数由 `firefly.scheduler.shard-count` 指定，默认 `32`。它会在集群首次初始化时写入共享元数据，之后所有节点必须保持一致；启动时会在迁移前和迁移锁内校验，避免并发首启覆盖。系统不做自动重分片；1.0.2 提供受控在线扩容维护动作，允许纯 Gateway/Executor 数据面保持在线，但 Scheduler、Standby 和 API 必须先排空并下线。
 
 每个 shard 同一时刻只能被一个 scheduler node 持有：
 

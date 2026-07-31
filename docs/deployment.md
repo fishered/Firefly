@@ -163,6 +163,24 @@ Compose 健康检查。
 `FIREFLY_SCHEDULER_SHARD_COUNT` 是集群首次初始化后的共享契约，不能通过普通滚动更新修改。Gateway 内部转发、
 分片重建、排空下线和生产告警约束见 [ha-cluster.md](ha-cluster.md) 与 [database-schema.md](database-schema.md)。
 
+## 受控在线分片扩容
+
+在线扩容只保持纯 `GATEWAY`/`EXECUTOR` 数据面节点可用，不是全角色无感热切换。执行顺序如下：
+
+1. 备份数据库，并暂停 Admin 写入。
+2. 排空所有包含 `SCHEDULER`、`STANDBY` 或 `API` 角色的节点，等待它们在 `firefly_node` 中变为 `OFFLINE`。混合角色节点也必须整体下线。
+3. 等待所有 execution 进入终态、所有 Outbox 进入 `DONE` 或 `DEAD`。工具会再次检查并在条件不满足时拒绝执行。
+4. 使用目标分片数执行 `expand-online`。目标值必须大于等于当前值，等于当前值时作为幂等空操作返回。
+
+```powershell
+.\gradlew.bat :server:launcher:migrateSchema --args="--firefly.config.profile=pg --firefly.schema.action=expand-online --firefly.schema.reshard.confirm=true --firefly.scheduler.shard-count=64"
+```
+
+5. 将所有 Firefly 节点的 `FIREFLY_SCHEDULER_SHARD_COUNT` 更新为新值，再启动 API、Scheduler 和 Standby 节点。
+6. 验证节点恢复、全部新 shard lease 被领取、调度延迟和 Outbox 指标正常后恢复 Admin 写入。
+
+该操作在数据库迁移锁和单个事务内重算任务 shard、更新集群元数据并删除旧 lease。在线缩容会被拒绝；需要缩容时必须安排全停机窗口并使用 `firefly.schema.action=reshard`。操作失败会回滚数据库事务，已经下线的节点仍需使用数据库中实际的 shard count 启动。
+
 ## 数据与外部插件
 
 Compose 使用 `firefly-postgres` volume 保存全部调度数据。删除容器不会删除数据；执行

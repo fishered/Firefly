@@ -84,7 +84,14 @@ PostgreSQL 和 MySQL 初始化会先获取数据库级迁移锁，避免多个�
 
 Scheduler 分片数通过 `firefly.scheduler.shard-count` 配置，默认 `32`，合法范围 `1..4096`。首次由 `JdbcSchema` 初始化时会把请求值写入 `firefly_cluster_metadata.scheduler.shard-count`；后续 `initialize`、`validate` 和 `schema.mode=none` 都会校验该值。迁移锁获取后还会重新读取一次，避免两个不同配置的节点并发初始化空库时后启动者覆盖集群契约。
 
-直接执行全量 SQL 脚本时元数据默认写入 `32`。需要自定义分片数时，应通过 `SchemaTool` 或 Server 初始化模式执行，并在所有节点上配置相同值。当前不支持在线修改分片数；修改它需要停机、重算全部 `firefly_job.shard_id` 并清理旧 lease 的显式维护流程。
+直接执行全量 SQL 脚本时元数据默认写入 `32`。需要自定义分片数时，应通过 `SchemaTool` 或 Server 初始化模式执行，并在所有节点上配置相同值。修改已有集群的分片数必须使用显式维护流程；不能只修改节点配置后滚动重启。
+
+`JdbcReshardTool` 提供两种维护模式：
+
+- `reshard`：全停机重分片，要求所有 Firefly 节点为 `OFFLINE`。
+- `expand-online`：受控在线扩容，只允许增加分片数。带 `SCHEDULER`、`STANDBY` 或 `API` 角色的节点必须排空并变为 `OFFLINE`；仅承担 `GATEWAY`/`EXECUTOR` 角色的数据面节点可以保持 `ONLINE`。
+
+两种模式都会拒绝活动 execution 和未完成 Outbox，并在一个事务中重算全部 `firefly_job.shard_id`、更新 `scheduler.shard-count` 与 `jobs.revision`、删除旧 shard lease。`expand-online` 不是所有角色无感热切换，也不支持在线缩容；完整操作顺序见 [deployment.md](deployment.md#受控在线分片扩容)。
 
 ## 运行状态写入
 
