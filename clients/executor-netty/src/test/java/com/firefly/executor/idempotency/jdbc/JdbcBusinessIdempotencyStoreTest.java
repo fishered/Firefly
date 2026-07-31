@@ -8,6 +8,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,6 +18,36 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JdbcBusinessIdempotencyStoreTest {
+    @Test
+    void grantsOneOwnerWhenCallersRaceForTheSameKey() throws Exception {
+        JdbcBusinessIdempotencyStore store = store(Duration.ofMinutes(5));
+        var ready = new java.util.concurrent.CountDownLatch(8);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var tasks = IntStream.range(0, 8).<Callable<BusinessIdempotencyStore.AcquireResult>>mapToObj(index -> () -> {
+            ready.countDown();
+            start.await();
+            return store.tryAcquireFenced("order:race", Instant.now()).result();
+        }).toList();
+
+        try (var callers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var results = tasks.stream().map(callers::submit).toList();
+            ready.await();
+            start.countDown();
+            var outcomes = results.stream().map(future -> {
+                try {
+                    return future.get();
+                } catch (Exception failure) {
+                    throw new java.util.concurrent.CompletionException(failure);
+                }
+            }).toList();
+
+            assertEquals(1, outcomes.stream()
+                    .filter(result -> result == BusinessIdempotencyStore.AcquireResult.ACQUIRED).count());
+            assertEquals(7, outcomes.stream()
+                    .filter(result -> result == BusinessIdempotencyStore.AcquireResult.IN_PROGRESS).count());
+        }
+    }
+
     @Test
     void completedBusinessKeyCannotExecuteAgain() throws Exception {
         JdbcBusinessIdempotencyStore store = store(Duration.ofMinutes(5));
@@ -38,6 +71,8 @@ class JdbcBusinessIdempotencyStoreTest {
         assertTrue(store.releaseFenced("order:2", first.claimToken(), Instant.now(), "temporary"));
 
         var second = store.tryAcquireFenced("order:2", Instant.now());
+        assertEquals("1", first.claimToken());
+        assertEquals("2", second.claimToken());
         assertNotEquals(first.claimToken(), second.claimToken());
         assertFalse(store.markCompletedFenced("order:2", first.claimToken(), Instant.now()));
         assertTrue(store.markCompletedFenced("order:2", second.claimToken(), Instant.now()));
@@ -45,6 +80,7 @@ class JdbcBusinessIdempotencyStoreTest {
         var expiring = store.tryAcquireFenced("order:3", Instant.now());
         Thread.sleep(20);
         var recovered = store.tryAcquireFenced("order:3", Instant.now());
+        assertEquals("2", recovered.claimToken());
         assertNotEquals(expiring.claimToken(), recovered.claimToken());
         assertFalse(store.releaseFenced("order:3", expiring.claimToken(), Instant.now(), "late"));
     }
