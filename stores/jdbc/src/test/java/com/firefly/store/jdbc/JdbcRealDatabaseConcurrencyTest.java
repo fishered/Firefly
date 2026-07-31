@@ -367,8 +367,12 @@ class JdbcRealDatabaseConcurrencyTest {
         String directEndpoint = container.getHost() + ":"
                 + container.getMappedPort(container.getExposedPorts().getFirst());
         String proxyEndpoint = proxy.getContainerIpAddress() + ":" + proxy.getProxyPort();
+        String proxiedUrl = container.getJdbcUrl().replace(directEndpoint, proxyEndpoint);
+        String timeoutParameters = proxiedUrl.startsWith("jdbc:mysql:")
+                ? "connectTimeout=2000&socketTimeout=2000"
+                : "connectTimeout=2&socketTimeout=2";
         return dataSource(
-                container.getJdbcUrl().replace(directEndpoint, proxyEndpoint),
+                proxiedUrl + (proxiedUrl.contains("?") ? "&" : "?") + timeoutParameters,
                 container.getUsername(),
                 container.getPassword()
         );
