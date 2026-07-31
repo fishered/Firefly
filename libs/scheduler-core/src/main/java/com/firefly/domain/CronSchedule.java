@@ -20,6 +20,11 @@ public final class CronSchedule implements Schedule {
     }
 
     @Override
+    public ScheduleType type() {
+        return ScheduleType.CRON;
+    }
+
+    @Override
     public Instant nextAfter(Instant after, ZoneId zoneId) {
         return cronExpression.nextAfter(after, zoneId);
     }

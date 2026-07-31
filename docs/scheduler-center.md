@@ -76,22 +76,13 @@ Firefly 当前支持三类可直接执行的调度描述：
 - `FIXED_RATE`：固定周期，例如 `PT1M`。
 - `DAILY_TIME`：每天固定本地时间，例如 `01:00`，解析为任务时区下的每日 cron。
 
-同时保留两类需要更完整运行态支持的调度描述：
+`DAILY_TIME` 在解析后会转换为 `CronSchedule`，因此运行时和持久化层只有两种稳定类型：
+`ScheduleType.CRON` 与 `ScheduleType.FIXED_RATE`。
 
-- `MANUAL`：手动触发，不产生自动 next-fire time。
-- `LINEAR_BACKOFF`：例如首次等待 1 分钟，每次多等待 1 分钟。
-
-`LINEAR_BACKOFF` 不能只靠一个无状态 `Schedule.nextAfter(Instant, ZoneId)` 正确表达。它需要持久化执行次数或当前 delay，例如：
-
-```text
-job_runtime_state
-├── fire_count
-├── last_fire_time
-├── current_delay
-└── next_fire_time
-```
-
-所以当前实现先允许保存 `ScheduleSpec.linearBackoff(...)`，但不会把它解析成可执行 `Schedule`。等 `job_runtime_state` 增加状态字段后，再接入执行。
+`Schedule` 保持开放接口以兼容外部插件，但未知实现默认返回 `ScheduleType.UNSUPPORTED`。
+`JobDefinition` 会在进入内存或 JDBC 仓储之前拒绝不可执行类型，避免出现“内存模式可保存、
+JDBC 模式运行时失败”的行为差异。新增调度类型必须同时补齐运行时推进、持久化编解码和兼容性测试，
+不能只实现 `nextAfter(Instant, ZoneId)` 后直接投入生产。
 
 ## 3.1 same-fire-time batch dispatch
 
