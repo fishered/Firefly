@@ -3,7 +3,6 @@ plugins {
 }
 
 dependencies {
-    api project(':apis:admin-model')
     implementation project(':libs:scheduler-core')
     implementation project(':plugins:plugin-api')
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'

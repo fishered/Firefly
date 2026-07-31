@@ -13,8 +13,7 @@ libs/scheduler-core          调度核心，保持纯 Java
 server/bootstrap             配置加载、启动参数、进程初始化
 server/runtime               调度运行时装配、生命周期、Guice wiring
 server/launcher              main 入口
-apis/admin-model             Admin DTO / ViewModel
-apis/admin-http              Admin JSON HTTP API
+apis/admin-http              Admin JSON HTTP API、路由策略与 wire model
 ui/admin                     独立 Node Admin UI 服务
 plugins/plugin-api           插件 SPI
 plugins/metrics-prometheus   Prometheus 指标插件
@@ -109,7 +108,7 @@ config/
 
 ### Admin API 与 UI
 
-- Admin DTO 已放在 `apis/admin-model`。
+- Admin wire JSON 与路由访问策略由 `apis/admin-http` 统一维护，不保留未使用的占位 DTO 模块。
 - Admin JSON API 已放在 `apis/admin-http`，不再承载完整页面。
 - 当前 JSON 接口包括：
 

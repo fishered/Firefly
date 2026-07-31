@@ -9,8 +9,7 @@ libs/scheduler-core          纯 Java 调度领域与端口
 stores/jdbc                 JDBC 持久化、事务、迁移与 HA 协调
 transports/netty            Netty Gateway 与传输实现
 clients/executor-netty      业务侧 Executor Client
-apis/admin-model            Admin DTO / ViewModel
-apis/admin-http             JDK HttpServer 管理 API
+apis/admin-http             JDK HttpServer 管理 API、路由策略与 wire JSON
 plugins/plugin-api          插件 SPI 与兼容契约
 plugins/*                   按需加载的具体能力
 server/runtime              Guice 装配和运行时协调
