@@ -231,7 +231,7 @@ final class AdminClusterController {
                 .description(request.getOrDefault("description", ""))
                 .protocols(protocols)
                 .metadata(metadata)
-                .enabled(Boolean.parseBoolean(request.getOrDefault("enabled", "true")))
+                .enabled(requests.booleanValue(request, "enabled", true))
                 .build();
         context.schedulerCatalog()
                 .orElseThrow(() -> new IllegalStateException("scheduler catalog is required"))

@@ -6,6 +6,7 @@ import com.firefly.store.DispatchOutboxRecord;
 import com.firefly.store.DispatchType;
 import com.firefly.store.JobRepository;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.lifecycle.ManagedWorker;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -174,6 +175,6 @@ public final class DispatchOutboxWorker implements AutoCloseable {
 
     @Override
     public void close() {
-        timer.shutdownNow();
+        ManagedWorker.stop(timer, Duration.ofSeconds(5), () -> { }, log);
     }
 }

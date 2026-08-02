@@ -80,8 +80,8 @@ final class AdminExecutionController {
         }
         if ("/api/outbox/batch-requeue".equals(path)
                 && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = requests.object(exchange);
-            List<String> outboxIds = requests.ids(request, "outboxIds");
+            BatchRequeueRequest request = requests.typedObject(exchange, BatchRequeueRequest.class);
+            List<String> outboxIds = request.outboxIds();
             Instant now = context.clock().instant();
             int requeued = 0;
             StringBuilder items = new StringBuilder();
@@ -133,11 +133,10 @@ final class AdminExecutionController {
         Map<String, String> request = requests.optionalObject(exchange);
         String reason = request.getOrDefault("reason", "cancelled by operator");
         Instant now = context.clock().instant();
-        if (!executions.cancelExecution(executionId, now, reason)) {
+        if (!new com.firefly.execution.ExecutionLifecycleService(executions).cancel(executionId, now, reason)) {
             respond(exchange, 409, "{\"error\":\"execution_not_cancellable\"}");
             return;
         }
-        context.jobRepository().ifPresent(repository -> repository.cancelDispatch(executionId, now, reason));
         int notifiedTargets = context.executionCancellationDispatcher()
                 .map(dispatcher -> dispatcher.cancel(executionId, reason))
                 .orElse(0);
@@ -146,9 +145,9 @@ final class AdminExecutionController {
     }
 
     private void batchCancel(HttpExchange exchange) throws IOException {
-        Map<String, String> request = requests.object(exchange);
-        List<String> executionIds = requests.ids(request, "executionIds");
-        String reason = request.getOrDefault("reason", "cancelled by batch operator");
+        BatchCancelRequest request = requests.typedObject(exchange, BatchCancelRequest.class);
+        List<String> executionIds = request.executionIds();
+        String reason = request.reason();
         int cancelled = 0;
         int notified = 0;
         StringBuilder items = new StringBuilder();
@@ -174,8 +173,7 @@ final class AdminExecutionController {
         ExecutionRecord current = executions.findExecution(executionId).orElse(null);
         if (current == null || current.status().terminal()) return -1;
         Instant now = context.clock().instant();
-        if (!executions.cancelExecution(executionId, now, reason)) return -1;
-        context.jobRepository().ifPresent(repository -> repository.cancelDispatch(executionId, now, reason));
+        if (!new com.firefly.execution.ExecutionLifecycleService(executions).cancel(executionId, now, reason)) return -1;
         return context.executionCancellationDispatcher()
                 .map(dispatcher -> dispatcher.cancel(executionId, reason))
                 .orElse(0);

@@ -1,6 +1,7 @@
 package com.firefly.server;
 
 import com.firefly.execution.ExecutionRepository;
+import com.firefly.lifecycle.ManagedWorker;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -83,6 +84,6 @@ public final class ExecutionMaintenanceWorker implements AutoCloseable {
 
     @Override
     public void close() {
-        timer.shutdownNow();
+        ManagedWorker.stop(timer, java.time.Duration.ofSeconds(5), () -> { }, log);
     }
 }

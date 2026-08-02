@@ -8,6 +8,7 @@ import com.firefly.cluster.ShardManager;
 import com.firefly.cluster.ShardOwnership;
 import com.firefly.cluster.SchedulerCoordinationOptions;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.lifecycle.ManagedWorker;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -37,6 +38,7 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
     private final Duration leaseDuration;
     private final SchedulerMetrics metrics;
     private final Map<Integer, ShardLease> owned = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicBoolean accepting = new java.util.concurrent.atomic.AtomicBoolean(true);
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "firefly-node-coordinator");
         thread.setDaemon(false);
@@ -110,6 +112,7 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
     }
 
     void reconcile() {
+        if (!accepting.get()) return;
         Instant now = clock.instant();
         nodeRegistry.heartbeat(nodeId, now);
         com.firefly.cluster.NodeStatus status = nodeRegistry.find(nodeId)
@@ -179,11 +182,13 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
 
     @Override
     public void close() {
-        timer.shutdownNow();
-        owned.values().forEach(lease -> shardManager.release(
-                lease.shardId(), nodeId, lease.fencingToken()
-        ));
-        owned.clear();
-        nodeRegistry.markOffline(nodeId);
+        accepting.set(false);
+        ManagedWorker.stop(timer, Duration.ofSeconds(5), () -> {
+            owned.values().forEach(lease -> shardManager.release(
+                    lease.shardId(), nodeId, lease.fencingToken()
+            ));
+            owned.clear();
+            nodeRegistry.markOffline(nodeId);
+        }, log);
     }
 }

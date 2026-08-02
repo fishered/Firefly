@@ -37,7 +37,9 @@ import com.firefly.engine.ExecutionCommand;
 /**
  * JDBC-backed job repository for persisted job definitions and runtime cursors.
  */
-public final class JdbcJobRepository implements JobRepository {
+public final class JdbcJobRepository implements JobRepository, com.firefly.store.JobCatalog,
+        com.firefly.store.SchedulingStore, com.firefly.store.DispatchOutboxStore,
+        com.firefly.store.ExecutionRetryStore {
     private static final String SCHEDULE_CRON = "CRON";
     private static final String SCHEDULE_FIXED_RATE = "FIXED_RATE";
 
@@ -755,7 +757,7 @@ public final class JdbcJobRepository implements JobRepository {
 
     private static String encodeJobSnapshot(JobDefinition definition) {
         ScheduleStorage schedule = encodeSchedule(definition.schedule());
-        return JdbcEncoding.encodeMap(java.util.Map.ofEntries(
+        return DispatchSnapshotCodec.encode(java.util.Map.ofEntries(
                 java.util.Map.entry("id", definition.id()),
                 java.util.Map.entry("groupId", definition.groupId()),
                 java.util.Map.entry("name", definition.name()),
@@ -805,7 +807,7 @@ public final class JdbcJobRepository implements JobRepository {
     }
 
     private static JobDefinition decodeJobSnapshot(String payload) {
-        java.util.Map<String, String> snapshot = JdbcEncoding.decodeMap(payload);
+        java.util.Map<String, String> snapshot = DispatchSnapshotCodec.decode(payload);
         if (snapshot.isEmpty()) {
             throw new JdbcException("dispatch outbox is missing its immutable job snapshot");
         }
@@ -829,7 +831,7 @@ public final class JdbcJobRepository implements JobRepository {
                 .routingKey(snapshot.get("routingKey"))
                 .retryScope(com.firefly.domain.ExecutorRetryScope.valueOf(
                         snapshot.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")))
-                .enabled(Boolean.parseBoolean(snapshot.get("enabled")));
+                .enabled(strictBoolean(snapshot, "enabled"));
         String destinationType = snapshot.get("destinationType");
         if (destinationType != null) {
             builder.destination(new com.firefly.domain.JobDestination(
@@ -844,11 +846,18 @@ public final class JdbcJobRepository implements JobRepository {
                     Duration.parse(snapshot.get("retryInitialDelay")),
                     Double.parseDouble(snapshot.get("retryMultiplier")),
                     Duration.parse(snapshot.get("retryMaxDelay")),
-                    Boolean.parseBoolean(snapshot.get("retryOnFailure")),
-                    Boolean.parseBoolean(snapshot.get("retryOnTimeout"))
+                    strictBoolean(snapshot, "retryOnFailure"),
+                    strictBoolean(snapshot, "retryOnTimeout")
             ));
         }
         return builder.build();
+    }
+
+    private static boolean strictBoolean(java.util.Map<String, String> snapshot, String field) {
+        String value = snapshot.get(field);
+        if ("true".equalsIgnoreCase(value)) return true;
+        if ("false".equalsIgnoreCase(value)) return false;
+        throw new JdbcException("dispatch snapshot field " + field + " must be true or false");
     }
 
     @Override

@@ -110,8 +110,8 @@ final class AdminJobController {
             return;
         }
         if ("PATCH".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = requests.object(exchange);
-            boolean enabled = Boolean.parseBoolean(required(request, "enabled"));
+            SetJobEnabledRequest request = requests.typedObject(exchange, SetJobEnabledRequest.class);
+            boolean enabled = request.enabled();
             var before = repository.find(jobId).orElse(null);
             if (!repository.setEnabled(jobId, enabled)) {
                 respond(exchange, 404, "{\"error\":\"job_not_found\"}");
@@ -179,10 +179,8 @@ final class AdminJobController {
                                 "retryMultiplier", Double.toString(previous.retryPolicy().multiplier()))),
                         Duration.parse(request.getOrDefault(
                                 "retryMaxDelay", previous.retryPolicy().maxDelay().toString())),
-                        Boolean.parseBoolean(request.getOrDefault(
-                                "retryOnFailure", Boolean.toString(previous.retryPolicy().retryOnFailure()))),
-                        Boolean.parseBoolean(request.getOrDefault(
-                                "retryOnTimeout", Boolean.toString(previous.retryPolicy().retryOnTimeout())))
+                        requests.booleanValue(request, "retryOnFailure", previous.retryPolicy().retryOnFailure()),
+                        requests.booleanValue(request, "retryOnTimeout", previous.retryPolicy().retryOnTimeout())
                 ))
                 .dispatchMode(enumValue(ExecutorDispatchMode.class, request.getOrDefault(
                         "dispatchMode", previous.dispatchMode().name())))
@@ -195,8 +193,7 @@ final class AdminJobController {
                 .routingKey(request.getOrDefault("routingKey", previous.routingKey()))
                 .retryScope(enumValue(ExecutorRetryScope.class, request.getOrDefault(
                         "retryScope", previous.retryScope().name())))
-                .enabled(Boolean.parseBoolean(request.getOrDefault(
-                        "enabled", Boolean.toString(previous.enabled()))))
+                .enabled(requests.booleanValue(request, "enabled", previous.enabled()))
                 .build();
         Instant now = context.clock().instant();
         Instant nextFireTime = updated.enabled()
@@ -248,8 +245,8 @@ final class AdminJobController {
                         Duration.parse(request.getOrDefault("retryInitialDelay", "PT1S")),
                         Double.parseDouble(request.getOrDefault("retryMultiplier", "2.0")),
                         Duration.parse(request.getOrDefault("retryMaxDelay", "PT30S")),
-                        Boolean.parseBoolean(request.getOrDefault("retryOnFailure", "true")),
-                        Boolean.parseBoolean(request.getOrDefault("retryOnTimeout", "true"))
+                        requests.booleanValue(request, "retryOnFailure", true),
+                        requests.booleanValue(request, "retryOnTimeout", true)
                 ))
                 .parameters(parameters)
                 .dispatchMode(enumValue(ExecutorDispatchMode.class,
@@ -262,7 +259,7 @@ final class AdminJobController {
                 .routingKey(request.getOrDefault("routingKey", ""))
                 .retryScope(enumValue(ExecutorRetryScope.class,
                         request.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")))
-                .enabled(Boolean.parseBoolean(request.getOrDefault("enabled", "true")))
+                .enabled(requests.booleanValue(request, "enabled", true))
                 .build();
         repository.save(job, job.schedule().nextAfter(context.clock().instant(), job.zoneId()));
         recordJobHistory(exchange, jobId, "CREATE", null, repository.find(jobId).orElse(null));

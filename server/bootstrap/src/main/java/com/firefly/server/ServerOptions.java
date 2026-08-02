@@ -152,6 +152,7 @@ public record ServerOptions(
                 configPath(flags, env, useDefaultConfig),
                 configProfile(flags, env)
         );
+        validateCoreOptionNames(flags, config);
         ServerNodeMode nodeMode = nodeMode(flags, env, config);
         String nodeName = nodeName(flags, env, config, nodeMode);
         Set<ServerPlugin> plugins = pluginList(flags, env, config);
@@ -251,6 +252,26 @@ public record ServerOptions(
                 runtimeOptions(flags, env, config),
                 new FireflyPluginConfiguration(effectiveProperties(config, flags), env)
         );
+    }
+
+    private static void validateCoreOptionNames(Map<String, String> flags, Map<String, String> config) {
+        OptionSchema schema = new OptionSchema()
+                .register(OptionSpec.strictBoolean("firefly.security.jwt.enabled", "FIREFLY_SECURITY_JWT_ENABLED", false))
+                .register(new OptionSpec<>("firefly.security.jwt.secret", "FIREFLY_SECURITY_JWT_SECRET",
+                        value -> value, "", value -> true))
+                .register(new OptionSpec<>("firefly.security.jwt.issuer", "FIREFLY_SECURITY_JWT_ISSUER",
+                        value -> value, "firefly", value -> true))
+                .register(new OptionSpec<>("firefly.security.jwt.access-token-ttl", "FIREFLY_SECURITY_JWT_ACCESS_TOKEN_TTL",
+                        java.time.Duration::parse, java.time.Duration.ofHours(1), value -> !value.isNegative() && !value.isZero()));
+        java.util.stream.Stream.concat(flags.keySet().stream(), config.keySet().stream())
+                .filter(name -> name.startsWith("firefly.security.jwt."))
+                .filter(name -> !name.startsWith("firefly.security.jwt.client."))
+                .filter(name -> !name.equals("firefly.security.jwt.clients"))
+                .filter(name -> !schema.contains(name))
+                .findFirst()
+                .ifPresent(name -> {
+                    throw new IllegalArgumentException("unknown core option: " + name);
+                });
     }
 
     private static Map<String, String> effectiveProperties(
@@ -537,7 +558,8 @@ public record ServerOptions(
             boolean defaultValue
     ) {
         String value = stringOption(flags, env, config, flagName, envName, null);
-        return value == null ? defaultValue : Boolean.parseBoolean(value);
+        if (value == null) return defaultValue;
+        return OptionSpec.strictBoolean(flagName, envName, defaultValue).parse(value);
     }
 
     private static int intOption(

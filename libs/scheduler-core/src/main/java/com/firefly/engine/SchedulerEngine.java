@@ -8,6 +8,7 @@ import com.firefly.domain.MisfirePolicy;
 import com.firefly.store.JobRepository;
 import com.firefly.store.ScheduledJobRecord;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.lifecycle.ManagedWorker;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -123,7 +124,7 @@ public final class SchedulerEngine {
         if (!started.compareAndSet(true, false)) {
             return;
         }
-        timer.shutdownNow();
+        ManagedWorker.stop(timer, Duration.ofSeconds(5), () -> { }, log);
         log.info("firefly stopped");
     }
 

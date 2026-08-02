@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.logging.Logger;
 
 final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<String> {
+    private final NettyExecutorFrameMapper frameMapper = new NettyExecutorFrameMapper();
     private static final Logger log = Logger.getLogger(NettyExecutorGatewayHandler.class.getName());
 
     private final ExecutorRegistry executorRegistry;
@@ -156,6 +157,11 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
     @Override
     protected void channelRead0(ChannelHandlerContext context, String frame) {
         NettyExecutorMessage message = codec.decode(frame.trim());
+        if (message.type() == NettyExecutorMessageType.REGISTER_EXECUTOR
+                || message.type() == NettyExecutorMessageType.ACK_JOB
+                || message.type() == NettyExecutorMessageType.REPORT_RESULT) {
+            frameMapper.decode(message);
+        }
         switch (message.type()) {
             case REGISTER_EXECUTOR -> register(context, message.payload());
             case HEARTBEAT -> heartbeat(message.payload());
