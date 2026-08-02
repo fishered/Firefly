@@ -110,8 +110,8 @@ final class AdminJobController {
             return;
         }
         if ("PATCH".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = requests.object(exchange);
-            boolean enabled = requests.requiredBoolean(request, "enabled");
+            SetJobEnabledRequest request = requests.typedObject(exchange, SetJobEnabledRequest.class);
+            boolean enabled = request.enabled();
             var before = repository.find(jobId).orElse(null);
             if (!repository.setEnabled(jobId, enabled)) {
                 respond(exchange, 404, "{\"error\":\"job_not_found\"}");

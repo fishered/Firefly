@@ -1,6 +1,7 @@
 package com.firefly.server;
 
 import com.firefly.cluster.NodeRegistry;
+import com.firefly.lifecycle.ManagedWorker;
 import com.firefly.cluster.NodeStatus;
 import com.firefly.cluster.ShardManager;
 import com.firefly.execution.ExecutionRepository;
@@ -95,6 +96,6 @@ final class NodeDrainMonitor implements NodeDrainStatusProvider, AutoCloseable {
 
     @Override
     public void close() {
-        timer.shutdownNow();
+        ManagedWorker.stop(timer, java.time.Duration.ofSeconds(5), () -> { }, log);
     }
 }

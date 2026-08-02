@@ -8,6 +8,7 @@ import com.firefly.cluster.ShardManager;
 import com.firefly.cluster.ShardOwnership;
 import com.firefly.cluster.SchedulerCoordinationOptions;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.lifecycle.ManagedWorker;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -182,19 +183,12 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
     @Override
     public void close() {
         accepting.set(false);
-        timer.shutdownNow();
-        try {
-            if (!timer.awaitTermination(5, TimeUnit.SECONDS)) {
-                log.warning("node coordinator did not stop within PT5S");
-            }
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            log.warning("interrupted while waiting for node coordinator to stop");
-        }
-        owned.values().forEach(lease -> shardManager.release(
-                lease.shardId(), nodeId, lease.fencingToken()
-        ));
-        owned.clear();
-        nodeRegistry.markOffline(nodeId);
+        ManagedWorker.stop(timer, Duration.ofSeconds(5), () -> {
+            owned.values().forEach(lease -> shardManager.release(
+                    lease.shardId(), nodeId, lease.fencingToken()
+            ));
+            owned.clear();
+            nodeRegistry.markOffline(nodeId);
+        }, log);
     }
 }

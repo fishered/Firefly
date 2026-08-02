@@ -5,6 +5,10 @@ import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.type.LogicalType;
+import com.fasterxml.jackson.databind.cfg.CoercionAction;
+import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
 import com.sun.net.httpserver.HttpExchange;
 
 import java.io.IOException;
@@ -25,6 +29,9 @@ final class AdminRequestReader {
                 .maxStringLength(limits.maxJsonStringLength())
                 .build();
         this.mapper = new ObjectMapper(JsonFactory.builder().streamReadConstraints(constraints).build());
+        this.mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
+        this.mapper.coercionConfigFor(LogicalType.Boolean)
+                .setCoercion(CoercionInputShape.String, CoercionAction.Fail);
     }
 
     void validate(HttpExchange exchange) {
@@ -105,6 +112,27 @@ final class AdminRequestReader {
                     field + " exceeds batch limit " + limits.maxBatchSize());
         }
         return ids;
+    }
+
+    <T> T typedObject(HttpExchange exchange, Class<T> type) throws IOException {
+        String value = body(exchange);
+        if (value.isBlank()) throw new IllegalArgumentException("request body must not be empty");
+        try {
+            T parsed = mapper.readValue(value, type);
+            int batchSize = parsed instanceof BatchCancelRequest request
+                    ? request.executionIds().size()
+                    : parsed instanceof BatchRequeueRequest request
+                    ? request.outboxIds().size() : 0;
+            if (batchSize > limits.maxBatchSize()) {
+                throw new AdminHttpException(400, "batch_limit_exceeded",
+                        "request exceeds batch limit " + limits.maxBatchSize());
+            }
+            return parsed;
+        } catch (AdminHttpException failure) {
+            throw failure;
+        } catch (IOException | RuntimeException failure) {
+            throw new IllegalArgumentException("invalid request for " + type.getSimpleName(), failure);
+        }
     }
 
     boolean booleanValue(Map<String, String> request, String field, boolean defaultValue) {

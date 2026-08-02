@@ -80,8 +80,8 @@ final class AdminExecutionController {
         }
         if ("/api/outbox/batch-requeue".equals(path)
                 && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            Map<String, String> request = requests.object(exchange);
-            List<String> outboxIds = requests.ids(request, "outboxIds");
+            BatchRequeueRequest request = requests.typedObject(exchange, BatchRequeueRequest.class);
+            List<String> outboxIds = request.outboxIds();
             Instant now = context.clock().instant();
             int requeued = 0;
             StringBuilder items = new StringBuilder();
@@ -145,9 +145,9 @@ final class AdminExecutionController {
     }
 
     private void batchCancel(HttpExchange exchange) throws IOException {
-        Map<String, String> request = requests.object(exchange);
-        List<String> executionIds = requests.ids(request, "executionIds");
-        String reason = request.getOrDefault("reason", "cancelled by batch operator");
+        BatchCancelRequest request = requests.typedObject(exchange, BatchCancelRequest.class);
+        List<String> executionIds = request.executionIds();
+        String reason = request.reason();
         int cancelled = 0;
         int notified = 0;
         StringBuilder items = new StringBuilder();

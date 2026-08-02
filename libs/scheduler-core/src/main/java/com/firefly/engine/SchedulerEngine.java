@@ -8,6 +8,7 @@ import com.firefly.domain.MisfirePolicy;
 import com.firefly.store.JobRepository;
 import com.firefly.store.ScheduledJobRecord;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.lifecycle.ManagedWorker;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -123,20 +124,8 @@ public final class SchedulerEngine {
         if (!started.compareAndSet(true, false)) {
             return;
         }
-        timer.shutdownNow();
-        awaitTermination(timer, Duration.ofSeconds(5));
+        ManagedWorker.stop(timer, Duration.ofSeconds(5), () -> { }, log);
         log.info("firefly stopped");
-    }
-
-    private static void awaitTermination(java.util.concurrent.ExecutorService executor, Duration timeout) {
-        try {
-            if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                log.warning("scheduler worker did not stop within " + timeout);
-            }
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            log.warning("interrupted while waiting for scheduler worker to stop");
-        }
     }
 
     private void safeTick() {
