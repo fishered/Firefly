@@ -255,15 +255,17 @@ public record ServerOptions(
     }
 
     private static void validateCoreOptionNames(Map<String, String> flags) {
-        Set<String> jwtOptions = Set.of(
-                "firefly.security.jwt.enabled",
-                "firefly.security.jwt.secret",
-                "firefly.security.jwt.issuer",
-                "firefly.security.jwt.access-token-ttl"
-        );
+        OptionSchema schema = new OptionSchema()
+                .register(OptionSpec.strictBoolean("firefly.security.jwt.enabled", "FIREFLY_SECURITY_JWT_ENABLED", false))
+                .register(new OptionSpec<>("firefly.security.jwt.secret", "FIREFLY_SECURITY_JWT_SECRET",
+                        value -> value, "", value -> true))
+                .register(new OptionSpec<>("firefly.security.jwt.issuer", "FIREFLY_SECURITY_JWT_ISSUER",
+                        value -> value, "firefly", value -> true))
+                .register(new OptionSpec<>("firefly.security.jwt.access-token-ttl", "FIREFLY_SECURITY_JWT_ACCESS_TOKEN_TTL",
+                        java.time.Duration::parse, java.time.Duration.ofHours(1), value -> !value.isNegative() && !value.isZero()));
         flags.keySet().stream()
                 .filter(name -> name.startsWith("firefly.security.jwt."))
-                .filter(name -> !jwtOptions.contains(name))
+                .filter(name -> !schema.contains(name))
                 .findFirst()
                 .ifPresent(name -> {
                     throw new IllegalArgumentException("unknown core option: " + name);
