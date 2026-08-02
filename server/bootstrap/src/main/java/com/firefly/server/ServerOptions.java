@@ -152,7 +152,7 @@ public record ServerOptions(
                 configPath(flags, env, useDefaultConfig),
                 configProfile(flags, env)
         );
-        validateCoreOptionNames(flags);
+        validateCoreOptionNames(flags, config);
         ServerNodeMode nodeMode = nodeMode(flags, env, config);
         String nodeName = nodeName(flags, env, config, nodeMode);
         Set<ServerPlugin> plugins = pluginList(flags, env, config);
@@ -254,7 +254,7 @@ public record ServerOptions(
         );
     }
 
-    private static void validateCoreOptionNames(Map<String, String> flags) {
+    private static void validateCoreOptionNames(Map<String, String> flags, Map<String, String> config) {
         OptionSchema schema = new OptionSchema()
                 .register(OptionSpec.strictBoolean("firefly.security.jwt.enabled", "FIREFLY_SECURITY_JWT_ENABLED", false))
                 .register(new OptionSpec<>("firefly.security.jwt.secret", "FIREFLY_SECURITY_JWT_SECRET",
@@ -263,8 +263,10 @@ public record ServerOptions(
                         value -> value, "firefly", value -> true))
                 .register(new OptionSpec<>("firefly.security.jwt.access-token-ttl", "FIREFLY_SECURITY_JWT_ACCESS_TOKEN_TTL",
                         java.time.Duration::parse, java.time.Duration.ofHours(1), value -> !value.isNegative() && !value.isZero()));
-        flags.keySet().stream()
+        java.util.stream.Stream.concat(flags.keySet().stream(), config.keySet().stream())
                 .filter(name -> name.startsWith("firefly.security.jwt."))
+                .filter(name -> !name.startsWith("firefly.security.jwt.client."))
+                .filter(name -> !name.equals("firefly.security.jwt.clients"))
                 .filter(name -> !schema.contains(name))
                 .findFirst()
                 .ifPresent(name -> {
