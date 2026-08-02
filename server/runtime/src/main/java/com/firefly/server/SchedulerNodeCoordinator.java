@@ -37,6 +37,7 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
     private final Duration leaseDuration;
     private final SchedulerMetrics metrics;
     private final Map<Integer, ShardLease> owned = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicBoolean accepting = new java.util.concurrent.atomic.AtomicBoolean(true);
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "firefly-node-coordinator");
         thread.setDaemon(false);
@@ -110,6 +111,7 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
     }
 
     void reconcile() {
+        if (!accepting.get()) return;
         Instant now = clock.instant();
         nodeRegistry.heartbeat(nodeId, now);
         com.firefly.cluster.NodeStatus status = nodeRegistry.find(nodeId)
@@ -179,7 +181,16 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
 
     @Override
     public void close() {
+        accepting.set(false);
         timer.shutdownNow();
+        try {
+            if (!timer.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warning("node coordinator did not stop within PT5S");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.warning("interrupted while waiting for node coordinator to stop");
+        }
         owned.values().forEach(lease -> shardManager.release(
                 lease.shardId(), nodeId, lease.fencingToken()
         ));

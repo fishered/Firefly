@@ -67,7 +67,7 @@ public interface JobRepository {
             int limit,
             java.time.Duration claimDuration
     ) {
-        return List.of();
+        throw unsupported("claimDispatches");
     }
 
     default List<DispatchOutboxRecord> claimDispatches(
@@ -81,7 +81,7 @@ public interface JobRepository {
     }
 
     default boolean markDispatchSent(String outboxId, Instant ackDeadline) {
-        return false;
+        throw unsupported("markDispatchSent");
     }
 
     default boolean markDispatchSentFor(String outboxId, java.time.Duration ackTimeout) {
@@ -98,11 +98,11 @@ public interface JobRepository {
     }
 
     default boolean acknowledgeDispatch(String executionId, Instant now) {
-        return false;
+        throw unsupported("acknowledgeDispatch");
     }
 
     default boolean retryDispatch(String outboxId, Instant availableAt, String error, int maxAttempts) {
-        return false;
+        throw unsupported("retryDispatch");
     }
 
     default boolean retryDispatchAfter(
@@ -136,15 +136,15 @@ public interface JobRepository {
     }
 
     default boolean completeDispatch(String outboxId, Instant now) {
-        return false;
+        throw unsupported("completeDispatch");
     }
 
     default boolean enqueueManual(ExecutionCommand command) {
-        return false;
+        throw unsupported("enqueueManual");
     }
 
     default boolean scheduleExecutionRetry(String sourceExecutionId, Instant requestedAt, boolean timeout) {
-        return false;
+        throw unsupported("scheduleExecutionRetry");
     }
 
     List<ScheduledJobRecord> list();
@@ -166,15 +166,15 @@ public interface JobRepository {
     boolean delete(String jobId);
 
     default java.util.Map<DispatchOutboxStatus, Long> outboxCounts() {
-        return java.util.Map.of();
+        throw unsupported("outboxCounts");
     }
 
     default List<DispatchOutboxRecord> listDeadDispatches(int limit) {
-        return List.of();
+        throw unsupported("listDeadDispatches");
     }
 
     default boolean requeueDeadDispatch(String outboxId, Instant now) {
-        return false;
+        throw unsupported("requeueDeadDispatch");
     }
 
     default int requeueDeadDispatches(List<String> outboxIds, Instant now) {
@@ -186,7 +186,7 @@ public interface JobRepository {
     }
 
     default boolean cancelDispatch(String executionId, Instant now, String reason) {
-        return false;
+        throw unsupported("cancelDispatch");
     }
 
     default java.util.Optional<Instant> oldestActiveDispatchTime() {
@@ -194,7 +194,7 @@ public interface JobRepository {
     }
 
     default long countActiveDispatchesOwnedBy(String nodeId) {
-        return 0L;
+        throw unsupported("countActiveDispatchesOwnedBy");
     }
 
     default java.util.Map<Integer, Long> dueCountsByShard(Instant now, int shardCount) {
@@ -205,6 +205,10 @@ public interface JobRepository {
                         record -> com.firefly.cluster.ShardHasher.shardFor(record.definition().id(), shardCount),
                         java.util.stream.Collectors.counting()
                 ));
+    }
+
+    private static UnsupportedOperationException unsupported(String operation) {
+        return new UnsupportedOperationException("JobRepository capability is not implemented: " + operation);
     }
 }
 

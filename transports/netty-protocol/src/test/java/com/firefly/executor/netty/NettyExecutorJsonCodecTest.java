@@ -50,6 +50,14 @@ class NettyExecutorJsonCodecTest {
     }
 
     @Test
+    void mapsCommandBodiesToTypedFrames() {
+        NettyExecutorMessage message = new NettyExecutorMessage(
+                "ack-1", NettyExecutorMessageType.ACK_JOB,
+                Map.of("executionId", "exec-1", "instanceId", "instance-a", "sessionId", "session-a"));
+        assertEquals("exec-1", ((AckJobFrame) new NettyExecutorFrameMapper().decode(message)).executionId());
+    }
+
+    @Test
     void rejectsUnknownMessageTypes() {
         assertThrows(IllegalArgumentException.class, () -> new NettyExecutorJsonCodec().decode(
                 "{\"messageId\":\"message-1\",\"type\":\"FUTURE_TYPE\",\"payload\":{}}"

@@ -152,6 +152,7 @@ public record ServerOptions(
                 configPath(flags, env, useDefaultConfig),
                 configProfile(flags, env)
         );
+        validateCoreOptionNames(flags);
         ServerNodeMode nodeMode = nodeMode(flags, env, config);
         String nodeName = nodeName(flags, env, config, nodeMode);
         Set<ServerPlugin> plugins = pluginList(flags, env, config);
@@ -251,6 +252,22 @@ public record ServerOptions(
                 runtimeOptions(flags, env, config),
                 new FireflyPluginConfiguration(effectiveProperties(config, flags), env)
         );
+    }
+
+    private static void validateCoreOptionNames(Map<String, String> flags) {
+        Set<String> jwtOptions = Set.of(
+                "firefly.security.jwt.enabled",
+                "firefly.security.jwt.secret",
+                "firefly.security.jwt.issuer",
+                "firefly.security.jwt.access-token-ttl"
+        );
+        flags.keySet().stream()
+                .filter(name -> name.startsWith("firefly.security.jwt."))
+                .filter(name -> !jwtOptions.contains(name))
+                .findFirst()
+                .ifPresent(name -> {
+                    throw new IllegalArgumentException("unknown core option: " + name);
+                });
     }
 
     private static Map<String, String> effectiveProperties(
@@ -537,7 +554,8 @@ public record ServerOptions(
             boolean defaultValue
     ) {
         String value = stringOption(flags, env, config, flagName, envName, null);
-        return value == null ? defaultValue : Boolean.parseBoolean(value);
+        if (value == null) return defaultValue;
+        return OptionSpec.strictBoolean(flagName, envName, defaultValue).parse(value);
     }
 
     private static int intOption(

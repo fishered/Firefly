@@ -124,7 +124,19 @@ public final class SchedulerEngine {
             return;
         }
         timer.shutdownNow();
+        awaitTermination(timer, Duration.ofSeconds(5));
         log.info("firefly stopped");
+    }
+
+    private static void awaitTermination(java.util.concurrent.ExecutorService executor, Duration timeout) {
+        try {
+            if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                log.warning("scheduler worker did not stop within " + timeout);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.warning("interrupted while waiting for scheduler worker to stop");
+        }
     }
 
     private void safeTick() {

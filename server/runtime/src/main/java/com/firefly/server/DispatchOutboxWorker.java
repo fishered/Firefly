@@ -175,5 +175,13 @@ public final class DispatchOutboxWorker implements AutoCloseable {
     @Override
     public void close() {
         timer.shutdownNow();
+        try {
+            if (!timer.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warning("dispatch outbox worker did not stop within PT5S");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.warning("interrupted while waiting for dispatch outbox worker to stop");
+        }
     }
 }

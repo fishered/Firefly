@@ -133,11 +133,10 @@ final class AdminExecutionController {
         Map<String, String> request = requests.optionalObject(exchange);
         String reason = request.getOrDefault("reason", "cancelled by operator");
         Instant now = context.clock().instant();
-        if (!executions.cancelExecution(executionId, now, reason)) {
+        if (!new com.firefly.execution.ExecutionLifecycleService(executions).cancel(executionId, now, reason)) {
             respond(exchange, 409, "{\"error\":\"execution_not_cancellable\"}");
             return;
         }
-        context.jobRepository().ifPresent(repository -> repository.cancelDispatch(executionId, now, reason));
         int notifiedTargets = context.executionCancellationDispatcher()
                 .map(dispatcher -> dispatcher.cancel(executionId, reason))
                 .orElse(0);
@@ -174,8 +173,7 @@ final class AdminExecutionController {
         ExecutionRecord current = executions.findExecution(executionId).orElse(null);
         if (current == null || current.status().terminal()) return -1;
         Instant now = context.clock().instant();
-        if (!executions.cancelExecution(executionId, now, reason)) return -1;
-        context.jobRepository().ifPresent(repository -> repository.cancelDispatch(executionId, now, reason));
+        if (!new com.firefly.execution.ExecutionLifecycleService(executions).cancel(executionId, now, reason)) return -1;
         return context.executionCancellationDispatcher()
                 .map(dispatcher -> dispatcher.cancel(executionId, reason))
                 .orElse(0);

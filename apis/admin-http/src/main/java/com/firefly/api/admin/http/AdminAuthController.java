@@ -197,7 +197,7 @@ final class AdminAuthController {
             Instant now = context.clock().instant();
             com.firefly.security.AdminUser user = new com.firefly.security.AdminUser(
                     username, passwordHasher.hash(password), adminRoles(required(request, "roles")),
-                    Boolean.parseBoolean(request.getOrDefault("enabled", "true")), 0, now, now
+                    requests.booleanValue(request, "enabled", true), 0, now, now
             );
             if (!repository.create(user)) {
                 respond(exchange, 409, "{\"error\":\"user_already_exists\"}");
@@ -218,7 +218,7 @@ final class AdminAuthController {
     ) throws IOException {
         Map<String, String> request = requests.object(exchange);
         long expectedVersion = Long.parseLong(required(request, "version"));
-        boolean enabled = Boolean.parseBoolean(request.getOrDefault("enabled", String.valueOf(current.enabled())));
+        boolean enabled = requests.booleanValue(request, "enabled", current.enabled());
         Set<com.firefly.security.FireflyRole> roles = request.containsKey("roles")
                 ? adminRoles(request.get("roles")) : current.roles();
         if (audit.actor(exchange).equals(username) && !enabled) {

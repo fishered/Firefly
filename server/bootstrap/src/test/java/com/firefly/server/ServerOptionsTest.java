@@ -491,6 +491,19 @@ final class ServerOptionsTest {
     }
 
     @Test
+    void rejectsMalformedBooleanInsteadOfTreatingItAsFalse() {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () ->
+                ServerOptions.parse(new String[]{"--firefly.security.jwt.enabled=treu"}, Map.of()));
+        assertTrue(failure.getMessage().contains("must be true or false"));
+    }
+
+    @Test
+    void rejectsUnknownCoreJwtOption() {
+        assertThrows(IllegalArgumentException.class, () ->
+                ServerOptions.parse(new String[]{"--firefly.security.jwt.enabeld=true"}, Map.of()));
+    }
+
+    @Test
     void rejectsMissingConfigFile() {
         assertThrows(
                 IllegalArgumentException.class,
