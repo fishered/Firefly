@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Firefly v1.0.4 scheduling delay percentiles</title>
+  <desc id="desc">Optimized scheduling delay p50, p95, p99 and maximum for 5K, 10K, 20K and 50K tasks due at the same instant.</desc>
+  <rect width="1280" height="760" fill="#f7f9fb"/>
+  <rect x="32" y="28" width="1216" height="92" rx="6" fill="#17212b"/>
+  <text x="62" y="66" fill="#fff" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700">Scheduling delay percentiles</text>
+  <text x="62" y="96" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="15">Optimized partitioned topology | delay = dispatch_time - scheduled_fire_time | 50K p99 = 932ms</text>
+  <text x="1064" y="68" fill="#54d69d" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700">&lt; 1s p99</text>
+  <text x="1064" y="95" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="14">at 50K tasks</text>
+
+  <rect x="32" y="144" width="1216" height="444" rx="6" fill="#fff" stroke="#d8e0e8"/>
+  <text x="62" y="181" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">p50 / p95 / p99 with maximum marker</text>
+  <g font-family="Segoe UI,Arial,sans-serif" font-size="13"><rect x="838" y="158" width="14" height="14" fill="#2d8fc4"/><text x="858" y="170" fill="#4d5d6c">p50</text><rect x="906" y="158" width="14" height="14" fill="#e3a33b"/><text x="926" y="170" fill="#4d5d6c">p95</text><rect x="974" y="158" width="14" height="14" fill="#e05d5d"/><text x="994" y="170" fill="#4d5d6c">p99</text><line x1="1050" y1="165" x2="1080" y2="165" stroke="#17212b" stroke-width="2" stroke-dasharray="4 3"/><text x="1088" y="170" fill="#4d5d6c">max</text></g>
+  <line x1="126" y1="505" x2="956" y2="505" stroke="#8e9baa"/><line x1="126" y1="215" x2="126" y2="505" stroke="#8e9baa"/>
+  <g stroke="#e3e8ee"><line x1="126" y1="447" x2="956" y2="447"/><line x1="126" y1="389" x2="956" y2="389"/><line x1="126" y1="331" x2="956" y2="331"/><line x1="126" y1="273" x2="956" y2="273"/><line x1="126" y1="215" x2="956" y2="215"/></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13" text-anchor="end"><text x="114" y="510">0</text><text x="114" y="452">200</text><text x="114" y="394">400</text><text x="114" y="336">600</text><text x="114" y="278">800</text><text x="114" y="220">1,000ms</text></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="14" text-anchor="middle"><text x="220" y="534">5K</text><text x="430" y="534">10K</text><text x="640" y="534">20K</text><text x="850" y="534">50K</text></g>
+  <g fill="#2d8fc4"><rect x="174" y="447" width="28" height="58"/><rect x="384" y="446" width="28" height="59"/><rect x="594" y="381" width="28" height="124"/><rect x="804" y="248" width="28" height="257"/></g>
+  <g fill="#e3a33b"><rect x="206" y="444" width="28" height="61"/><rect x="416" y="443" width="28" height="62"/><rect x="626" y="374" width="28" height="131"/><rect x="836" y="236" width="28" height="269"/></g>
+  <g fill="#e05d5d"><rect x="238" y="443" width="28" height="62"/><rect x="448" y="442" width="28" height="63"/><rect x="658" y="373" width="28" height="132"/><rect x="868" y="235" width="28" height="270"/></g>
+  <g stroke="#17212b" stroke-width="2" stroke-dasharray="5 4"><line x1="174" y1="443" x2="266" y2="443"/><line x1="384" y1="442" x2="476" y2="442"/><line x1="594" y1="372" x2="686" y2="372"/><line x1="804" y1="234" x2="896" y2="234"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="11" text-anchor="middle"><text x="220" y="431">199 / 210 / 213</text><text x="430" y="430">204 / 213 / 216</text><text x="640" y="360">427 / 454 / 456</text><text x="850" y="222">886 / 927 / 932</text></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="11" text-anchor="middle"><text x="220" y="555">max 214ms</text><text x="430" y="555">max 216ms</text><text x="640" y="555">max 458ms</text><text x="850" y="555">max 936ms</text></g>
+
+  <rect x="990" y="220" width="218" height="212" rx="4" fill="#fff8e8" stroke="#f0d899"/>
+  <text x="1012" y="252" fill="#a56b00" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700">50K reading</text>
+  <text x="1012" y="282" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">p50  886ms</text>
+  <text x="1012" y="308" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">p95  927ms</text>
+  <text x="1012" y="334" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">p99  932ms</text>
+  <text x="1012" y="360" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">max  936ms</text>
+  <text x="1012" y="400" fill="#a56b00" font-family="Segoe UI,Arial,sans-serif" font-size="13">tail spread: 50ms</text>
+  <text x="62" y="626" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700">Metric boundary</text>
+  <text x="62" y="652" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">dispatch_time is recorded when the Scheduler builds the dispatch command.</text>
+  <text x="62" y="676" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">It measures scheduling decision delay; it does not include Executor network time, business execution time or transaction commit visibility.</text>
+  <text x="62" y="710" fill="#8a97a4" font-family="Segoe UI,Arial,sans-serif" font-size="12">p50 / p95 / p99 / max values are in milliseconds. Local benchmark on 2026-08-04.</text>
+</svg>

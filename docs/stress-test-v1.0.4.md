@@ -13,7 +13,15 @@ Firefly v1.0.4 在本机 PostgreSQL 16.14 环境完成 100、5,000、10,000、20
 - 5,000 任务竞争拓扑仍通过，调度清空 `1.769s`，证明多个 Scheduler 同时竞争同一批任务时 CAS/fencing 语义有效。
 - 优化后端到端主要耗时已经转移到任务逐条注册和 Outbox 完成模拟，不再是 Scheduler。
 
-![Firefly v1.0.4 调度优化压测图](assets/firefly-v1.0.4-stress-optimization.svg)
+## 图表总览
+
+![Firefly v1.0.4 调度清空耗时](assets/firefly-v1.0.4-scheduling-duration.svg)
+
+![Firefly v1.0.4 调度吞吐](assets/firefly-v1.0.4-scheduling-throughput.svg)
+
+![Firefly v1.0.4 调度延迟分位数](assets/firefly-v1.0.4-scheduling-latency.svg)
+
+![Firefly v1.0.4 资源占用](assets/firefly-v1.0.4-resource-usage.svg)
 
 ## 用户问题结论
 
@@ -246,7 +254,10 @@ firefly.scheduler.max-idle-wakeup=PT0.5S
 | 产物 | 路径 |
 | --- | --- |
 | 结构化汇总 | `docs/assets/firefly-v1.0.4-stress-results.json` |
-| 静态图表 | `docs/assets/firefly-v1.0.4-stress-optimization.svg` |
+| 调度耗时图 | `docs/assets/firefly-v1.0.4-scheduling-duration.svg` |
+| 调度吞吐图 | `docs/assets/firefly-v1.0.4-scheduling-throughput.svg` |
+| 调度延迟图 | `docs/assets/firefly-v1.0.4-scheduling-latency.svg` |
+| 资源占用图 | `docs/assets/firefly-v1.0.4-resource-usage.svg` |
 | 优化前 5K JSON | `stores/jdbc/build/reports/stress/before-optimization-5k.json` |
 | 优化后 5K JSON | `stores/jdbc/build/reports/stress/optimized-partitioned-5k.json` |
 | 优化后 10K JSON | `stores/jdbc/build/reports/stress/optimized-partitioned-10k.json` |
