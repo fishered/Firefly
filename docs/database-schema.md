@@ -122,11 +122,16 @@ firefly.dispatch.outbox.max-attempts=5
 firefly.dispatch.outbox.max-retry-backoff=PT30S
 firefly.scheduler.max-due-records-per-tick=10000
 firefly.scheduler.max-idle-wakeup=PT0.5S
+firefly.scheduler.batch-size=200
 firefly.execution.maintenance.interval=PT5S
 firefly.execution.maintenance.retention=P30D
 firefly.jdbc.clock.sync-interval=PT30S
 firefly.jdbc.clock.drift-warning-threshold=PT1S
 ```
+
+`firefly.scheduler.batch-size` 控制一次 JDBC 调度事务中推进并写入 execution/outbox 的任务数。
+默认值 200 已在 PostgreSQL 16 的 50,000 个同刻到期任务压测中验证；应结合 JDBC 连接池、
+数据库 WAL 能力和 lease 时长调整，不建议把整批积压任务放进一个超大事务。
 
 `max-attempts` 表示同一 Outbox 记录最多发生的真实投递次数，同时覆盖发送拒绝和 ACK deadline 超时。耗尽后记录进入 `DEAD`，只能通过显式运维重放重新进入投递流程。
 

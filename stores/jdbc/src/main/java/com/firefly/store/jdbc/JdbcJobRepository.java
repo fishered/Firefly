@@ -17,12 +17,14 @@ import com.firefly.store.DispatchOutboxStatus;
 import com.firefly.store.DispatchType;
 import com.firefly.store.JobRepository;
 import com.firefly.store.ScheduledJobRecord;
+import com.firefly.store.SchedulingAdvance;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -278,6 +280,126 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         } catch (SQLException e) {
             throw new JdbcException("failed to atomically advance job and enqueue dispatch", e);
         }
+    }
+
+    @Override
+    public List<Boolean> advanceAndEnqueueBatch(List<SchedulingAdvance> advances) {
+        if (advances.isEmpty()) return List.of();
+        if (advances.stream().anyMatch(advance -> advance.commands().isEmpty())) {
+            return advances.stream().map(advance -> advanceAndEnqueue(
+                    advance.jobId(), advance.expectedCurrentNextFireTime(),
+                    advance.nextFireTime(), advance.commands()
+            )).toList();
+        }
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                Instant databaseNow = timeSource.now(connection);
+                int[] updateCounts;
+                try (PreparedStatement update = connection.prepareStatement("""
+                        update firefly_job job set next_fire_time=?, version=version+1
+                        where job.job_id=? and job.next_fire_time=?
+                          and job.next_fire_time <= ? and exists (
+                          select 1 from firefly_shard_lease lease
+                          where lease.shard_id=job.shard_id and lease.owner_node_id=?
+                            and lease.fencing_token=? and lease.lease_until>=?)
+                        """)) {
+                    for (SchedulingAdvance advance : advances) {
+                        bindAdvanceUpdate(update, advance, databaseNow);
+                        update.addBatch();
+                    }
+                    updateCounts = update.executeBatch();
+                }
+
+                List<Boolean> results = new ArrayList<>(advances.size());
+                Set<String> activeForbidJobs = activeForbidJobIds(connection, advances, updateCounts);
+                try (PreparedStatement execution = connection.prepareStatement("""
+                        insert into firefly_execution
+                        (execution_id, root_execution_id, run_attempt, retry_scheduled, job_id,
+                         scheduled_fire_time, dispatch_time, dispatch_mode, completion_policy,
+                         status, expected_targets, accepted_targets, owner_node_id, fencing_token,
+                         timeout_at, created_at, updated_at)
+                        values (?, ?, ?, false, ?, ?, ?, ?, ?, 'DISPATCHING', ?, 0, ?, ?, ?, ?, ?)
+                        """);
+                     PreparedStatement outbox = connection.prepareStatement("""
+                        insert into firefly_dispatch_outbox
+                        (outbox_id, execution_id, root_execution_id, run_attempt, job_id,
+                         scheduled_fire_time, dispatch_time, status, attempt,
+                         available_at, owner_node_id, fencing_token, dispatch_type, snapshot_payload,
+                         last_error, created_at, updated_at)
+                        values (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, '', ?, ?)
+                        """)) {
+                    for (int index = 0; index < advances.size(); index++) {
+                        boolean updated = updateCounts[index] == 1
+                                || updateCounts[index] == Statement.SUCCESS_NO_INFO;
+                        results.add(updated);
+                        if (!updated || activeForbidJobs.contains(advances.get(index).jobId())) continue;
+                        for (ExecutionCommand command : advances.get(index).commands()) {
+                            bindPlannedExecution(execution, command, databaseNow, databaseNow);
+                            execution.addBatch();
+                            bindOutbox(outbox, command, databaseNow, databaseNow);
+                            outbox.addBatch();
+                        }
+                    }
+                    execution.executeBatch();
+                    outbox.executeBatch();
+                }
+                connection.commit();
+                return List.copyOf(results);
+            } catch (SQLException | RuntimeException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to atomically advance and enqueue scheduler batch", e);
+        }
+    }
+
+    private Set<String> activeForbidJobIds(
+            Connection connection,
+            List<SchedulingAdvance> advances,
+            int[] updateCounts
+    ) throws SQLException {
+        List<String> candidates = new ArrayList<>();
+        for (int index = 0; index < advances.size(); index++) {
+            SchedulingAdvance advance = advances.get(index);
+            boolean updated = updateCounts[index] == 1 || updateCounts[index] == Statement.SUCCESS_NO_INFO;
+            if (updated && advance.commands().getFirst().definition().concurrencyPolicy() == ConcurrencyPolicy.FORBID) {
+                candidates.add(advance.jobId());
+            }
+        }
+        if (candidates.isEmpty()) return Set.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(candidates.size(), "?"));
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select distinct job_id from firefly_execution
+                where status in ('DISPATCHING','DISPATCHED','RUNNING') and job_id in (%s)
+                """.formatted(placeholders))) {
+            for (int index = 0; index < candidates.size(); index++) {
+                statement.setString(index + 1, candidates.get(index));
+            }
+            java.util.HashSet<String> active = new java.util.HashSet<>();
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) active.add(resultSet.getString(1));
+            }
+            return Set.copyOf(active);
+        }
+    }
+
+    private void bindAdvanceUpdate(
+            PreparedStatement statement,
+            SchedulingAdvance advance,
+            Instant databaseNow
+    ) throws SQLException {
+        ExecutionCommand owner = advance.commands().getFirst();
+        statement.setTimestamp(1, Timestamp.from(advance.nextFireTime()));
+        statement.setString(2, advance.jobId());
+        statement.setTimestamp(3, Timestamp.from(advance.expectedCurrentNextFireTime()));
+        statement.setTimestamp(4, Timestamp.from(databaseNow));
+        statement.setString(5, owner.ownerNodeId());
+        statement.setLong(6, owner.fencingToken());
+        statement.setTimestamp(7, Timestamp.from(databaseNow));
     }
 
     private boolean hasActiveExecution(Connection connection, String jobId) throws SQLException {
@@ -695,7 +817,6 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
             ExecutionCommand command,
             Instant timeoutBase
     ) throws SQLException {
-        JobDefinition definition = command.definition();
         try (PreparedStatement statement = connection.prepareStatement("""
                 insert into firefly_execution
                 (execution_id, root_execution_id, run_attempt, retry_scheduled, job_id,
@@ -704,19 +825,28 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                  timeout_at, created_at, updated_at)
                 values (?, ?, ?, false, ?, ?, ?, ?, ?, 'DISPATCHING', ?, 0, ?, ?, ?, ?, ?)
                 """)) {
-            Instant now = timeSource.now(connection);
-            statement.setString(1, command.executionId()); statement.setString(2, command.rootExecutionId());
-            statement.setInt(3, command.runAttempt()); statement.setString(4, definition.id());
-            statement.setTimestamp(5, Timestamp.from(command.scheduledFireTime()));
-            statement.setTimestamp(6, Timestamp.from(command.dispatchTime()));
-            statement.setString(7, definition.dispatchMode().name());
-            statement.setString(8, definition.completionPolicy().name());
-            statement.setInt(9, definition.dispatchMode() == ExecutorDispatchMode.SHARDING ? definition.shardCount() : 1);
-            statement.setString(10, command.ownerNodeId()); statement.setLong(11, command.fencingToken());
-            statement.setTimestamp(12, Timestamp.from(timeoutBase.plus(definition.timeout())));
-            statement.setTimestamp(13, Timestamp.from(now)); statement.setTimestamp(14, Timestamp.from(now));
+            bindPlannedExecution(statement, command, timeoutBase, timeSource.now(connection));
             statement.executeUpdate();
         }
+    }
+
+    private void bindPlannedExecution(
+            PreparedStatement statement,
+            ExecutionCommand command,
+            Instant timeoutBase,
+            Instant now
+    ) throws SQLException {
+        JobDefinition definition = command.definition();
+        statement.setString(1, command.executionId()); statement.setString(2, command.rootExecutionId());
+        statement.setInt(3, command.runAttempt()); statement.setString(4, definition.id());
+        statement.setTimestamp(5, Timestamp.from(command.scheduledFireTime()));
+        statement.setTimestamp(6, Timestamp.from(command.dispatchTime()));
+        statement.setString(7, definition.dispatchMode().name());
+        statement.setString(8, definition.completionPolicy().name());
+        statement.setInt(9, definition.dispatchMode() == ExecutorDispatchMode.SHARDING ? definition.shardCount() : 1);
+        statement.setString(10, command.ownerNodeId()); statement.setLong(11, command.fencingToken());
+        statement.setTimestamp(12, Timestamp.from(timeoutBase.plus(definition.timeout())));
+        statement.setTimestamp(13, Timestamp.from(now)); statement.setTimestamp(14, Timestamp.from(now));
     }
 
     private void insertOutbox(Connection connection, ExecutionCommand command) throws SQLException {
@@ -732,19 +862,28 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                  last_error, created_at, updated_at)
                 values (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, '', ?, ?)
                 """)) {
-            Instant now = timeSource.now(connection);
-            statement.setString(1, command.executionId()); statement.setString(2, command.executionId());
-            statement.setString(3, command.rootExecutionId()); statement.setInt(4, command.runAttempt());
-            statement.setString(5, command.definition().id());
-            statement.setTimestamp(6, Timestamp.from(command.scheduledFireTime()));
-            statement.setTimestamp(7, Timestamp.from(command.dispatchTime()));
-            statement.setTimestamp(8, Timestamp.from(availableAt)); statement.setString(9, command.ownerNodeId());
-            statement.setLong(10, command.fencingToken());
-            statement.setString(11, dispatchType(command.definition()).name());
-            statement.setString(12, encodeJobSnapshot(command.definition()));
-            statement.setTimestamp(13, Timestamp.from(now));
-            statement.setTimestamp(14, Timestamp.from(now)); statement.executeUpdate();
+            bindOutbox(statement, command, availableAt, timeSource.now(connection));
+            statement.executeUpdate();
         }
+    }
+
+    private void bindOutbox(
+            PreparedStatement statement,
+            ExecutionCommand command,
+            Instant availableAt,
+            Instant now
+    ) throws SQLException {
+        statement.setString(1, command.executionId()); statement.setString(2, command.executionId());
+        statement.setString(3, command.rootExecutionId()); statement.setInt(4, command.runAttempt());
+        statement.setString(5, command.definition().id());
+        statement.setTimestamp(6, Timestamp.from(command.scheduledFireTime()));
+        statement.setTimestamp(7, Timestamp.from(command.dispatchTime()));
+        statement.setTimestamp(8, Timestamp.from(availableAt)); statement.setString(9, command.ownerNodeId());
+        statement.setLong(10, command.fencingToken());
+        statement.setString(11, dispatchType(command.definition()).name());
+        statement.setString(12, encodeJobSnapshot(command.definition()));
+        statement.setTimestamp(13, Timestamp.from(now));
+        statement.setTimestamp(14, Timestamp.from(now));
     }
 
     private static DispatchType dispatchType(JobDefinition definition) {

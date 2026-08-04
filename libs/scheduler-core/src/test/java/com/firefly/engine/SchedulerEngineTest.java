@@ -22,9 +22,17 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchedulerEngineTest {
+    @Test
+    void rejectsNonPositiveSchedulingBatchSize() {
+        assertThrows(IllegalArgumentException.class, () -> new SchedulerEngineOptions(
+                100, Duration.ofMillis(100), 0
+        ));
+    }
+
     @Test
     void firesDueJobAndAdvancesNextFireTime() {
         Instant now = Instant.parse("2026-07-06T00:00:10Z");

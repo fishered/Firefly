@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" role="img" aria-labelledby="title desc">
+  <title id="title">Firefly v1.0.4 scheduler stress test optimization</title>
+  <desc id="desc">Before and after scheduling throughput, scheduling clear time, and optimized p95 scheduling latency from 5,000 to 50,000 tasks.</desc>
+  <rect width="1400" height="860" fill="#f7f9fb"/>
+  <rect x="36" y="30" width="1328" height="108" rx="6" fill="#17212b"/>
+  <text x="68" y="76" fill="#ffffff" font-family="Segoe UI,Arial,sans-serif" font-size="28" font-weight="700">Firefly v1.0.4 scheduler optimization</text>
+  <text x="68" y="111" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="18">PostgreSQL 16.14 | 32 shards | batch size 200 | all tasks due at the same instant</text>
+  <text x="1050" y="78" fill="#54d69d" font-family="Segoe UI,Arial,sans-serif" font-size="28" font-weight="700">133.6x faster</text>
+  <text x="1050" y="111" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="16">50K: 477.1s to 3.57s</text>
+
+  <rect x="36" y="164" width="650" height="304" rx="6" fill="#ffffff" stroke="#d8e0e8"/>
+  <text x="64" y="202" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">Scheduling clear time (seconds, log scale)</text>
+  <line x1="112" y1="416" x2="650" y2="416" stroke="#9baaba"/>
+  <line x1="112" y1="230" x2="112" y2="416" stroke="#9baaba"/>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">
+    <text x="70" y="420">0.1</text><text x="82" y="374">1</text><text x="74" y="328">10</text><text x="66" y="282">100</text><text x="66" y="236">500</text>
+    <text x="151" y="442">5K</text><text x="281" y="442">10K</text><text x="411" y="442">20K</text><text x="541" y="442">50K</text>
+  </g>
+  <g stroke="#e3e8ee"><line x1="112" y1="370" x2="650" y2="370"/><line x1="112" y1="324" x2="650" y2="324"/><line x1="112" y1="278" x2="650" y2="278"/><line x1="112" y1="232" x2="650" y2="232"/></g>
+  <polyline points="164,296 294,281 424,266 554,250" fill="none" stroke="#e05d5d" stroke-width="4"/>
+  <polyline points="164,372 294,371 424,357 554,344" fill="none" stroke="#168a70" stroke-width="4"/>
+  <g fill="#e05d5d"><circle cx="164" cy="296" r="5"/><circle cx="294" cy="281" r="5"/><circle cx="424" cy="266" r="5"/><circle cx="554" cy="250" r="5"/></g>
+  <g fill="#168a70"><circle cx="164" cy="372" r="5"/><circle cx="294" cy="371" r="5"/><circle cx="424" cy="357" r="5"/><circle cx="554" cy="344" r="5"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="12"><text x="142" y="287">41.4</text><text x="270" y="272">101.3</text><text x="400" y="257">214.2</text><text x="530" y="241">477.1</text><text x="145" y="393">0.91</text><text x="275" y="393">0.94</text><text x="405" y="378">1.87</text><text x="535" y="365">3.57</text></g>
+  <rect x="448" y="187" width="12" height="12" fill="#e05d5d"/><text x="468" y="198" fill="#4d5d6c" font-family="Segoe UI,Arial,sans-serif" font-size="13">Before</text>
+  <rect x="540" y="187" width="12" height="12" fill="#168a70"/><text x="560" y="198" fill="#4d5d6c" font-family="Segoe UI,Arial,sans-serif" font-size="13">Optimized</text>
+
+  <rect x="714" y="164" width="650" height="304" rx="6" fill="#ffffff" stroke="#d8e0e8"/>
+  <text x="742" y="202" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">Scheduling throughput (tasks/s)</text>
+  <line x1="790" y1="416" x2="1328" y2="416" stroke="#9baaba"/>
+  <line x1="790" y1="230" x2="790" y2="416" stroke="#9baaba"/>
+  <g stroke="#e3e8ee"><line x1="790" y1="354" x2="1328" y2="354"/><line x1="790" y1="292" x2="1328" y2="292"/><line x1="790" y1="230" x2="1328" y2="230"/></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13"><text x="756" y="420">0</text><text x="742" y="358">5K</text><text x="736" y="296">10K</text><text x="736" y="234">15K</text><text x="829" y="442">5K</text><text x="959" y="442">10K</text><text x="1089" y="442">20K</text><text x="1219" y="442">50K</text></g>
+  <g fill="#dce3e9"><rect x="824" y="414" width="28" height="2"/><rect x="954" y="414" width="28" height="2"/><rect x="1084" y="414" width="28" height="2"/><rect x="1214" y="414" width="28" height="2"/></g>
+  <g fill="#168a70"><rect x="858" y="348" width="40" height="68"/><rect x="988" y="284" width="40" height="132"/><rect x="1118" y="283" width="40" height="133"/><rect x="1248" y="242" width="40" height="174"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="12"><text x="854" y="340">5,519</text><text x="980" y="276">10,672</text><text x="1110" y="275">10,701</text><text x="1240" y="234">13,998</text></g>
+
+  <rect x="36" y="494" width="1328" height="318" rx="6" fill="#ffffff" stroke="#d8e0e8"/>
+  <text x="64" y="534" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">Optimized scheduling delay p95 (milliseconds)</text>
+  <line x1="120" y1="752" x2="1318" y2="752" stroke="#9baaba"/>
+  <g stroke="#e3e8ee"><line x1="120" y1="702" x2="1318" y2="702"/><line x1="120" y1="652" x2="1318" y2="652"/><line x1="120" y1="602" x2="1318" y2="602"/><line x1="120" y1="552" x2="1318" y2="552"/></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13"><text x="84" y="756">0</text><text x="70" y="706">250</text><text x="70" y="656">500</text><text x="70" y="606">750</text><text x="62" y="556">1000</text><text x="222" y="778">5K</text><text x="492" y="778">10K</text><text x="762" y="778">20K</text><text x="1032" y="778">50K</text></g>
+  <g fill="#e3a33b"><rect x="198" y="710" width="100" height="42"/><rect x="468" y="709" width="100" height="43"/><rect x="738" y="661" width="100" height="91"/><rect x="1008" y="567" width="100" height="185"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700"><text x="230" y="700">210</text><text x="500" y="699">213</text><text x="770" y="651">454</text><text x="1040" y="557">927</text></g>
+  <rect x="1140" y="574" width="178" height="116" rx="4" fill="#eef6f3"/>
+  <text x="1160" y="602" fill="#168a70" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700">50K integrity</text>
+  <text x="1160" y="630" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">SUCCEEDED  50,000</text>
+  <text x="1160" y="654" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">DONE       50,000</text>
+  <text x="1160" y="678" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">Duplicates       0</text>
+  <text x="36" y="842" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">Local benchmark, 2026-08-04. Absolute results depend on database, storage, network, and lease configuration.</text>
+</svg>

@@ -61,6 +61,13 @@ public interface JobRepository {
         );
     }
 
+    default List<Boolean> advanceAndEnqueueBatch(List<SchedulingAdvance> advances) {
+        return advances.stream().map(advance -> advanceAndEnqueue(
+                advance.jobId(), advance.expectedCurrentNextFireTime(),
+                advance.nextFireTime(), advance.commands()
+        )).toList();
+    }
+
     default List<DispatchOutboxRecord> claimDispatches(
             String claimant,
             Instant now,
