@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="780" viewBox="0 0 1280 780" role="img" aria-labelledby="title desc">
+  <title id="title">Firefly v1.0.4 resource usage under 50K scheduling stress</title>
+  <desc id="desc">JVM heap and CPU peaks by task count, plus 50K external process and PostgreSQL memory snapshots.</desc>
+  <rect width="1280" height="780" fill="#f7f9fb"/>
+  <rect x="32" y="28" width="1216" height="92" rx="6" fill="#17212b"/>
+  <text x="62" y="66" fill="#fff" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700">Resource usage under scheduling stress</text>
+  <text x="62" y="96" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="15">Optimized partitioned topology | continuous JVM samples plus 50K external snapshots | no container CPU/memory limit</text>
+  <text x="1080" y="68" fill="#54d69d" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700">50K stable</text>
+  <text x="1080" y="95" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="14">heap peak 731.4 MiB</text>
+
+  <rect x="32" y="144" width="760" height="408" rx="6" fill="#fff" stroke="#d8e0e8"/>
+  <text x="62" y="181" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">JVM sampled peaks by workload</text>
+  <text x="62" y="207" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">Heap and process CPU are independent panels to preserve their units.</text>
+  <text x="82" y="242" fill="#168a70" font-family="Segoe UI,Arial,sans-serif" font-size="15" font-weight="700">Heap peak (MiB)</text>
+  <line x1="118" y1="396" x2="714" y2="396" stroke="#8e9baa"/><line x1="118" y1="260" x2="118" y2="396" stroke="#8e9baa"/>
+  <g stroke="#e3e8ee"><line x1="118" y1="362" x2="714" y2="362"/><line x1="118" y1="328" x2="714" y2="328"/><line x1="118" y1="294" x2="714" y2="294"/><line x1="118" y1="260" x2="714" y2="260"/></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="12" text-anchor="end"><text x="108" y="400">0</text><text x="108" y="366">200</text><text x="108" y="332">400</text><text x="108" y="298">600</text><text x="108" y="264">800</text></g>
+  <polyline points="194,317 344,291 494,291 644,272" fill="none" stroke="#168a70" stroke-width="4"/>
+  <g fill="#168a70"><circle cx="194" cy="317" r="6"/><circle cx="344" cy="291" r="6"/><circle cx="494" cy="291" r="6"/><circle cx="644" cy="272" r="6"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle"><text x="194" y="304">465.2</text><text x="344" y="278">618.2</text><text x="494" y="278">618.3</text><text x="644" y="259">731.4</text></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13" text-anchor="middle"><text x="194" y="420">5K</text><text x="344" y="420">10K</text><text x="494" y="420">20K</text><text x="644" y="420">50K</text></g>
+  <text x="82" y="468" fill="#d27c1f" font-family="Segoe UI,Arial,sans-serif" font-size="15" font-weight="700">JVM CPU peak (%)</text>
+  <g font-family="Segoe UI,Arial,sans-serif" font-size="12" fill="#d27c1f" text-anchor="middle"><text x="194" y="495">23.05%</text><text x="344" y="495">31.40%</text><text x="494" y="495">29.74%</text><text x="644" y="495">25.44%</text></g>
+  <g stroke="#e3a33b" stroke-width="3"><line x1="174" y1="510" x2="214" y2="510"/><line x1="324" y1="510" x2="364" y2="510"/><line x1="474" y1="510" x2="514" y2="510"/><line x1="624" y1="510" x2="664" y2="510"/></g>
+
+  <rect x="818" y="144" width="430" height="408" rx="6" fill="#fff" stroke="#d8e0e8"/>
+  <text x="848" y="181" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">50K external memory snapshot</text>
+  <text x="848" y="207" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">Observed while the optimized 50K run was active.</text>
+  <line x1="892" y1="474" x2="1214" y2="474" stroke="#8e9baa"/><line x1="892" y1="240" x2="892" y2="474" stroke="#8e9baa"/>
+  <g stroke="#e3e8ee"><line x1="892" y1="415" x2="1214" y2="415"/><line x1="892" y1="357" x2="1214" y2="357"/><line x1="892" y1="298" x2="1214" y2="298"/><line x1="892" y1="240" x2="1214" y2="240"/></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="12" text-anchor="end"><text x="882" y="478">0</text><text x="882" y="419">400</text><text x="882" y="361">800</text><text x="882" y="302">1,200</text><text x="882" y="244">1,600 MiB</text></g>
+  <g fill="#2d8fc4"><rect x="928" y="338" width="52" height="136"/><rect x="1010" y="338" width="52" height="136"/><rect x="1092" y="305" width="52" height="169"/><rect x="1174" y="373" width="36" height="101"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle"><text x="954" y="326">731.4</text><text x="1036" y="326">928.1</text><text x="1118" y="293">1,220.8</text><text x="1192" y="361">690.8</text></g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle"><text x="954" y="496">JVM heap</text><text x="1036" y="496">Java working set</text><text x="1118" y="496">Java private</text><text x="1192" y="496">PG memory</text></g>
+
+  <rect x="32" y="578" width="1216" height="124" rx="6" fill="#fff8e8" stroke="#f0d899"/>
+  <text x="62" y="612" fill="#a56b00" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700">Database signal</text>
+  <text x="62" y="640" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">PostgreSQL CPU snapshot: 501.86% | memory: 690.8 MiB | main waits: WALWrite, WALSync</text>
+  <text x="62" y="668" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">CPU above 100% means multiple logical CPUs were used. After the test, PostgreSQL returned to 0.04% CPU and 532.2 MiB memory.</text>
+  <text x="62" y="692" fill="#8a97a4" font-family="Segoe UI,Arial,sans-serif" font-size="12">The JVM sample covers scheduler and worker phases. Values are local observations, not production capacity guarantees.</text>
+</svg>

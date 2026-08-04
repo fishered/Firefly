@@ -32,7 +32,7 @@ tasks.withType(Test).configureEach {
 
 tasks.named("test") {
     useJUnitPlatform {
-        excludeTags("real-database")
+        excludeTags("real-database", "stress")
     }
 }
 
@@ -43,5 +43,24 @@ tasks.register("realDatabaseTest", Test) {
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
         includeTags("real-database")
+    }
+}
+
+tasks.register("stressTest", Test) {
+    description = "Runs the PostgreSQL scheduler and outbox stress suite."
+    group = "verification"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    maxHeapSize = System.getProperty("firefly.stress.maxHeap", "2g")
+    useJUnitPlatform {
+        includeTags("stress")
+    }
+    systemProperties System.getProperties().findAll { key, ignored ->
+        key.toString().startsWith("firefly.stress.")
+                || key.toString().startsWith("firefly.jdbc.")
+    }
+    def jfrPath = System.getProperty("firefly.stress.jfr.path")
+    if (jfrPath != null && !jfrPath.isBlank()) {
+        jvmArgs "-XX:StartFlightRecording=filename=${new File(jfrPath).absolutePath},settings=profile,dumponexit=true"
     }
 }

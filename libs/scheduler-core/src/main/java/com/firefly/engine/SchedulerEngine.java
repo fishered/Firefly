@@ -7,6 +7,7 @@ import com.firefly.cluster.ShardOwnership;
 import com.firefly.domain.MisfirePolicy;
 import com.firefly.store.JobRepository;
 import com.firefly.store.ScheduledJobRecord;
+import com.firefly.store.SchedulingAdvance;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.lifecycle.ManagedWorker;
 
@@ -163,37 +164,10 @@ public final class SchedulerEngine {
         }
         refreshTimingIndex(leases.keySet());
         List<ScheduledJobRecord> dueRecords = timingIndex.pollDue(now, options.maxDueRecordsPerTick());
-        for (ScheduledJobRecord record : dueRecords) {
-            int shardId = ShardHasher.shardFor(record.definition().id(), shardCount);
-            ShardLease lease = leases.get(shardId);
-            if (lease == null) {
-                forceReload();
-                continue;
-            }
-            List<Instant> fireTimes = calculateFireTimes(record, now);
-            Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
-            Instant dispatchTime = clock.instant();
-            List<ExecutionCommand> commands = fireTimes.stream().map(fireTime -> new ExecutionCommand(
-                    executionId(record.definition(), fireTime), record.definition(), fireTime, dispatchTime,
-                    lease.ownerNodeId(), lease.fencingToken()
-            )).toList();
-            boolean updated = transactionalOutbox && !commands.isEmpty()
-                    ? repository.advanceAndEnqueue(
-                            record.definition().id(), record.nextFireTime(), nextFireTime, commands
-                    )
-                    : repository.updateNextFireTimeWithLease(
-                            record.definition().id(), record.nextFireTime(), nextFireTime,
-                            lease.ownerNodeId(), lease.fencingToken()
-                    );
-            if (!updated) {
-                forceReload();
-                continue;
-            }
-            timingIndex.add(new ScheduledJobRecord(record.definition(), nextFireTime));
-            commands.forEach(command -> metrics.observeScheduleDelay(
-                    Duration.between(command.scheduledFireTime(), command.dispatchTime())
-            ));
-            if (!transactionalOutbox) commands.forEach(dispatcher::dispatch);
+        if (transactionalOutbox) {
+            processTransactionalBatches(dueRecords, leases, now);
+        } else {
+            dueRecords.forEach(record -> processRecord(record, leases, now));
         }
         Instant remainingDue = timingIndex.nextFireTime();
         if (dueRecords.size() == options.maxDueRecordsPerTick()
@@ -202,6 +176,109 @@ public final class SchedulerEngine {
             metrics.recordDueBacklog();
         }
     }
+
+    private void processTransactionalBatches(
+            List<ScheduledJobRecord> dueRecords,
+            Map<Integer, ShardLease> leases,
+            Instant now
+    ) {
+        List<PreparedAdvance> prepared = new ArrayList<>(dueRecords.size());
+        for (ScheduledJobRecord record : dueRecords) {
+            ShardLease lease = leaseFor(record, leases);
+            if (lease == null) {
+                forceReload();
+                continue;
+            }
+            prepared.add(prepareAdvance(record, lease, now));
+        }
+        List<PreparedAdvance> batchable = new ArrayList<>(prepared.size());
+        for (PreparedAdvance advance : prepared) {
+            if (advance.commands().isEmpty()) {
+                SchedulingAdvance cursor = advance.advance();
+                boolean updated = repository.updateNextFireTimeWithLease(
+                        cursor.jobId(), cursor.expectedCurrentNextFireTime(), cursor.nextFireTime(),
+                        advance.lease().ownerNodeId(), advance.lease().fencingToken()
+                );
+                completeAdvance(advance, updated);
+            } else {
+                batchable.add(advance);
+            }
+        }
+        for (int from = 0; from < batchable.size(); from += options.schedulingBatchSize()) {
+            List<PreparedAdvance> batch = batchable.subList(
+                    from, Math.min(batchable.size(), from + options.schedulingBatchSize())
+            );
+            List<Boolean> results = repository.advanceAndEnqueueBatch(batch.stream()
+                    .map(PreparedAdvance::advance)
+                    .toList());
+            if (results.size() != batch.size()) {
+                throw new IllegalStateException("batch scheduling result size does not match request size");
+            }
+            for (int index = 0; index < batch.size(); index++) {
+                completeAdvance(batch.get(index), results.get(index));
+            }
+        }
+    }
+
+    private void processRecord(
+            ScheduledJobRecord record,
+            Map<Integer, ShardLease> leases,
+            Instant now
+    ) {
+        ShardLease lease = leaseFor(record, leases);
+        if (lease == null) {
+            forceReload();
+            return;
+        }
+        PreparedAdvance prepared = prepareAdvance(record, lease, now);
+        SchedulingAdvance advance = prepared.advance();
+        boolean updated = repository.updateNextFireTimeWithLease(
+                advance.jobId(), advance.expectedCurrentNextFireTime(), advance.nextFireTime(),
+                lease.ownerNodeId(), lease.fencingToken()
+        );
+        completeAdvance(prepared, updated);
+        if (updated) prepared.commands().forEach(dispatcher::dispatch);
+    }
+
+    private ShardLease leaseFor(ScheduledJobRecord record, Map<Integer, ShardLease> leases) {
+        return leases.get(ShardHasher.shardFor(record.definition().id(), shardCount));
+    }
+
+    private PreparedAdvance prepareAdvance(ScheduledJobRecord record, ShardLease lease, Instant now) {
+        List<Instant> fireTimes = calculateFireTimes(record, now);
+        Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
+        Instant dispatchTime = clock.instant();
+        List<ExecutionCommand> commands = fireTimes.stream().map(fireTime -> new ExecutionCommand(
+                executionId(record.definition(), fireTime), record.definition(), fireTime, dispatchTime,
+                lease.ownerNodeId(), lease.fencingToken()
+        )).toList();
+        return new PreparedAdvance(
+                record,
+                new SchedulingAdvance(record.definition().id(), record.nextFireTime(), nextFireTime, commands),
+                commands,
+                lease
+        );
+    }
+
+    private void completeAdvance(PreparedAdvance prepared, boolean updated) {
+        if (!updated) {
+            forceReload();
+            return;
+        }
+        timingIndex.add(new ScheduledJobRecord(
+                prepared.record().definition(), prepared.advance().nextFireTime()
+        ));
+        prepared.commands().forEach(command -> metrics.observeScheduleDelay(
+                    Duration.between(command.scheduledFireTime(), command.dispatchTime())
+        ));
+    }
+
+    private record PreparedAdvance(
+            ScheduledJobRecord record,
+            SchedulingAdvance advance,
+            List<ExecutionCommand> commands,
+            ShardLease lease
+    ) { }
 
     private void refreshTimingIndex(Set<Integer> shardIds) {
         Set<Integer> currentShards = Set.copyOf(shardIds);

@@ -1,11 +1,13 @@
 package com.firefly.store.jdbc;
 
 import com.firefly.cluster.ShardHasher;
+import com.firefly.domain.ConcurrencyPolicy;
 import com.firefly.domain.CronSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.engine.ExecutionCommand;
 import com.firefly.store.DispatchOutboxStatus;
 import com.firefly.store.DispatchType;
+import com.firefly.store.SchedulingAdvance;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
@@ -19,8 +21,114 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JdbcDispatchOutboxTest {
+    @Test
+    void batchAdvanceEnqueuesOnlySuccessfulCursorUpdates() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant fireTime = Instant.parse("2026-07-18T08:00:00Z");
+        AtomicReference<Instant> databaseNow = new AtomicReference<>(fireTime);
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> databaseNow.get());
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource);
+        JdbcShardManager shards = new JdbcShardManager(dataSource, ignored -> databaseNow.get());
+        List<JobDefinition> definitions = List.of(
+                remoteJob("batch-job-a"), remoteJob("batch-job-b"), remoteJob("batch-job-c")
+        );
+        definitions.forEach(job -> jobs.save(job, fireTime));
+
+        List<SchedulingAdvance> advances = definitions.stream().map(job -> {
+            int shardId = ShardHasher.shardFor(job.id(), 32);
+            var lease = shards.acquire(shardId, "node-a", fireTime, Duration.ofMinutes(5))
+                    .orElseThrow();
+            Instant expected = job.id().equals("batch-job-b") ? fireTime.minusSeconds(1) : fireTime;
+            ExecutionCommand command = new ExecutionCommand(
+                    job.id() + "@" + fireTime, job, fireTime, fireTime,
+                    "node-a", lease.fencingToken()
+            );
+            return new SchedulingAdvance(job.id(), expected, fireTime.plusSeconds(60), List.of(command));
+        }).toList();
+
+        assertEquals(List.of(true, false, true), jobs.advanceAndEnqueueBatch(advances));
+        assertTrue(executions.findExecution("batch-job-a@" + fireTime).isPresent());
+        assertTrue(executions.findExecution("batch-job-b@" + fireTime).isEmpty());
+        assertTrue(executions.findExecution("batch-job-c@" + fireTime).isPresent());
+        assertEquals(2L, jobs.outboxCounts().get(DispatchOutboxStatus.PENDING));
+    }
+
+    @Test
+    void batchAdvancePreservesForbidConcurrencyPolicy() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant fireTime = Instant.parse("2026-07-18T08:30:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> fireTime);
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource);
+        JdbcShardManager shards = new JdbcShardManager(dataSource, ignored -> fireTime);
+        List<JobDefinition> definitions = List.of("forbid-job-a", "forbid-job-b").stream()
+                .map(id -> JobDefinition.builder()
+                        .id(id).name(id).handlerName("remote:orders:run")
+                        .schedule(new CronSchedule("0 * * * * *"))
+                        .concurrencyPolicy(ConcurrencyPolicy.FORBID)
+                        .build())
+                .toList();
+        definitions.forEach(job -> jobs.save(job, fireTime));
+        assertTrue(jobs.enqueueManual(new ExecutionCommand(
+                "active-forbid-execution", definitions.getFirst(), fireTime, fireTime
+        )));
+
+        List<SchedulingAdvance> advances = definitions.stream().map(job -> {
+            int shardId = ShardHasher.shardFor(job.id(), 32);
+            var lease = shards.acquire(shardId, "node-a", fireTime, Duration.ofMinutes(5)).orElseThrow();
+            ExecutionCommand command = new ExecutionCommand(
+                    job.id() + "@" + fireTime, job, fireTime, fireTime,
+                    "node-a", lease.fencingToken()
+            );
+            return new SchedulingAdvance(
+                    job.id(), fireTime, fireTime.plusSeconds(60), List.of(command)
+            );
+        }).toList();
+
+        assertEquals(List.of(true, true), jobs.advanceAndEnqueueBatch(advances));
+        assertTrue(executions.findExecution("forbid-job-a@" + fireTime).isEmpty());
+        assertTrue(executions.findExecution("forbid-job-b@" + fireTime).isPresent());
+        assertEquals(2L, jobs.outboxCounts().get(DispatchOutboxStatus.PENDING));
+    }
+
+    @Test
+    void batchAdvanceRollsBackAllCursorsWhenEnqueueFails() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant fireTime = Instant.parse("2026-07-18T09:00:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> fireTime);
+        JdbcExecutionRepository executions = new JdbcExecutionRepository(dataSource);
+        JdbcShardManager shards = new JdbcShardManager(dataSource, ignored -> fireTime);
+        List<JobDefinition> definitions = List.of(remoteJob("rollback-job-a"), remoteJob("rollback-job-b"));
+        definitions.forEach(job -> jobs.save(job, fireTime));
+        List<SchedulingAdvance> advances = definitions.stream().map(job -> {
+            int shardId = ShardHasher.shardFor(job.id(), 32);
+            var lease = shards.acquire(shardId, "node-a", fireTime, Duration.ofMinutes(5))
+                    .orElseThrow();
+            ExecutionCommand duplicate = new ExecutionCommand(
+                    "duplicate-execution", job, fireTime, fireTime, "node-a", lease.fencingToken()
+            );
+            return new SchedulingAdvance(
+                    job.id(), fireTime, fireTime.plusSeconds(60), List.of(duplicate)
+            );
+        }).toList();
+
+        assertThrows(JdbcException.class, () -> jobs.advanceAndEnqueueBatch(advances));
+        definitions.forEach(job -> assertEquals(
+                fireTime, jobs.find(job.id()).orElseThrow().nextFireTime()
+        ));
+        assertTrue(executions.findExecution("duplicate-execution").isEmpty());
+    }
+
+    private JobDefinition remoteJob(String id) {
+        return JobDefinition.builder()
+                .id(id).name(id).handlerName("remote:orders:run")
+                .schedule(new CronSchedule("0 * * * * *"))
+                .concurrencyPolicy(ConcurrencyPolicy.ALLOW)
+                .build();
+    }
+
     @Test
     void deferredDispatchRemainsClaimableWhenAnExecutorReturnsBeforeTheDeadline() {
         DataSource dataSource = JdbcTestSupport.dataSource();

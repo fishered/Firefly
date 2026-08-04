@@ -1,0 +1,47 @@
+{
+  "version": "v1.0.4",
+  "environment": {
+    "cpu": "Intel Core i5-13600KF, 14 cores / 20 logical processors",
+    "memoryGiB": 63.76,
+    "java": "Oracle JDK 21.0.11",
+    "postgresql": "16.14 (postgres:16-alpine)",
+    "database": "jdbc:postgresql://127.0.0.1:55432/firefly_stress"
+  },
+  "beforeOptimization": [
+    {"jobs": 5000, "schedulingMs": 41399, "throughput": 120.78, "totalMs": 69127, "source": "same-day rerun"},
+    {"jobs": 10000, "schedulingMs": 101295, "throughput": 98.72, "totalMs": 163238, "source": "v1.0.4 initial run"},
+    {"jobs": 20000, "schedulingMs": 214172, "throughput": 93.38, "totalMs": 331812, "source": "v1.0.4 initial run"},
+    {"jobs": 50000, "schedulingMs": 477068, "throughput": 104.81, "totalMs": 728003, "source": "v1.0.4 initial run"}
+  ],
+  "optimizedPartitioned": [
+    {"jobs": 100, "registrationMs": 451, "schedulingMs": 63, "outboxMs": 379, "totalMs": 2185, "throughput": 1587.30, "schedulingP50Ms": 29, "schedulingP95Ms": 29, "schedulingP99Ms": 29, "schedulingMaxMs": 29, "peakJvmCpuPercent": 20.66, "peakHeapBytes": 35574104},
+    {"jobs": 5000, "registrationMs": 19650, "schedulingMs": 906, "outboxMs": 8745, "totalMs": 30584, "throughput": 5518.76, "schedulingP50Ms": 199, "schedulingP95Ms": 210, "schedulingP99Ms": 213, "schedulingMaxMs": 214, "peakJvmCpuPercent": 23.05, "peakHeapBytes": 487782256},
+    {"jobs": 10000, "registrationMs": 40313, "schedulingMs": 937, "outboxMs": 14985, "totalMs": 57516, "throughput": 10672.36, "schedulingP50Ms": 204, "schedulingP95Ms": 213, "schedulingP99Ms": 216, "schedulingMaxMs": 216, "peakJvmCpuPercent": 31.40, "peakHeapBytes": 648228792},
+    {"jobs": 20000, "registrationMs": 84952, "schedulingMs": 1869, "outboxMs": 17835, "totalMs": 105874, "throughput": 10700.91, "schedulingP50Ms": 427, "schedulingP95Ms": 454, "schedulingP99Ms": 456, "schedulingMaxMs": 458, "peakJvmCpuPercent": 29.74, "peakHeapBytes": 648367232},
+    {"jobs": 50000, "registrationMs": 191358, "schedulingMs": 3572, "outboxMs": 46004, "totalMs": 242239, "throughput": 13997.76, "schedulingP50Ms": 886, "schedulingP95Ms": 927, "schedulingP99Ms": 932, "schedulingMaxMs": 936, "peakJvmCpuPercent": 25.44, "peakHeapBytes": 766956000}
+  ],
+  "optimizedContention": {
+    "jobs": 5000,
+    "schedulingMs": 1769,
+    "throughput": 2826.46,
+    "schedulingP95Ms": 534,
+    "duplicateClaims": 0
+  },
+  "correctness": {
+    "maxJobs": 50000,
+    "succeededExecutions": 50000,
+    "doneOutbox": 50000,
+    "duplicateClaims": 0,
+    "duplicateExecutionIds": 0,
+    "duplicateOutboxIds": 0
+  },
+  "observedResources50k": {
+    "postgresqlCpuPercent": 501.86,
+    "postgresqlMemoryMiB": 690.8,
+    "javaWorkingSetMiB": 928.1,
+    "javaPrivateMemoryMiB": 1220.8,
+    "jvmPeakHeapMiB": 731.43,
+    "jvmPeakNonHeapMiB": 36.08,
+    "postgresqlWaitEvents": ["WALWrite", "WALSync"]
+  }
+}

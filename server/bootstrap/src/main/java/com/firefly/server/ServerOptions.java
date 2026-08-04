@@ -392,7 +392,9 @@ public record ServerOptions(
                         intOption(flags, env, config, "firefly.scheduler.max-due-records-per-tick",
                                 "FIREFLY_SCHEDULER_MAX_DUE_RECORDS_PER_TICK", 10_000),
                         durationOption(flags, env, config, "firefly.scheduler.max-idle-wakeup",
-                                "FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", Duration.ofMillis(500))
+                                "FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", Duration.ofMillis(500)),
+                        intOption(flags, env, config, "firefly.scheduler.batch-size",
+                                "FIREFLY_SCHEDULER_BATCH_SIZE", 200)
                 ),
                 jwtSecurityOptions(flags, env, config)
         );

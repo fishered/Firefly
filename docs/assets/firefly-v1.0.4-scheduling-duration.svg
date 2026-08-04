@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Firefly v1.0.4 scheduling clear time comparison</title>
+  <desc id="desc">Log scale comparison of scheduling clear time before and after bounded batch persistence for 5K, 10K, 20K and 50K tasks.</desc>
+  <rect width="1280" height="720" fill="#f7f9fb"/>
+  <rect x="32" y="28" width="1216" height="92" rx="6" fill="#17212b"/>
+  <text x="62" y="66" fill="#fff" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700">Scheduling clear time</text>
+  <text x="62" y="96" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="15">Time from the common due instant until all execution records are created | PostgreSQL 16.14 | 32 shards | batch size 200</text>
+  <text x="1040" y="68" fill="#54d69d" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700">133.6x faster</text>
+  <text x="1040" y="95" fill="#b9c7d5" font-family="Segoe UI,Arial,sans-serif" font-size="14">50K: 477.068s -> 3.572s</text>
+
+  <rect x="32" y="144" width="1216" height="430" rx="6" fill="#fff" stroke="#d8e0e8"/>
+  <text x="62" y="181" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700">Before vs optimized (logarithmic y-axis)</text>
+  <rect x="974" y="158" width="16" height="16" fill="#e05d5d"/><text x="998" y="171" fill="#4d5d6c" font-family="Segoe UI,Arial,sans-serif" font-size="14">Before</text>
+  <rect x="1078" y="158" width="16" height="16" fill="#168a70"/><text x="1102" y="171" fill="#4d5d6c" font-family="Segoe UI,Arial,sans-serif" font-size="14">Optimized</text>
+  <line x1="128" y1="500" x2="930" y2="500" stroke="#8e9baa"/>
+  <line x1="128" y1="215" x2="128" y2="500" stroke="#8e9baa"/>
+  <g stroke="#e3e8ee" stroke-width="1">
+    <line x1="128" y1="500" x2="930" y2="500"/><line x1="128" y1="452" x2="930" y2="452"/>
+    <line x1="128" y1="405" x2="930" y2="405"/><line x1="128" y1="357" x2="930" y2="357"/>
+    <line x1="128" y1="310" x2="930" y2="310"/><line x1="128" y1="262" x2="930" y2="262"/>
+    <line x1="128" y1="215" x2="930" y2="215"/>
+  </g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13" text-anchor="end">
+    <text x="116" y="505">0.1s</text><text x="116" y="457">1s</text><text x="116" y="410">10s</text>
+    <text x="116" y="362">100s</text><text x="116" y="315">200s</text><text x="116" y="267">300s</text><text x="116" y="220">500s</text>
+  </g>
+  <g fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="14" text-anchor="middle">
+    <text x="218" y="529">5K</text><text x="438" y="529">10K</text><text x="658" y="529">20K</text><text x="878" y="529">50K</text>
+  </g>
+  <polyline points="218,380 438,335 658,291 878,218" fill="none" stroke="#e05d5d" stroke-width="4"/>
+  <polyline points="218,454 438,455 658,445 878,429" fill="none" stroke="#168a70" stroke-width="4"/>
+  <g fill="#e05d5d"><circle cx="218" cy="380" r="6"/><circle cx="438" cy="335" r="6"/><circle cx="658" cy="291" r="6"/><circle cx="878" cy="218" r="6"/></g>
+  <g fill="#168a70"><circle cx="218" cy="454" r="6"/><circle cx="438" cy="455" r="6"/><circle cx="658" cy="445" r="6"/><circle cx="878" cy="429" r="6"/></g>
+  <g fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="13" text-anchor="middle">
+    <text x="218" y="365">41.399s</text><text x="438" y="320">101.295s</text><text x="658" y="276">214.172s</text><text x="878" y="203">477.068s</text>
+    <text x="218" y="476">0.906s</text><text x="438" y="477">0.937s</text><text x="658" y="467">1.869s</text><text x="878" y="451">3.572s</text>
+  </g>
+  <g font-family="Segoe UI,Arial,sans-serif" font-size="13" text-anchor="middle">
+    <rect x="182" y="540" width="72" height="24" rx="3" fill="#fff1f1"/><text x="218" y="557" fill="#b44848">45.7x</text>
+    <rect x="402" y="540" width="72" height="24" rx="3" fill="#fff1f1"/><text x="438" y="557" fill="#b44848">108.1x</text>
+    <rect x="622" y="540" width="72" height="24" rx="3" fill="#fff1f1"/><text x="658" y="557" fill="#b44848">114.6x</text>
+    <rect x="842" y="540" width="72" height="24" rx="3" fill="#e9f6f2"/><text x="878" y="557" fill="#168a70" font-weight="700">133.6x</text>
+  </g>
+  <rect x="970" y="220" width="238" height="196" rx="4" fill="#f1f7f5" stroke="#cce8df"/>
+  <text x="992" y="252" fill="#168a70" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700">What changed</text>
+  <text x="992" y="282" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">One transaction per batch</text>
+  <text x="992" y="308" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">PreparedStatement batching</text>
+  <text x="992" y="334" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">Single FORBID lookup / batch</text>
+  <text x="992" y="378" fill="#17212b" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700">50K result</text>
+  <text x="992" y="402" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14">All 50,000 executions created</text>
+  <text x="62" y="612" fill="#314252" font-family="Segoe UI,Arial,sans-serif" font-size="14" font-weight="700">Reading the chart</text>
+  <text x="62" y="638" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">The logarithmic axis keeps the 41-477s baseline and the 0.9-3.6s optimized range visible together.</text>
+  <text x="62" y="664" fill="#647586" font-family="Segoe UI,Arial,sans-serif" font-size="13">This is scheduling clear time, not business execution time or task registration time.</text>
+  <text x="62" y="694" fill="#8a97a4" font-family="Segoe UI,Arial,sans-serif" font-size="12">Local benchmark on 2026-08-04. Absolute results depend on database, storage, network and lease configuration.</text>
+</svg>
