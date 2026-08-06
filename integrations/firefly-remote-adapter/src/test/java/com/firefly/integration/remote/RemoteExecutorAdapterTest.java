@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -48,6 +49,32 @@ class RemoteExecutorAdapterTest {
             assertEquals(Set.of("billing"), adapter.handlerNames());
             assertTrue(gateway.dispatch("billing-executor", "billing", context("billing")));
             assertTrue(handled.await(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void dispatchesToAnAnnotatedMethodOnAnExplicitObject() throws Exception {
+        int port = freePort();
+        InMemorySchedulerCatalog catalog = new InMemorySchedulerCatalog();
+        catalog.saveExecutor(ExecutorDefinition.builder()
+                .name("billing-executor")
+                .protocols(Set.of(ExecutorProtocol.TCP))
+                .build());
+        NettyExecutorGateway gateway = new NettyExecutorGateway(
+                port, new InMemoryExecutorRegistry(), new NettyExecutorConnectionRegistry(),
+                Clock.systemUTC(), catalog, true
+        );
+        AnnotatedBillingHandlers handlers = new AnnotatedBillingHandlers();
+
+        gateway.start();
+        try (gateway; RemoteExecutorAdapter adapter = RemoteExecutorAdapter.create(
+                options(port, "billing-executor"), RemoteHandlerProvider.annotated(handlers)
+        )) {
+            adapter.start();
+
+            assertTrue(gateway.dispatch("billing-executor", "annotated-billing", context("annotated-billing")));
+            assertTrue(handlers.handled.await(3, TimeUnit.SECONDS));
+            assertEquals("execution-a", handlers.executionId.get());
         }
     }
 
@@ -105,6 +132,17 @@ class RemoteExecutorAdapterTest {
     private int freePort() throws java.io.IOException {
         try (ServerSocket socket = new ServerSocket(0)) {
             return socket.getLocalPort();
+        }
+    }
+
+    static class AnnotatedBillingHandlers {
+        private final CountDownLatch handled = new CountDownLatch(1);
+        private final AtomicReference<String> executionId = new AtomicReference<>();
+
+        @FireflyHandler(handlerName = "annotated-billing")
+        private void bill(ExecutionContext context) {
+            executionId.set(context.executionId());
+            handled.countDown();
         }
     }
 }
