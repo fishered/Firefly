@@ -130,14 +130,14 @@ public final class RemoteAdapterOptions {
     }
 
     private static RemoteAdapterTlsOptions tls(Properties properties) {
-        boolean enabled = Boolean.parseBoolean(value(properties, "firefly.executor.tls.enabled", "false"));
+        boolean enabled = Boolean.parseBoolean(value(properties, "firefly.executor.tls-enabled", "false"));
         return new RemoteAdapterTlsOptions(
                 enabled,
-                path(properties, "firefly.executor.tls.certificate-chain"),
-                path(properties, "firefly.executor.tls.private-key"),
-                value(properties, "firefly.executor.tls.private-key-password", ""),
-                path(properties, "firefly.executor.tls.trust-certificates"),
-                Boolean.parseBoolean(value(properties, "firefly.executor.tls.verify-hostname", "true"))
+                path(properties, "firefly.executor.tls-certificate-chain"),
+                path(properties, "firefly.executor.tls-private-key"),
+                value(properties, "firefly.executor.tls-private-key-password", ""),
+                path(properties, "firefly.executor.tls-trust-certificates"),
+                Boolean.parseBoolean(value(properties, "firefly.executor.tls-verify-hostname", "true"))
         );
     }
 
