@@ -50,6 +50,7 @@ def publishedProjects = [
         ":transports:netty-protocol",
         ":transports:netty",
         ":clients:executor-netty",
+        ":integrations:firefly-remote-adapter",
         ":integrations:firefly-spring-boot-autoconfigure",
         ":integrations:firefly-spring-boot-starter"
 ]
@@ -60,6 +61,7 @@ def publishedProjectDescriptions = [
         ":transports:netty-protocol"                      : "Shared wire protocol model for Firefly Netty gateways and executor clients.",
         ":transports:netty"                               : "Netty protocol and transport implementation shared by Firefly gateways and executors.",
         ":clients:executor-netty"                         : "Resilient Netty executor client for connecting business services to Firefly gateways.",
+        ":integrations:firefly-remote-adapter"            : "Framework-neutral Java remote executor adapter for non-Spring services.",
         ":integrations:firefly-spring-boot-autoconfigure" : "Spring Boot auto-configuration for Firefly executors and annotated jobs.",
         ":integrations:firefly-spring-boot-starter"       : "Single dependency for integrating Spring Boot applications with Firefly."
 ]
