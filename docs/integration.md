@@ -153,24 +153,16 @@ Netty 是当前发行版默认且唯一装配的 Executor transport，不属于�
 业务服务执行任务 -> ACK / REPORT_RESULT 返回结果
 ```
 
-传统项目使用 `transports:netty`：
+传统非 Spring Java 服务推荐使用 `firefly-remote-adapter`。它只连接预先创建的固定 Executor 并注册 Handler，不会创建或更新 Executor、Job 和调度定义：
 
 ```java
-NettyExecutorClient client = NettyExecutorClient.builder()
-        .gatewayAddresses(List.of(
-                "firefly-1:9700",
-                "firefly-2:9700",
-                "firefly-3:9700"
-        ))
-        .executorName("billing-executor")
-        .serviceName("billing-service")
-        .build()
-        .registerHandler("billingHandler", context -> {
-            // run business code
-        });
-
-client.start();
+RemoteExecutorAdapter.run(handlers -> handlers.bind(
+        "billingHandler",
+        billingService::execute
+));
 ```
+
+Executor 需要先在 Admin 创建；完整依赖、配置、注解便利方式和 readiness 语义见 [remote-adapter.md](remote-adapter.md)。底层 `NettyExecutorClient` 仍作为低层客户端保留，但普通非 Spring 集成不需要直接操作传输细节。
 
 Spring Boot 项目只需要使用 `io.github.fishered:firefly-spring-boot-starter`，配置 `firefly.executor.name` 后即可自动注册：
 
