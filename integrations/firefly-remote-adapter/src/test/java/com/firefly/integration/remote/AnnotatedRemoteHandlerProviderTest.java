@@ -14,14 +14,20 @@ class AnnotatedRemoteHandlerProviderTest {
 
         RemoteHandlerProvider.annotated(new BillingHandlers()).register(registry);
 
-        assertEquals(java.util.Set.of("billing"), registry.names());
+        assertEquals(
+                java.util.Set.of(BillingHandlers.class.getName() + "#bill"),
+                registry.names()
+        );
     }
 
     @Test
-    void rejectsDuplicateNamesAcrossExplicitObjects() {
-        RemoteHandlerProvider provider = RemoteHandlerProvider.annotated(
-                new BillingHandlers(), new DuplicateBillingHandlers()
-        );
+    void exposesNoManuallyMaintainedAnnotationAttributes() {
+        assertEquals(0, FireflyHandler.class.getDeclaredMethods().length);
+    }
+
+    @Test
+    void rejectsAnnotatedOverloadsWithTheSameAutomaticName() {
+        RemoteHandlerProvider provider = RemoteHandlerProvider.annotated(new DuplicateBillingHandlers());
 
         assertThrows(IllegalArgumentException.class, () -> provider.register(new RemoteHandlerRegistry()));
     }
@@ -38,19 +44,23 @@ class AnnotatedRemoteHandlerProviderTest {
     }
 
     static class BillingHandlers {
-        @FireflyHandler(handlerName = "billing")
+        @FireflyHandler
         private void bill(ExecutionContext context) {
         }
     }
 
     static class DuplicateBillingHandlers {
-        @FireflyHandler(handlerName = "billing")
+        @FireflyHandler
         void bill() {
+        }
+
+        @FireflyHandler
+        void bill(ExecutionContext context) {
         }
     }
 
     static class InvalidHandlers {
-        @FireflyHandler(handlerName = "invalid")
+        @FireflyHandler
         String invalid() {
             return "invalid";
         }

@@ -72,7 +72,8 @@ class RemoteExecutorAdapterTest {
         )) {
             adapter.start();
 
-            assertTrue(gateway.dispatch("billing-executor", "annotated-billing", context("annotated-billing")));
+            String handlerName = AnnotatedBillingHandlers.class.getName() + "#bill";
+            assertTrue(gateway.dispatch("billing-executor", handlerName, context(handlerName)));
             assertTrue(handlers.handled.await(3, TimeUnit.SECONDS));
             assertEquals("execution-a", handlers.executionId.get());
         }
@@ -139,7 +140,7 @@ class RemoteExecutorAdapterTest {
         private final CountDownLatch handled = new CountDownLatch(1);
         private final AtomicReference<String> executionId = new AtomicReference<>();
 
-        @FireflyHandler(handlerName = "annotated-billing")
+        @FireflyHandler
         private void bill(ExecutionContext context) {
             executionId.set(context.executionId());
             handled.countDown();

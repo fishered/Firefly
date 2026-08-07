@@ -5,11 +5,16 @@ import com.firefly.domain.ExecutionContext;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 
 final class AnnotatedRemoteHandlerProvider implements RemoteHandlerProvider {
+    private static final int MAX_HANDLER_NAME_LENGTH = 256;
     private final List<Object> targets;
 
     AnnotatedRemoteHandlerProvider(Object... targets) {
@@ -28,7 +33,7 @@ final class AnnotatedRemoteHandlerProvider implements RemoteHandlerProvider {
                     if (annotation == null || method.isBridge() || method.isSynthetic()) continue;
                     validate(method);
                     makeAccessible(method, target);
-                    registry.bind(annotation.handlerName(), context -> invoke(method, target, context));
+                    registry.bind(handlerName(target.getClass(), method), context -> invoke(method, target, context));
                 }
             }
         }
@@ -72,5 +77,19 @@ final class AnnotatedRemoteHandlerProvider implements RemoteHandlerProvider {
 
     private static IllegalArgumentException invalid(Method method, String reason) {
         return new IllegalArgumentException("@FireflyHandler method " + reason + ": " + method.toGenericString());
+    }
+
+    private static String handlerName(Class<?> targetClass, Method method) {
+        String value = targetClass.getName() + "#" + method.getName();
+        if (value.length() <= MAX_HANDLER_NAME_LENGTH) return value;
+        String digest;
+        try {
+            digest = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))
+            ).substring(0, 24);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+        return value.substring(0, MAX_HANDLER_NAME_LENGTH - digest.length() - 1) + "~" + digest;
     }
 }
