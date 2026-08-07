@@ -3,19 +3,33 @@
 Firefly 的公共 Java 构件使用 `io.github.fishered` 命名空间。普通使用者只需要引入：
 
 ```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.fishered</groupId>
+            <artifactId>firefly-bom</artifactId>
+            <version>1.0.5</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
 <dependency>
     <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
-    <version>1.0.1</version>
 </dependency>
 ```
 
-发布流程会同时发布 Starter 的完整内部依赖链：
+发布流程会同时发布全部公共 Java 构件：
 
+- `firefly-bom`
 - `scheduler-core`
 - `plugin-api`
+- `netty-protocol`
 - `netty`
 - `executor-netty`
+- `firefly-remote-adapter`
 - `firefly-spring-boot-autoconfigure`
 - `firefly-spring-boot-starter`
 
@@ -57,7 +71,7 @@ gpg --armor --output "C:\secure\firefly-private-key.asc" --export-secret-keys <K
 .\gradlew.bat --no-parallel --no-configuration-cache verifyMavenCentralPublication
 ```
 
-它会运行测试，并为六个公共模块生成 POM、`sources.jar` 和 `javadoc.jar`。
+它会运行测试，并为所有公共 Java 模块生成 POM、`sources.jar` 和 `javadoc.jar`，同时为 `firefly-bom` 生成并检查 Maven BOM POM。
 
 本地 Maven 仓库发布仍然使用：
 
@@ -82,7 +96,7 @@ $env:ORG_GRADLE_PROJECT_signingInMemoryKeyPassword="<GPG_PASSWORD>"
 .\gradlew.bat --no-parallel --no-configuration-cache publishAllPublicationsToMavenCentralRepository
 ```
 
-然后进入 Central Portal 的 Deployments 页面，等待验证完成。第一次建议人工检查六个模块、POM、签名、Sources 和 Javadoc 后再点击 Publish。
+然后进入 Central Portal 的 Deployments 页面，等待验证完成。第一次建议人工检查九个公共构件、POM、签名，以及 Java Library 构件的 Sources 和 Javadoc 后再点击 Publish。
 
 确认整个流程稳定后，可以直接上传并自动发布：
 
@@ -124,4 +138,4 @@ https://central.sonatype.com/artifact/io.github.fishered/firefly-spring-boot-sta
 mvn -U dependency:tree
 ```
 
-确认六个 Firefly 模块都来自 Maven Central。任何修复都必须使用新版本，例如 `1.0.2`。
+确认 Firefly Starter 及其传递模块都来自 Maven Central，并验证 `firefly-bom` 可以管理所有公共构件版本。任何修复都必须使用新版本。
