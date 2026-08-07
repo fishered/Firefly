@@ -27,27 +27,7 @@ Python、Go 和通用 HTTP Agent 不在 v1.0.5 范围内。后续 Agent 应保�
 
 ## 推荐接入方式
 
-业务程序显式声明该服务固定提供的 Handler，然后让 Adapter 跟随进程生命周期运行：
-
-```java
-import com.firefly.integration.remote.RemoteExecutorAdapter;
-
-public final class BillingApplication {
-    public static void main(String[] args) throws InterruptedException {
-        BillingService billingService = new BillingService();
-
-        RemoteExecutorAdapter.run(handlers -> handlers
-                .bind("billing", billingService::execute)
-                .bind("reconcile", billingService::reconcile));
-    }
-}
-```
-
-`RemoteExecutorAdapter.run(...)` 会加载配置、连接 Gateway、等待注册成功，并安装 JVM 关闭钩子。显式 Registry 是主 API；它没有任务、Cron 或 Executor CRUD 方法。
-
-## 可选注解映射
-
-不希望集中编写 Registry 时，可以只扫描程序明确传入的对象：
+业务程序在明确传入的对象上标记 Handler，然后让 Adapter 跟随进程生命周期运行：
 
 ```java
 import com.firefly.domain.ExecutionContext;
@@ -56,12 +36,12 @@ import com.firefly.integration.remote.RemoteExecutorAdapter;
 import com.firefly.integration.remote.RemoteHandlerProvider;
 
 final class BillingHandlers {
-    @FireflyHandler(handlerName = "billing")
-    void execute(ExecutionContext context) {
+    @FireflyHandler
+    void billing(ExecutionContext context) {
         // business code
     }
 
-    @FireflyHandler(handlerName = "reconcile")
+    @FireflyHandler
     void reconcile() {
         // business code
     }
@@ -76,7 +56,22 @@ public final class BillingApplication {
 }
 ```
 
-`@FireflyHandler` 只包含 `handlerName`。方法必须返回 `void`，参数必须为空或只有一个 `ExecutionContext`。Adapter 不扫描 classpath，也不会从注解生成 Job 或调度配置。
+`@FireflyHandler` 是 Remote Adapter 自己的 JDK 运行时注解，不依赖 Spring。Adapter 使用业务类全限定名和方法名生成稳定入口，例如 `com.example.BillingHandlers#billing`。方法必须返回 `void`，参数必须为空或只有一个 `ExecutionContext`。
+
+同一业务类的注解重载方法会生成相同入口并在连接前失败，避免调度入口含糊。超长入口与 Starter 一样使用“可读前缀 + SHA-256 摘要”稳定缩短。Adapter 只扫描明确传入的对象，不扫描 classpath，也不会从注解生成 Job 或调度配置。
+
+`RemoteExecutorAdapter.run(...)` 会加载配置、连接 Gateway、等待注册成功，并安装 JVM 关闭钩子。
+
+## 低层程序化注册
+
+确实需要兼容外部动态 Handler 名称时，可以使用低层 Registry API：
+
+```java
+RemoteExecutorAdapter.run(handlers -> handlers
+        .bind("legacy-billing", billingService::execute));
+```
+
+字符串名称由业务代码负责稳定性，只建议用于兼容或动态适配；常规固定业务方法使用 `@FireflyHandler` 自动入口。
 
 ## 配置
 
@@ -130,7 +125,7 @@ RemoteAdapterOptions options = RemoteAdapterOptions.builder()
 
 try (RemoteExecutorAdapter adapter = RemoteExecutorAdapter.create(
         options,
-        handlers -> handlers.bind("billing", billingService::execute)
+        RemoteHandlerProvider.annotated(new BillingHandlers())
 )) {
     adapter.start();
     applicationRuntime.runUntilShutdown();
