@@ -1,0 +1,16 @@
+plugins {
+    id "java-platform"
+}
+
+dependencies {
+    constraints {
+        api project(":libs:scheduler-core")
+        api project(":plugins:plugin-api")
+        api project(":transports:netty-protocol")
+        api project(":transports:netty")
+        api project(":clients:executor-netty")
+        api project(":integrations:firefly-remote-adapter")
+        api project(":integrations:firefly-spring-boot-autoconfigure")
+        api project(":integrations:firefly-spring-boot-starter")
+    }
+}

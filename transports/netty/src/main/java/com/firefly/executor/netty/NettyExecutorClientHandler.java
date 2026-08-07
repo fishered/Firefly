@@ -27,6 +27,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     private final String instanceId;
     private final String sessionId;
     private final String authToken;
+    private final ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy;
     private final String serviceName;
     private final Duration heartbeatInterval;
     private final JobHandlerRegistry handlerRegistry;
@@ -54,13 +55,10 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             Consumer<io.netty.channel.Channel> disconnectListener
     ) {
         this(
-                executorName, instanceId, sessionId, authToken, serviceName, heartbeatInterval,
-                handlerRegistry,
-                NettyExecutorWorkScheduler.borrowed(
-                        workerPool, NettyExecutorResourceOptions.defaults(), new com.firefly.metrics.SchedulerMetrics()
-                ),
-                codec, clock, executionRegistry, disconnectListener,
-                ignored -> { }, (ignored, reason) -> { }
+                executorName, instanceId, sessionId, authToken,
+                ExecutorDefinitionRegistrationPolicy.ALLOW_AUTO_CREATE,
+                serviceName, heartbeatInterval, handlerRegistry, workerPool, codec, clock,
+                executionRegistry, disconnectListener
         );
     }
 
@@ -80,10 +78,65 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             Consumer<io.netty.channel.Channel> registrationListener,
             BiConsumer<io.netty.channel.Channel, String> registrationRejectionListener
     ) {
+        this(
+                executorName, instanceId, sessionId, authToken,
+                ExecutorDefinitionRegistrationPolicy.ALLOW_AUTO_CREATE,
+                serviceName, heartbeatInterval, handlerRegistry, workScheduler, codec, clock,
+                executionRegistry, disconnectListener, registrationListener, registrationRejectionListener
+        );
+    }
+
+    NettyExecutorClientHandler(
+            String executorName,
+            String instanceId,
+            String sessionId,
+            String authToken,
+            ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy,
+            String serviceName,
+            Duration heartbeatInterval,
+            JobHandlerRegistry handlerRegistry,
+            ExecutorService workerPool,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            NettyExecutorExecutionRegistry executionRegistry,
+            Consumer<io.netty.channel.Channel> disconnectListener
+    ) {
+        this(
+                executorName, instanceId, sessionId, authToken, definitionRegistrationPolicy,
+                serviceName, heartbeatInterval,
+                handlerRegistry,
+                NettyExecutorWorkScheduler.borrowed(
+                        workerPool, NettyExecutorResourceOptions.defaults(), new com.firefly.metrics.SchedulerMetrics()
+                ),
+                codec, clock, executionRegistry, disconnectListener,
+                ignored -> { }, (ignored, reason) -> { }
+        );
+    }
+
+    NettyExecutorClientHandler(
+            String executorName,
+            String instanceId,
+            String sessionId,
+            String authToken,
+            ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy,
+            String serviceName,
+            Duration heartbeatInterval,
+            JobHandlerRegistry handlerRegistry,
+            NettyExecutorWorkScheduler workScheduler,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            NettyExecutorExecutionRegistry executionRegistry,
+            Consumer<io.netty.channel.Channel> disconnectListener,
+            Consumer<io.netty.channel.Channel> registrationListener,
+            BiConsumer<io.netty.channel.Channel, String> registrationRejectionListener
+    ) {
         this.executorName = executorName;
         this.instanceId = instanceId;
         this.sessionId = sessionId;
         this.authToken = authToken;
+        this.definitionRegistrationPolicy = java.util.Objects.requireNonNull(
+                definitionRegistrationPolicy, "definitionRegistrationPolicy"
+        );
         this.serviceName = serviceName;
         this.heartbeatInterval = heartbeatInterval;
         this.handlerRegistry = handlerRegistry;
@@ -98,23 +151,27 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
 
     @Override
     public void channelActive(ChannelHandlerContext context) {
+        java.util.LinkedHashMap<String, String> payload = new java.util.LinkedHashMap<>(Map.of(
+                "executorName", executorName,
+                "instanceId", instanceId,
+                "sessionId", sessionId,
+                "integrationKey", authToken,
+                "authToken", authToken,
+                "serviceName", serviceName,
+                "handlerNames", handlerRegistry.names().stream().sorted()
+                        .collect(Collectors.joining(",")),
+                "protocolVersion", Integer.toString(NettyExecutorProtocol.CURRENT_VERSION),
+                "capabilities", NettyExecutorProtocol.encodeCapabilities(
+                        NettyExecutorProtocol.CLIENT_CAPABILITIES
+                )
+        ));
+        if (definitionRegistrationPolicy == ExecutorDefinitionRegistrationPolicy.REQUIRE_EXISTING) {
+            payload.put("definitionRegistrationPolicy", definitionRegistrationPolicy.name());
+        }
         write(context, new NettyExecutorMessage(
                 UUID.randomUUID().toString(),
                 NettyExecutorMessageType.REGISTER_EXECUTOR,
-                Map.of(
-                        "executorName", executorName,
-                        "instanceId", instanceId,
-                        "sessionId", sessionId,
-                        "integrationKey", authToken,
-                        "authToken", authToken,
-                        "serviceName", serviceName,
-                        "handlerNames", handlerRegistry.names().stream().sorted()
-                                .collect(Collectors.joining(",")),
-                        "protocolVersion", Integer.toString(NettyExecutorProtocol.CURRENT_VERSION),
-                        "capabilities", NettyExecutorProtocol.encodeCapabilities(
-                                NettyExecutorProtocol.CLIENT_CAPABILITIES
-                        )
-                )
+                payload
         ));
         heartbeatTask = context.executor().scheduleAtFixedRate(
                 () -> {

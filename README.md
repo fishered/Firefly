@@ -223,11 +223,24 @@ Starter 快速手册：[https://fishered.github.io/firefly-home/guide/quick-star
 
 Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外仓库：
 
+推荐导入 BOM，将版本集中维护在一个位置：
+
 ```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.fishered</groupId>
+            <artifactId>firefly-bom</artifactId>
+            <version>1.0.5</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
 <dependency>
     <groupId>io.github.fishered</groupId>
     <artifactId>firefly-spring-boot-starter</artifactId>
-    <version>1.0.1</version>
 </dependency>
 ```
 

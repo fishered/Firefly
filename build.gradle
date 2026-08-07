@@ -1,3 +1,5 @@
+import groovy.xml.XmlSlurper
+
 plugins {
     id "base"
     id "com.vanniktech.maven.publish" version "0.37.0" apply false
@@ -5,7 +7,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.0.4"
+    version = "1.0.5"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
@@ -16,11 +18,13 @@ allprojects {
 }
 
 subprojects {
-    apply plugin: "java-library"
+    if (project.path != ":platform:firefly-bom") {
+        apply plugin: "java-library"
 
-    java {
-        toolchain {
-            languageVersion = JavaLanguageVersion.of(21)
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(21)
+            }
         }
     }
 
@@ -45,21 +49,25 @@ subprojects {
 }
 
 def publishedProjects = [
+        ":platform:firefly-bom",
         ":libs:scheduler-core",
         ":plugins:plugin-api",
         ":transports:netty-protocol",
         ":transports:netty",
         ":clients:executor-netty",
+        ":integrations:firefly-remote-adapter",
         ":integrations:firefly-spring-boot-autoconfigure",
         ":integrations:firefly-spring-boot-starter"
 ]
 
 def publishedProjectDescriptions = [
+        ":platform:firefly-bom"                         : "Bill of materials for using a consistent set of Firefly Java modules.",
         ":libs:scheduler-core"                            : "Core scheduling domain, execution model, routing, and storage contracts for Firefly.",
         ":plugins:plugin-api"                             : "Public plugin API for extending Firefly without coupling plugins to server internals.",
         ":transports:netty-protocol"                      : "Shared wire protocol model for Firefly Netty gateways and executor clients.",
         ":transports:netty"                               : "Netty protocol and transport implementation shared by Firefly gateways and executors.",
         ":clients:executor-netty"                         : "Resilient Netty executor client for connecting business services to Firefly gateways.",
+        ":integrations:firefly-remote-adapter"            : "Framework-neutral Java remote executor adapter for non-Spring services.",
         ":integrations:firefly-spring-boot-autoconfigure" : "Spring Boot auto-configuration for Firefly executors and annotated jobs.",
         ":integrations:firefly-spring-boot-starter"       : "Single dependency for integrating Spring Boot applications with Firefly."
 ]
@@ -91,12 +99,14 @@ if (centralPublishRequested && !hasMavenCentralCredentials) {
 configure(publishedProjects.collect { project(it) }) {
     apply plugin: "com.vanniktech.maven.publish"
 
-    tasks.named("jar", Jar) {
-        from(rootProject.file("LICENSE")) {
-            into("META-INF")
-        }
-        from(rootProject.file("NOTICE")) {
-            into("META-INF")
+    if (project.path != ":platform:firefly-bom") {
+        tasks.named("jar", Jar) {
+            from(rootProject.file("LICENSE")) {
+                into("META-INF")
+            }
+            from(rootProject.file("NOTICE")) {
+                into("META-INF")
+            }
         }
     }
 
@@ -174,14 +184,54 @@ tasks.register("publishToFireflyMavenLocal") {
 tasks.register("verifyMavenCentralPublication") {
     group = "verification"
     description = "Builds tests, POMs, sources, and Javadocs for every Maven Central module without uploading."
-    dependsOn(subprojects.collect { "${it.path}:test" })
+    dependsOn(subprojects.findAll { it.path != ":platform:firefly-bom" }.collect { "${it.path}:test" })
     dependsOn(publishedProjects.collectMany {
-        [
-                "${it}:generatePomFileForMavenPublication",
-                "${it}:sourcesJar",
-                "${it}:plainJavadocJar"
+        if (it == ":platform:firefly-bom") {
+            return ["${it}:generatePomFileForMavenPublication"]
+        }
+        return [
+            "${it}:generatePomFileForMavenPublication",
+            "${it}:sourcesJar",
+            "${it}:plainJavadocJar"
         ]
     })
+    dependsOn("verifyFireflyBomPom")
+}
+
+tasks.register("verifyFireflyBomPom") {
+    group = "verification"
+    description = "Verifies the generated Firefly BOM coordinates and managed module versions."
+    dependsOn(":platform:firefly-bom:generatePomFileForMavenPublication")
+
+    doLast {
+        def pomFile = project(":platform:firefly-bom")
+                .layout.buildDirectory
+                .file("publications/maven/pom-default.xml")
+                .get().asFile
+        def pom = new XmlSlurper(false, false).parse(pomFile)
+        def expectedArtifacts = publishedProjects
+                .findAll { it != ":platform:firefly-bom" }
+                .collect { project(it).name }
+                .toSet()
+        def managedDependencies = pom.dependencyManagement.dependencies.dependency
+        def actualArtifacts = managedDependencies.collect { it.artifactId.text() }.toSet()
+
+        if (pom.groupId.text() != project.group.toString()
+                || pom.artifactId.text() != "firefly-bom"
+                || pom.version.text() != project.version.toString()
+                || pom.packaging.text() != "pom") {
+            throw new GradleException("Generated firefly-bom POM has invalid coordinates or packaging: ${pomFile}")
+        }
+        if (actualArtifacts != expectedArtifacts) {
+            throw new GradleException("Generated firefly-bom POM manages ${actualArtifacts}, expected ${expectedArtifacts}")
+        }
+        managedDependencies.each { dependency ->
+            if (dependency.groupId.text() != project.group.toString()
+                    || dependency.version.text() != project.version.toString()) {
+                throw new GradleException("Invalid managed dependency in firefly-bom POM: ${dependency}")
+            }
+        }
+    }
 }
 
 def defaultSpringBootCompatibilityVersions = ["3.3.5", "3.4.12", "3.5.8", "4.0.0"]

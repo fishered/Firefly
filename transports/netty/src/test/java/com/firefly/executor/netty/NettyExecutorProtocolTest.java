@@ -41,6 +41,34 @@ class NettyExecutorProtocolTest {
         assertEquals(NettyExecutorMessageType.REGISTERED, response.type());
         assertEquals(Integer.toString(NettyExecutorProtocol.CURRENT_VERSION),
                 response.payload().get("protocolVersion"));
+        assertTrue(executors.find("orders", "instance-a").isPresent());
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void requireExistingPolicyRejectsUnknownDefinitionEvenWhenAutoCreateIsEnabled() {
+        InMemoryExecutorRegistry executors = new InMemoryExecutorRegistry();
+        EmbeddedChannel channel = channel(executors);
+        NettyExecutorMessage request = new NettyExecutorMessage(
+                "register-existing-only", NettyExecutorMessageType.REGISTER_EXECUTOR,
+                Map.of(
+                        "executorName", "orders",
+                        "instanceId", "instance-a",
+                        "sessionId", "session-a",
+                        "serviceName", "orders-service",
+                        "protocolVersion", "2",
+                        "definitionRegistrationPolicy", "REQUIRE_EXISTING"
+                )
+        );
+
+        channel.writeInbound(new NettyExecutorJsonCodec().encode(request));
+
+        NettyExecutorMessage response = new NettyExecutorJsonCodec().decode(
+                ((String) channel.readOutbound()).trim()
+        );
+        assertEquals(NettyExecutorMessageType.REGISTER_REJECTED, response.type());
+        assertEquals("UNKNOWN_EXECUTOR", response.payload().get("reasonCode"));
+        assertFalse(executors.find("orders", "instance-a").isPresent());
         channel.finishAndReleaseAll();
     }
 

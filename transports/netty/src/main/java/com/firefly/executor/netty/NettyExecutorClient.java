@@ -50,6 +50,7 @@ public final class NettyExecutorClient implements AutoCloseable {
     private final Duration reconnectInitialDelay;
     private final Duration reconnectMaxDelay;
     private final AuthTokenProvider authTokenProvider;
+    private final ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy;
     private final JobHandlerRegistry handlerRegistry;
     private final NettyExecutorWorkScheduler workScheduler;
     private final Clock clock;
@@ -78,6 +79,7 @@ public final class NettyExecutorClient implements AutoCloseable {
             Duration reconnectMaxDelay,
             String authToken,
             AuthTokenProvider authTokenProvider,
+            ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy,
             NettyTlsOptions tlsOptions,
             ExecutorResultStore resultStore,
             JobHandlerRegistry handlerRegistry,
@@ -98,6 +100,9 @@ public final class NettyExecutorClient implements AutoCloseable {
         this.authTokenProvider = authTokenProvider == null
                 ? AuthTokenProvider.fixed(authToken)
                 : authTokenProvider;
+        this.definitionRegistrationPolicy = Objects.requireNonNull(
+                definitionRegistrationPolicy, "definitionRegistrationPolicy"
+        );
         this.sslContext = Objects.requireNonNull(tlsOptions, "tlsOptions").clientContext();
         this.executionRegistry = new NettyExecutorExecutionRegistry(
                 Objects.requireNonNull(resultStore, "resultStore")
@@ -133,6 +138,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                 .reconnectMaxDelay(Duration.ofSeconds(30))
                 .authToken("")
                 .authTokenProvider(null)
+                .definitionRegistrationPolicy(ExecutorDefinitionRegistrationPolicy.ALLOW_AUTO_CREATE)
                 .tlsOptions(NettyTlsOptions.disabled())
                 .resultStore(new InMemoryExecutorResultStore())
                 .handlerRegistry(new InMemoryJobHandlerRegistry())
@@ -191,6 +197,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                                         instanceId,
                                         sessionId,
                                         authTokenProvider.accessToken(),
+                                        definitionRegistrationPolicy,
                                         serviceName,
                                         heartbeatInterval,
                                         handlerRegistry,
