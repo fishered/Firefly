@@ -15,30 +15,13 @@ Python、Go 和通用 HTTP Agent 不在 v1.0.5 范围内。后续 Agent 应保�
 
 ## 引入依赖
 
-推荐在项目的 `dependencyManagement` 中导入 Firefly BOM，业务依赖就不需要重复填写版本号：
-
 ```xml
-<dependencyManagement>
-    <dependencies>
-        <dependency>
-            <groupId>io.github.fishered</groupId>
-            <artifactId>firefly-bom</artifactId>
-            <version>1.0.5</version>
-            <type>pom</type>
-            <scope>import</scope>
-        </dependency>
-    </dependencies>
-</dependencyManagement>
-
-<dependencies>
-    <dependency>
-        <groupId>io.github.fishered</groupId>
-        <artifactId>firefly-remote-adapter</artifactId>
-    </dependency>
-</dependencies>
+<dependency>
+    <groupId>io.github.fishered</groupId>
+    <artifactId>firefly-remote-adapter</artifactId>
+    <version>1.0.5</version>
+</dependency>
 ```
-
-如果项目不使用 BOM，也可以继续直接在 `firefly-remote-adapter` 上声明 `<version>1.0.5</version>`。
 
 运行环境要求 Java 21。
 
