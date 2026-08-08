@@ -88,10 +88,6 @@ public final class JobDispatcher {
         JobDefinition definition = command.definition();
         boolean remote = isRemote(definition);
         AtomicInteger running = runningCounters.computeIfAbsent(definition.id(), ignored -> new AtomicInteger());
-        if (definition.concurrencyPolicy() == ConcurrencyPolicy.FORBID && running.get() > 0) {
-            log.info(() -> "skip job because previous execution is still running: " + definition.id());
-            return DispatchSubmission.rejected(remote);
-        }
 
         ExecutionContext context = context(command);
         if (remote) {
@@ -105,28 +101,44 @@ public final class JobDispatcher {
             }
         }
 
-        running.incrementAndGet();
+        if (definition.concurrencyPolicy() == ConcurrencyPolicy.FORBID) {
+            if (!running.compareAndSet(0, 1)) {
+                log.info(() -> "skip job because previous execution is still running: " + definition.id());
+                return DispatchSubmission.rejected(false);
+            }
+        } else {
+            running.incrementAndGet();
+        }
         CompletableFuture<ExecutionStatus> completion = new CompletableFuture<>();
         try {
             workerPool.submit(() -> {
                 Instant startedAt = clock.instant();
-                saveExecution(command, ExecutionStatus.RUNNING, expectedTargets(definition));
+                ExecutionStatus outcome = null;
+                Throwable completionFailure = null;
                 try {
+                    saveExecution(command, ExecutionStatus.RUNNING, expectedTargets(definition));
                     execute(command, context);
                     saveExecution(command, ExecutionStatus.SUCCEEDED, 1);
-                    completion.complete(ExecutionStatus.SUCCEEDED);
+                    outcome = ExecutionStatus.SUCCEEDED;
                     Duration dispatchLag = Duration.between(command.scheduledFireTime(), command.dispatchTime());
                     log.info(() -> "job succeeded: " + definition.id()
                             + ", scheduled=" + command.scheduledFireTime()
                             + ", dispatchLag=" + dispatchLag);
                 } catch (Exception e) {
-                    saveExecution(command, ExecutionStatus.FAILED, expectedTargets(definition));
-                    completion.complete(ExecutionStatus.FAILED);
+                    try {
+                        saveExecution(command, ExecutionStatus.FAILED, expectedTargets(definition));
+                        outcome = ExecutionStatus.FAILED;
+                    } catch (Exception persistenceFailure) {
+                        e.addSuppressed(persistenceFailure);
+                        completionFailure = e;
+                    }
                     log.log(Level.SEVERE, "job failed: " + definition.id()
                             + ", scheduled=" + command.scheduledFireTime(), e);
                 } finally {
                     metrics.observeExecutionDuration(Duration.between(startedAt, clock.instant()));
                     running.decrementAndGet();
+                    if (completionFailure == null) completion.complete(outcome);
+                    else completion.completeExceptionally(completionFailure);
                 }
             });
             return new DispatchSubmission(true, false, completion);

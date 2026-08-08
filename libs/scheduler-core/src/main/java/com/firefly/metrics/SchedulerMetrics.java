@@ -44,6 +44,9 @@ public final class SchedulerMetrics {
     private final AtomicLong clockOffsetMillis = new AtomicLong();
     private final LongAdder clockDriftWarnings = new LongAdder();
     private final LongAdder clockSyncFailures = new LongAdder();
+    private final AtomicInteger localWorkerActive = new AtomicInteger();
+    private final AtomicInteger localWorkerMaxConcurrency = new AtomicInteger();
+    private final LongAdder localWorkerRejections = new LongAdder();
 
     public void observeScheduleDelay(Duration value) {
         scheduleDelay.observe(value);
@@ -122,6 +125,18 @@ public final class SchedulerMetrics {
         clockSyncFailures.increment();
     }
 
+    public void localWorkerCapacity(int maxConcurrency) {
+        localWorkerMaxConcurrency.set(Math.max(0, maxConcurrency));
+    }
+
+    public void localWorkerActive(int active) {
+        localWorkerActive.set(Math.max(0, active));
+    }
+
+    public void recordLocalWorkerRejection() {
+        localWorkerRejections.increment();
+    }
+
     public Snapshot snapshot() {
         return new Snapshot(
                 scheduleDelay.snapshot(), outboxAge.snapshot(), acknowledgementDelay.snapshot(),
@@ -134,7 +149,8 @@ public final class SchedulerMetrics {
                 executorClientQueueCapacity.get(),
                 gatewayForwardAttempts.sum(), gatewayForwardSuccesses.sum(), gatewayForwardFailures.sum(),
                 ownedShards.get(), clockOffsetMillis.get(),
-                clockDriftWarnings.sum(), clockSyncFailures.sum()
+                clockDriftWarnings.sum(), clockSyncFailures.sum(),
+                localWorkerActive.get(), localWorkerMaxConcurrency.get(), localWorkerRejections.sum()
         );
     }
 
@@ -161,7 +177,10 @@ public final class SchedulerMetrics {
             int ownedShards,
             long clockOffsetMillis,
             long clockDriftWarnings,
-            long clockSyncFailures
+            long clockSyncFailures,
+            int localWorkerActive,
+            int localWorkerMaxConcurrency,
+            long localWorkerRejections
     ) {
     }
 
