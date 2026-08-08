@@ -48,6 +48,7 @@ public final class SchedulerEngine {
     private final SchedulerTimingIndex timingIndex = new SchedulerTimingIndex();
     private long loadedConfigurationVersion = Long.MIN_VALUE;
     private Set<Integer> loadedShards = Set.of();
+    private Instant lastConfigurationCheck = Instant.MIN;
 
     public SchedulerEngine(JobRepository repository, JobDispatcher dispatcher, Clock clock) {
         this(repository, dispatcher, clock, () -> Map.of(0, new ShardLease(0, "local", Instant.MAX, 1L)), 1, false);
@@ -282,12 +283,19 @@ public final class SchedulerEngine {
 
     private void refreshTimingIndex(Set<Integer> shardIds) {
         Set<Integer> currentShards = Set.copyOf(shardIds);
-        long configurationVersion = repository.configurationVersion();
+        boolean checkConfiguration = !clock.instant().isBefore(
+                lastConfigurationCheck.plus(options.configurationRefreshInterval())
+        );
+        long configurationVersion = loadedConfigurationVersion;
+        if (checkConfiguration || !currentShards.equals(loadedShards)) {
+            configurationVersion = repository.configurationVersion();
+        }
         if (!currentShards.equals(loadedShards) || configurationVersion != loadedConfigurationVersion) {
             timingIndex.replace(repository.listForShards(currentShards, shardCount));
             loadedShards = currentShards;
             loadedConfigurationVersion = configurationVersion;
         }
+        lastConfigurationCheck = clock.instant();
     }
 
     private void forceReload() {
