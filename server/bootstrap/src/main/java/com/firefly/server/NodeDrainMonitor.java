@@ -62,6 +62,9 @@ final class NodeDrainMonitor implements NodeDrainStatusProvider, AutoCloseable {
         NodeStatus nodeStatus = nodeRegistry.find(nodeId)
                 .orElseThrow(() -> new IllegalArgumentException("node not found: " + nodeId))
                 .status();
+        if (nodeStatus != NodeStatus.DRAINING) {
+            return new NodeDrainStatus(nodeId, nodeStatus, 0, 0, 0, 0, false);
+        }
         long ownedShards = shardManager.countActiveOwnedBy(nodeId, clock.instant());
         long activeDispatches = jobRepository.countActiveDispatchesOwnedBy(nodeId);
         long activeTargets = executionRepository.countActiveTargetsByGateway(nodeId);

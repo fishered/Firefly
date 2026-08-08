@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 
 /** Authenticated Gateway-to-Gateway hop for an already planned target frame. */
 final class NettyGatewayForwardingTransport implements AutoCloseable {
@@ -28,6 +29,7 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
             .connectTimeout(Duration.ofSeconds(2))
             .build();
     private HttpServer server;
+    private ExecutorService serverExecutor;
 
     NettyGatewayForwardingTransport(
             NettyExecutorConnectionRegistry connections,
@@ -54,7 +56,13 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
             ), 0);
             server.createContext("/internal/executor/dispatch", this::handle);
             server.createContext("/internal/executor/isolate", this::handleIsolate);
-            server.setExecutor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor());
+            serverExecutor = new java.util.concurrent.ThreadPoolExecutor(
+                    32, 32, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.ArrayBlockingQueue<>(256),
+                    runnable -> new Thread(runnable, "firefly-gateway-forward"),
+                    new java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+            );
+            server.setExecutor(serverExecutor);
             server.start();
         } catch (IOException e) {
             throw new IllegalStateException("failed to start Gateway forwarding endpoint", e);
@@ -251,5 +259,6 @@ final class NettyGatewayForwardingTransport implements AutoCloseable {
     @Override
     public void close() {
         if (server != null) server.stop(0);
+        if (serverExecutor != null) serverExecutor.shutdownNow();
     }
 }
