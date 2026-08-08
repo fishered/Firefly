@@ -6,7 +6,10 @@ import com.firefly.domain.FixedRateSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.domain.MisfirePolicy;
 import com.firefly.registry.InMemoryJobHandlerRegistry;
+import com.firefly.store.DueJobBatch;
 import com.firefly.store.InMemoryJobRepository;
+import com.firefly.store.JobRepository;
+import com.firefly.store.ScheduledJobRecord;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -16,6 +19,8 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Collection;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -160,6 +165,28 @@ class SchedulerEngineTest {
         assertEquals(3, fixture.scheduledFireTimes().size());
     }
 
+    @Test
+    void reloadsTimingIndexAfterRepositoryAdvanceFails() {
+        Instant now = Instant.parse("2026-07-06T00:00:10Z");
+        InMemoryJobRepository delegate = new InMemoryJobRepository();
+        JobRepository repository = new FailOnceJobRepository(delegate);
+        InMemoryJobHandlerRegistry registry = new InMemoryJobHandlerRegistry();
+        List<ExecutionContext> executions = new ArrayList<>();
+        registry.register("handler", executions::add);
+        JobDispatcher dispatcher = new JobDispatcher(registry, new DirectExecutorService(),
+                Clock.fixed(now, ZoneOffset.UTC));
+        SchedulerEngine engine = new SchedulerEngine(repository, dispatcher, Clock.fixed(now, ZoneOffset.UTC));
+        repository.save(jobBuilder("job-retry").build(), now);
+
+        assertThrows(IllegalStateException.class, engine::tick);
+        assertTrue(executions.isEmpty());
+
+        engine.tick();
+
+        assertEquals(1, executions.size());
+        assertEquals(now.plusSeconds(5), repository.find("job-retry").orElseThrow().nextFireTime());
+    }
+
     private static JobDefinition.Builder jobBuilder(String id) {
         return JobDefinition.builder()
                 .id(id)
@@ -301,6 +328,68 @@ class SchedulerEngineTest {
         @Override
         public void execute(Runnable command) {
             command.run();
+        }
+    }
+
+    private static final class FailOnceJobRepository implements JobRepository {
+        private final InMemoryJobRepository delegate;
+        private boolean failNextAdvance = true;
+
+        private FailOnceJobRepository(InMemoryJobRepository delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void save(JobDefinition definition, Instant initialNextFireTime) {
+            delegate.save(definition, initialNextFireTime);
+        }
+
+        @Override
+        public Optional<ScheduledJobRecord> find(String jobId) {
+            return delegate.find(jobId);
+        }
+
+        @Override
+        public DueJobBatch findDueBatch(
+                Instant now,
+                int softLimit,
+                int hardLimit,
+                Set<String> excludedJobIds
+        ) {
+            return delegate.findDueBatch(now, softLimit, hardLimit, excludedJobIds);
+        }
+
+        @Override
+        public boolean updateNextFireTime(
+                String jobId,
+                Instant expectedCurrentNextFireTime,
+                Instant nextFireTime
+        ) {
+            if (failNextAdvance) {
+                failNextAdvance = false;
+                throw new IllegalStateException("simulated repository failure");
+            }
+            return delegate.updateNextFireTime(jobId, expectedCurrentNextFireTime, nextFireTime);
+        }
+
+        @Override
+        public List<ScheduledJobRecord> list() {
+            return delegate.list();
+        }
+
+        @Override
+        public long configurationVersion() {
+            return delegate.configurationVersion();
+        }
+
+        @Override
+        public boolean setEnabled(String jobId, boolean enabled) {
+            return delegate.setEnabled(jobId, enabled);
+        }
+
+        @Override
+        public boolean delete(String jobId) {
+            return delegate.delete(jobId);
         }
     }
 }
