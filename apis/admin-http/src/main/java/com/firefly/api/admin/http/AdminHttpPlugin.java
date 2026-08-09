@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Provides operational HTTP APIs without introducing a web framework into Firefly core.
@@ -17,6 +18,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
     private final AdminRequestReader requestReader;
     private final AdminHttpResponder responses = new AdminHttpResponder();
     private HttpServer server;
+    private ExecutorService executor;
 
     public AdminHttpPlugin() {
         this(AdminHttpOptions.defaults());
@@ -51,6 +53,13 @@ public final class AdminHttpPlugin implements FireflyPlugin {
                 .orElse(null);
         try {
             server = HttpServer.create(new InetSocketAddress(options.host(), options.port()), 0);
+            executor = new java.util.concurrent.ThreadPoolExecutor(
+                    32, 32, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.ArrayBlockingQueue<>(256),
+                    runnable -> new Thread(runnable, "firefly-admin-http"),
+                    new java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+            );
+            server.setExecutor(executor);
             var audit = new AdminAuditService(context);
             AdminHttpDispatcher dispatcher = new AdminHttpDispatcher(
                     requestReader,
@@ -89,6 +98,7 @@ public final class AdminHttpPlugin implements FireflyPlugin {
         if (server != null) {
             server.stop(0);
         }
+        if (executor != null) executor.shutdownNow();
     }
 
 }
