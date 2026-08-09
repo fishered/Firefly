@@ -3,12 +3,6 @@
 仓库内文档面向开发、集成和运维场景。面向使用者的快速入门与配置参考仍以
 [Firefly 在线文档](https://fishered.github.io/firefly-home/)为入口。
 
-## 发布说明
-
-| 文档 | 内容 |
-| --- | --- |
-| [release-notes-v1.0.6.md](release-notes-v1.0.6.md) | v1.0.6 调度恢复、并发背压和运行时资源优化 |
-
 ## 架构与开发
 
 | 文档 | 内容 |

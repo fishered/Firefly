@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.0.6-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.1-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -37,19 +37,6 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 - 需要执行记录、失败重试、超时、取消和审计的调度平台
 - 依赖 PostgreSQL 共享状态并要求节点故障接管的调度集群
 - 希望保留轻量核心，同时按需启用管理 API、Metrics 和外部插件的系统
-
-## v1.0.6 运行时优化
-
-Firefly v1.0.6 聚焦单节点调度稳定性、并发背压和集群协调成本：
-
-- 调度推进失败后自动失效并重载本地时间索引，避免任务从内存索引中长期消失。
-- 本地 Handler 使用有界虚拟线程 admission，支持最大并发、拒绝计数和有期限关闭；`FORBID` 改为原子抢占。
-- Scheduler 分片租约使用 JDBC 批量续租，单轮复用连接和数据库时间，降低单节点续租写放大。
-- 任务配置 revision 按独立周期检查，配置刷新不再绑定每次调度 tick；强制恢复不受刷新节流影响。
-- Admin、Prometheus 和 Gateway 内部转发使用显式有界 HTTP 线程池；非排空节点跳过 Drain 聚合查询。
-- Prometheus 抓取复用仓储统计快照，并新增本地 worker 活跃数、并发上限和拒绝计数。
-
-配置、兼容性和验证结果见 [v1.0.6 Release Notes](docs/release-notes-v1.0.6.md)。
 
 ## 核心能力
 
