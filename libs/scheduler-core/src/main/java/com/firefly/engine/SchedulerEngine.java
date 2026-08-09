@@ -164,10 +164,16 @@ public final class SchedulerEngine {
         }
         refreshTimingIndex(leases.keySet());
         List<ScheduledJobRecord> dueRecords = timingIndex.pollDue(now, options.maxDueRecordsPerTick());
-        if (transactionalOutbox) {
-            processTransactionalBatches(dueRecords, leases, now);
-        } else {
-            dueRecords.forEach(record -> processRecord(record, leases, now));
+        try {
+            if (transactionalOutbox) {
+                processTransactionalBatches(dueRecords, leases, now);
+            } else {
+                dueRecords.forEach(record -> processRecord(record, leases, now));
+            }
+        } catch (RuntimeException failure) {
+            // pollDue removes records from the local index before persistence completes.
+            forceReload();
+            throw failure;
         }
         Instant remainingDue = timingIndex.nextFireTime();
         if (dueRecords.size() == options.maxDueRecordsPerTick()
