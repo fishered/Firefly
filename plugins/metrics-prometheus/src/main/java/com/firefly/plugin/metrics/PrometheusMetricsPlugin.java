@@ -16,7 +16,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Exposes Firefly state in Prometheus text format as an optional plugin.
@@ -25,6 +27,7 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
     private final PrometheusMetricsOptions options;
     private HttpServer server;
     private FireflyPluginContext context;
+    private ExecutorService executor;
 
     public PrometheusMetricsPlugin() {
         this(PrometheusMetricsOptions.defaults());
@@ -54,6 +57,13 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
         this.context = Objects.requireNonNull(context, "context");
         try {
             server = HttpServer.create(new InetSocketAddress(options.host(), options.port()), 0);
+            executor = new java.util.concurrent.ThreadPoolExecutor(
+                    8, 8, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.ArrayBlockingQueue<>(64),
+                    runnable -> new Thread(runnable, "firefly-prometheus-http"),
+                    new java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+            );
+            server.setExecutor(executor);
             server.createContext(options.path(), this::handleMetrics);
             server.start();
         } catch (IOException e) {
@@ -66,6 +76,7 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
         if (server != null) {
             server.stop(0);
         }
+        if (executor != null) executor.shutdownNow();
     }
 
     private void handleMetrics(HttpExchange exchange) throws IOException {
@@ -101,17 +112,19 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .mapToLong(record -> Math.max(0, Duration.between(record.nextFireTime(), now).toMillis()))
                 .max()
                 .orElse(0L) / 1000.0;
-        long outboxPending = context.jobRepository().map(repository -> repository.outboxCounts().entrySet().stream()
+        Map<DispatchOutboxStatus, Long> outboxCounts = context.jobRepository()
+                .map(repository -> repository.outboxCounts()).orElse(Map.of());
+        long outboxPending = outboxCounts.entrySet().stream()
                 .filter(entry -> entry.getKey() != DispatchOutboxStatus.DONE
                         && entry.getKey() != DispatchOutboxStatus.DEAD)
-                .mapToLong(java.util.Map.Entry::getValue).sum()).orElse(0L);
-        long outboxDead = context.jobRepository().map(repository ->
-                repository.outboxCounts().getOrDefault(DispatchOutboxStatus.DEAD, 0L)).orElse(0L);
-        long executionsRunning = context.executionRepository().map(repository ->
-                repository.statusCounts().getOrDefault(ExecutionStatus.RUNNING, 0L)).orElse(0L);
-        long executionsFailed = context.executionRepository().map(repository -> repository.statusCounts().entrySet().stream()
+                .mapToLong(Map.Entry::getValue).sum();
+        long outboxDead = outboxCounts.getOrDefault(DispatchOutboxStatus.DEAD, 0L);
+        Map<ExecutionStatus, Long> executionCounts = context.executionRepository()
+                .map(repository -> repository.statusCounts()).orElse(Map.of());
+        long executionsRunning = executionCounts.getOrDefault(ExecutionStatus.RUNNING, 0L);
+        long executionsFailed = executionCounts.entrySet().stream()
                 .filter(entry -> entry.getKey() == ExecutionStatus.FAILED || entry.getKey() == ExecutionStatus.TIMEOUT)
-                .mapToLong(java.util.Map.Entry::getValue).sum()).orElse(0L);
+                .mapToLong(Map.Entry::getValue).sum();
         double oldestOutboxAgeSeconds = context.jobRepository()
                 .flatMap(repository -> repository.oldestActiveDispatchTime())
                 .map(oldest -> Math.max(0, Duration.between(oldest, context.clock().instant()).toMillis()) / 1000.0)
@@ -236,7 +249,17 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .append("# TYPE firefly_database_clock_drift_warnings_total counter\n")
                 .append("firefly_database_clock_drift_warnings_total ").append(snapshot.clockDriftWarnings()).append('\n')
                 .append("# TYPE firefly_database_clock_sync_failures_total counter\n")
-                .append("firefly_database_clock_sync_failures_total ").append(snapshot.clockSyncFailures()).append('\n');
+                .append("firefly_database_clock_sync_failures_total ").append(snapshot.clockSyncFailures()).append('\n')
+                .append("# HELP firefly_local_worker_active Active local scheduler handler executions.\n")
+                .append("# TYPE firefly_local_worker_active gauge\n")
+                .append("firefly_local_worker_active ").append(snapshot.localWorkerActive()).append('\n')
+                .append("# HELP firefly_local_worker_max_concurrency Configured local scheduler concurrency limit.\n")
+                .append("# TYPE firefly_local_worker_max_concurrency gauge\n")
+                .append("firefly_local_worker_max_concurrency ")
+                .append(snapshot.localWorkerMaxConcurrency()).append('\n')
+                .append("# HELP firefly_local_worker_rejections_total Rejected local scheduler submissions.\n")
+                .append("# TYPE firefly_local_worker_rejections_total counter\n")
+                .append("firefly_local_worker_rejections_total ").append(snapshot.localWorkerRejections()).append('\n');
     }
 
     private void appendHistogram(

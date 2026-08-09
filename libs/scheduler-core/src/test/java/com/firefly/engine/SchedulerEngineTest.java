@@ -6,16 +6,22 @@ import com.firefly.domain.FixedRateSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.domain.MisfirePolicy;
 import com.firefly.registry.InMemoryJobHandlerRegistry;
+import com.firefly.store.DueJobBatch;
 import com.firefly.store.InMemoryJobRepository;
+import com.firefly.store.JobRepository;
+import com.firefly.store.ScheduledJobRecord;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Collection;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -160,6 +166,56 @@ class SchedulerEngineTest {
         assertEquals(3, fixture.scheduledFireTimes().size());
     }
 
+    @Test
+    void reloadsTimingIndexAfterRepositoryAdvanceFails() {
+        Instant now = Instant.parse("2026-07-06T00:00:10Z");
+        InMemoryJobRepository delegate = new InMemoryJobRepository();
+        JobRepository repository = new FailOnceJobRepository(delegate);
+        InMemoryJobHandlerRegistry registry = new InMemoryJobHandlerRegistry();
+        List<ExecutionContext> executions = new ArrayList<>();
+        registry.register("handler", executions::add);
+        JobDispatcher dispatcher = new JobDispatcher(registry, new DirectExecutorService(),
+                Clock.fixed(now, ZoneOffset.UTC));
+        SchedulerEngine engine = new SchedulerEngine(repository, dispatcher, Clock.fixed(now, ZoneOffset.UTC));
+        repository.save(jobBuilder("job-retry").build(), now);
+
+        assertThrows(IllegalStateException.class, engine::tick);
+        assertTrue(executions.isEmpty());
+
+        engine.tick();
+
+        assertEquals(1, executions.size());
+        assertEquals(now.plusSeconds(5), repository.find("job-retry").orElseThrow().nextFireTime());
+    }
+
+    @Test
+    void refreshesConfigurationOnItsOwnIntervalAcrossFrequentTicks() {
+        Instant now = Instant.parse("2026-07-06T00:00:10Z");
+        MutableClock clock = new MutableClock(now);
+        InMemoryJobRepository repository = new InMemoryJobRepository();
+        InMemoryJobHandlerRegistry registry = new InMemoryJobHandlerRegistry();
+        List<ExecutionContext> executions = new ArrayList<>();
+        registry.register("handler", executions::add);
+        JobDispatcher dispatcher = new JobDispatcher(registry, new DirectExecutorService(), clock);
+        SchedulerEngine engine = new SchedulerEngine(
+                repository, dispatcher, clock,
+                () -> java.util.Map.of(0, new com.firefly.cluster.ShardLease(0, "local", Instant.MAX, 1L)),
+                1, false, new com.firefly.metrics.SchedulerMetrics(),
+                new SchedulerEngineOptions(100, Duration.ofMillis(500), 20, Duration.ofSeconds(1))
+        );
+        repository.save(jobBuilder("existing").build(), now.plusSeconds(60));
+        engine.tick();
+        repository.save(jobBuilder("added").build(), now);
+
+        clock.set(now.plusMillis(500));
+        engine.tick();
+        assertTrue(executions.isEmpty());
+
+        clock.set(now.plusSeconds(1));
+        engine.tick();
+        assertEquals(List.of(now), executions.stream().map(ExecutionContext::scheduledFireTime).toList());
+    }
+
     private static JobDefinition.Builder jobBuilder(String id) {
         return JobDefinition.builder()
                 .id(id)
@@ -301,6 +357,95 @@ class SchedulerEngineTest {
         @Override
         public void execute(Runnable command) {
             command.run();
+        }
+    }
+
+    private static final class FailOnceJobRepository implements JobRepository {
+        private final InMemoryJobRepository delegate;
+        private boolean failNextAdvance = true;
+
+        private FailOnceJobRepository(InMemoryJobRepository delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void save(JobDefinition definition, Instant initialNextFireTime) {
+            delegate.save(definition, initialNextFireTime);
+        }
+
+        @Override
+        public Optional<ScheduledJobRecord> find(String jobId) {
+            return delegate.find(jobId);
+        }
+
+        @Override
+        public DueJobBatch findDueBatch(
+                Instant now,
+                int softLimit,
+                int hardLimit,
+                Set<String> excludedJobIds
+        ) {
+            return delegate.findDueBatch(now, softLimit, hardLimit, excludedJobIds);
+        }
+
+        @Override
+        public boolean updateNextFireTime(
+                String jobId,
+                Instant expectedCurrentNextFireTime,
+                Instant nextFireTime
+        ) {
+            if (failNextAdvance) {
+                failNextAdvance = false;
+                throw new IllegalStateException("simulated repository failure");
+            }
+            return delegate.updateNextFireTime(jobId, expectedCurrentNextFireTime, nextFireTime);
+        }
+
+        @Override
+        public List<ScheduledJobRecord> list() {
+            return delegate.list();
+        }
+
+        @Override
+        public long configurationVersion() {
+            return delegate.configurationVersion();
+        }
+
+        @Override
+        public boolean setEnabled(String jobId, boolean enabled) {
+            return delegate.setEnabled(jobId, enabled);
+        }
+
+        @Override
+        public boolean delete(String jobId) {
+            return delegate.delete(jobId);
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private volatile Instant instant;
+
+        private MutableClock(Instant instant) {
+            this.instant = instant;
+        }
+
+        void set(Instant instant) {
+            this.instant = instant;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
         }
     }
 }

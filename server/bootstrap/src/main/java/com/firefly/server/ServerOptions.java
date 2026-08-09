@@ -394,7 +394,15 @@ public record ServerOptions(
                         durationOption(flags, env, config, "firefly.scheduler.max-idle-wakeup",
                                 "FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", Duration.ofMillis(500)),
                         intOption(flags, env, config, "firefly.scheduler.batch-size",
-                                "FIREFLY_SCHEDULER_BATCH_SIZE", 200)
+                                "FIREFLY_SCHEDULER_BATCH_SIZE", 200),
+                        durationOption(flags, env, config, "firefly.scheduler.configuration-refresh-interval",
+                                "FIREFLY_SCHEDULER_CONFIGURATION_REFRESH_INTERVAL", Duration.ofSeconds(1))
+                ),
+                new LocalWorkerOptions(
+                        intOption(flags, env, config, "firefly.worker.max-concurrency",
+                                "FIREFLY_WORKER_MAX_CONCURRENCY", 256),
+                        durationOption(flags, env, config, "firefly.worker.shutdown-timeout",
+                                "FIREFLY_WORKER_SHUTDOWN_TIMEOUT", Duration.ofSeconds(30))
                 ),
                 jwtSecurityOptions(flags, env, config)
         );

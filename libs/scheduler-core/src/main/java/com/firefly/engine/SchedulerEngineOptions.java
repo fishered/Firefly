@@ -4,9 +4,13 @@ import java.time.Duration;
 import java.util.Objects;
 
 /** Runtime limits for one scheduler timing loop. */
-public record SchedulerEngineOptions(int maxDueRecordsPerTick, Duration maxIdleWakeup, int schedulingBatchSize) {
+public record SchedulerEngineOptions(int maxDueRecordsPerTick, Duration maxIdleWakeup, int schedulingBatchSize, Duration configurationRefreshInterval) {
     public SchedulerEngineOptions(int maxDueRecordsPerTick, Duration maxIdleWakeup) {
-        this(maxDueRecordsPerTick, maxIdleWakeup, 200);
+        this(maxDueRecordsPerTick, maxIdleWakeup, 200, Duration.ofSeconds(1));
+    }
+
+    public SchedulerEngineOptions(int maxDueRecordsPerTick, Duration maxIdleWakeup, int schedulingBatchSize) {
+        this(maxDueRecordsPerTick, maxIdleWakeup, schedulingBatchSize, Duration.ofSeconds(1));
     }
 
     public SchedulerEngineOptions {
@@ -20,9 +24,13 @@ public record SchedulerEngineOptions(int maxDueRecordsPerTick, Duration maxIdleW
         if (schedulingBatchSize < 1) {
             throw new IllegalArgumentException("schedulingBatchSize must be positive");
         }
+        Objects.requireNonNull(configurationRefreshInterval, "configurationRefreshInterval");
+        if (configurationRefreshInterval.isZero() || configurationRefreshInterval.isNegative()) {
+            throw new IllegalArgumentException("configurationRefreshInterval must be positive");
+        }
     }
 
     public static SchedulerEngineOptions defaults() {
-        return new SchedulerEngineOptions(10_000, Duration.ofMillis(500), 200);
+        return new SchedulerEngineOptions(10_000, Duration.ofMillis(500), 200, Duration.ofSeconds(1));
     }
 }

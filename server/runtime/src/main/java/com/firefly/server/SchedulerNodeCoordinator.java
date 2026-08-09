@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -139,6 +140,7 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
             metrics.ownedShards(owned.size());
             return;
         }
+        Map<Integer, ShardLease> renewals = new LinkedHashMap<>();
         for (int shardId = 0; shardId < shardCount; shardId++) {
             int currentShardId = shardId;
             String preferred = preferredOwner(currentShardId, schedulers);
@@ -153,16 +155,21 @@ public final class SchedulerNodeCoordinator implements ShardOwnership, AutoClose
                 shardManager.acquire(currentShardId, nodeId, now, leaseDuration)
                         .ifPresent(lease -> owned.put(currentShardId, lease));
             } else {
-                shardManager.renew(currentShardId, nodeId, current.fencingToken(), now, leaseDuration)
-                        .ifPresentOrElse(
-                                lease -> owned.put(currentShardId, lease),
-                                () -> {
-                                    owned.remove(currentShardId, current);
-                                    metrics.recordLeaseRenewalFailure();
-                                }
-                        );
+                renewals.put(currentShardId, current);
             }
         }
+        Map<Integer, ShardLease> renewed = shardManager.renewAll(
+                renewals.values(), nodeId, now, leaseDuration
+        );
+        renewals.forEach((shardId, previous) -> {
+            ShardLease next = renewed.get(shardId);
+            if (next == null) {
+                owned.remove(shardId, previous);
+                metrics.recordLeaseRenewalFailure();
+            } else {
+                owned.put(shardId, next);
+            }
+        });
         metrics.ownedShards(owned.size());
     }
 

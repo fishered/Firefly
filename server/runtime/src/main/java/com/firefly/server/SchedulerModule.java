@@ -32,7 +32,6 @@ import com.firefly.store.InMemoryJobHistoryRepository;
 import java.time.Clock;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public final class SchedulerModule extends AbstractModule {
     private final JobRepository jobRepository;
@@ -47,6 +46,7 @@ public final class SchedulerModule extends AbstractModule {
     private final AuditRepository auditRepository;
     private final JobHistoryRepository jobHistoryRepository;
     private final ExecutorInstanceDirectory executorInstanceDirectory;
+    private final LocalWorkerOptions localWorkerOptions;
 
     public SchedulerModule() {
         this(SchedulerShardConfig.DEFAULT_SHARD_COUNT);
@@ -57,9 +57,19 @@ public final class SchedulerModule extends AbstractModule {
     }
 
     public SchedulerModule(int shardCount, SchedulerEngineOptions schedulerEngineOptions) {
+        this(shardCount, schedulerEngineOptions, LocalWorkerOptions.defaults());
+    }
+
+    public SchedulerModule(
+            int shardCount,
+            SchedulerEngineOptions schedulerEngineOptions,
+            LocalWorkerOptions localWorkerOptions
+    ) {
         this(new InMemoryJobRepository(), new InMemoryNodeRegistry(), new InMemorySchedulerCatalog(),
                 new InMemoryShardManager(), new InMemoryExecutionRepository(), shardCount,
-                Clock.systemUTC(), new SchedulerMetrics(), schedulerEngineOptions);
+                Clock.systemUTC(), new SchedulerMetrics(), schedulerEngineOptions,
+                new InMemoryAuditRepository(), new InMemoryJobHistoryRepository(),
+                new InMemoryExecutorInstanceDirectory(), localWorkerOptions);
     }
 
     public SchedulerModule(JobRepository jobRepository, NodeRegistry nodeRegistry) {
@@ -165,6 +175,26 @@ public final class SchedulerModule extends AbstractModule {
             JobHistoryRepository jobHistoryRepository,
             ExecutorInstanceDirectory executorInstanceDirectory
     ) {
+        this(jobRepository, nodeRegistry, schedulerCatalog, shardManager, executionRepository,
+                shardCount, runtimeClock, metrics, schedulerEngineOptions, auditRepository,
+                jobHistoryRepository, executorInstanceDirectory, LocalWorkerOptions.defaults());
+    }
+
+    public SchedulerModule(
+            JobRepository jobRepository,
+            NodeRegistry nodeRegistry,
+            SchedulerCatalog schedulerCatalog,
+            ShardManager shardManager,
+            ExecutionRepository executionRepository,
+            int shardCount,
+            Clock runtimeClock,
+            SchedulerMetrics metrics,
+            SchedulerEngineOptions schedulerEngineOptions,
+            AuditRepository auditRepository,
+            JobHistoryRepository jobHistoryRepository,
+            ExecutorInstanceDirectory executorInstanceDirectory,
+            LocalWorkerOptions localWorkerOptions
+    ) {
         this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository");
         this.nodeRegistry = Objects.requireNonNull(nodeRegistry, "nodeRegistry");
         this.schedulerCatalog = Objects.requireNonNull(schedulerCatalog, "schedulerCatalog");
@@ -177,6 +207,7 @@ public final class SchedulerModule extends AbstractModule {
         this.auditRepository = Objects.requireNonNull(auditRepository, "auditRepository");
         this.jobHistoryRepository = Objects.requireNonNull(jobHistoryRepository, "jobHistoryRepository");
         this.executorInstanceDirectory = Objects.requireNonNull(executorInstanceDirectory, "executorInstanceDirectory");
+        this.localWorkerOptions = Objects.requireNonNull(localWorkerOptions, "localWorkerOptions");
     }
 
     @Override
@@ -206,7 +237,7 @@ public final class SchedulerModule extends AbstractModule {
     @Provides
     @Singleton
     ExecutorService workerPool() {
-        return Executors.newVirtualThreadPerTaskExecutor();
+        return new BoundedVirtualThreadExecutor(localWorkerOptions, metrics);
     }
 
     @Provides

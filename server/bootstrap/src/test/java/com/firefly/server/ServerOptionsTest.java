@@ -372,7 +372,9 @@ final class ServerOptionsTest {
                 Map.entry("FIREFLY_EXECUTOR_GATEWAY_NETTY_TLS_RELOAD_INTERVAL", "PT15S"),
                 Map.entry("FIREFLY_SCHEDULER_MAX_DUE_RECORDS_PER_TICK", "2500"),
                 Map.entry("FIREFLY_SCHEDULER_MAX_IDLE_WAKEUP", "PT0.25S"),
-                Map.entry("FIREFLY_SCHEDULER_BATCH_SIZE", "150")
+                Map.entry("FIREFLY_SCHEDULER_BATCH_SIZE", "150"),
+                Map.entry("FIREFLY_WORKER_MAX_CONCURRENCY", "96"),
+                Map.entry("FIREFLY_WORKER_SHUTDOWN_TIMEOUT", "PT12S")
         ));
 
         assertEquals(Duration.ofMillis(50), options.runtimeOptions().dispatchOutbox().pollInterval());
@@ -387,6 +389,8 @@ final class ServerOptionsTest {
         assertEquals(2500, options.runtimeOptions().schedulerEngine().maxDueRecordsPerTick());
         assertEquals(Duration.ofMillis(250), options.runtimeOptions().schedulerEngine().maxIdleWakeup());
         assertEquals(150, options.runtimeOptions().schedulerEngine().schedulingBatchSize());
+        assertEquals(96, options.runtimeOptions().localWorker().maxConcurrency());
+        assertEquals(Duration.ofSeconds(12), options.runtimeOptions().localWorker().shutdownTimeout());
     }
 
     @Test
