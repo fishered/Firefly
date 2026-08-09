@@ -197,6 +197,18 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         String sessionId = payload.getOrDefault("sessionId", instanceId);
         String serviceName = payload.getOrDefault("serviceName", instanceId);
         String handlerNames = normalizeHandlerNames(payload.getOrDefault("handlerNames", ""));
+        ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy;
+        try {
+            definitionRegistrationPolicy = ExecutorDefinitionRegistrationPolicy.valueOf(
+                    payload.getOrDefault(
+                            "definitionRegistrationPolicy",
+                            ExecutorDefinitionRegistrationPolicy.ALLOW_AUTO_CREATE.name()
+                    )
+            );
+        } catch (IllegalArgumentException invalidPolicy) {
+            rejectRegistration(context, "INVALID_REGISTRATION_POLICY", "invalid definition registration policy");
+            return;
+        }
         int protocolVersion;
         try {
             protocolVersion = Integer.parseInt(payload.getOrDefault("protocolVersion", "1"));
@@ -229,7 +241,8 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         }
         ExecutorDefinition definition = schedulerCatalog.findExecutor(executorName).orElse(null);
         if (definition == null) {
-            if (!autoCreateExecutorDefinitions) {
+            if (definitionRegistrationPolicy == ExecutorDefinitionRegistrationPolicy.REQUIRE_EXISTING
+                    || !autoCreateExecutorDefinitions) {
                 rejectRegistration(context, "UNKNOWN_EXECUTOR", "unknown executor definition: " + executorName);
                 return;
             }

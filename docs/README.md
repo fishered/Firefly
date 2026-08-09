@@ -11,6 +11,7 @@
 | [development.md](development.md) | 分支命名、提交粒度、质量门禁和设计约束 |
 | [implementation-progress.md](implementation-progress.md) | 当前已经落地的能力 |
 | [v1.0.2-roadmap.md](v1.0.2-roadmap.md) | 1.0.2 增量范围、非目标和验收标准 |
+| [v1.0.5-roadmap.md](v1.0.5-roadmap.md) | 1.0.5 Remote Adapter 范围、分支栈和验收标准 |
 
 ## 核心能力
 
@@ -31,6 +32,7 @@
 | [ha-cluster.md](ha-cluster.md) | 节点、分片租约、fencing 和故障恢复 |
 | [deployment.md](deployment.md) | Docker、节点角色和生产部署 |
 | [integration.md](integration.md) | Java、Spring Boot 与远程 Executor 集成 |
+| [remote-adapter.md](remote-adapter.md) | 非 Spring Java 服务的 Remote Adapter 接入与配置 |
 | [maven-central-publishing.md](maven-central-publishing.md) | Maven Central 发布流程 |
 
 ## 文档维护

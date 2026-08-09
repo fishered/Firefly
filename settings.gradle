@@ -59,7 +59,9 @@ dependencyResolutionManagement {
 rootProject.name = "firefly"
 
 include("libs:scheduler-core")
+include("platform:firefly-bom")
 include("integrations:embedded")
+include("integrations:firefly-remote-adapter")
 include("integrations:firefly-spring-boot-autoconfigure")
 include("integrations:firefly-spring-boot-starter")
 include("stores:jdbc")
