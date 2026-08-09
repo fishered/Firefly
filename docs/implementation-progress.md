@@ -237,6 +237,9 @@ UNREGISTER_EXECUTOR
 
 ## 3. 本轮完成
 
+- v1.0.6 完成调度索引异常恢复、本地 worker 有界 admission、`FORBID` 原子抢占、分片批量续租、
+  revision 独立刷新周期、HTTP 有界线程池和 Prometheus 聚合复用；详见
+  [release-notes-v1.0.6.md](release-notes-v1.0.6.md)。
 - 主服务 HS256 JWT 只用于数据库 Admin 用户的页面会话与 `READER/OPERATOR/ADMIN` 授权；机器客户端
   Token 端点和 `firefly.security.jwt.client.*` 配置已移除。
 - Spring Boot Starter 收敛为 `firefly.executor.integration-key`，Netty 首次连接、断线重连和启动任务同步
