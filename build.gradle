@@ -5,7 +5,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.0.4"
+    version = "1.0.6"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
