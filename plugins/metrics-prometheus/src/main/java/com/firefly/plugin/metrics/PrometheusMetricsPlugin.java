@@ -249,7 +249,17 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .append("# TYPE firefly_database_clock_drift_warnings_total counter\n")
                 .append("firefly_database_clock_drift_warnings_total ").append(snapshot.clockDriftWarnings()).append('\n')
                 .append("# TYPE firefly_database_clock_sync_failures_total counter\n")
-                .append("firefly_database_clock_sync_failures_total ").append(snapshot.clockSyncFailures()).append('\n');
+                .append("firefly_database_clock_sync_failures_total ").append(snapshot.clockSyncFailures()).append('\n')
+                .append("# HELP firefly_local_worker_active Active local scheduler handler executions.\n")
+                .append("# TYPE firefly_local_worker_active gauge\n")
+                .append("firefly_local_worker_active ").append(snapshot.localWorkerActive()).append('\n')
+                .append("# HELP firefly_local_worker_max_concurrency Configured local scheduler concurrency limit.\n")
+                .append("# TYPE firefly_local_worker_max_concurrency gauge\n")
+                .append("firefly_local_worker_max_concurrency ")
+                .append(snapshot.localWorkerMaxConcurrency()).append('\n')
+                .append("# HELP firefly_local_worker_rejections_total Rejected local scheduler submissions.\n")
+                .append("# TYPE firefly_local_worker_rejections_total counter\n")
+                .append("firefly_local_worker_rejections_total ").append(snapshot.localWorkerRejections()).append('\n');
     }
 
     private void appendHistogram(

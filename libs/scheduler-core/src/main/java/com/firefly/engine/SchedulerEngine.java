@@ -49,6 +49,7 @@ public final class SchedulerEngine {
     private long loadedConfigurationVersion = Long.MIN_VALUE;
     private Set<Integer> loadedShards = Set.of();
     private Instant lastConfigurationCheck = Instant.MIN;
+    private boolean reloadRequired = true;
 
     public SchedulerEngine(JobRepository repository, JobDispatcher dispatcher, Clock clock) {
         this(repository, dispatcher, clock, () -> Map.of(0, new ShardLease(0, "local", Instant.MAX, 1L)), 1, false);
@@ -289,23 +290,26 @@ public final class SchedulerEngine {
 
     private void refreshTimingIndex(Set<Integer> shardIds) {
         Set<Integer> currentShards = Set.copyOf(shardIds);
-        boolean checkConfiguration = !clock.instant().isBefore(
-                lastConfigurationCheck.plus(options.configurationRefreshInterval())
-        );
-        long configurationVersion = loadedConfigurationVersion;
-        if (checkConfiguration || !currentShards.equals(loadedShards)) {
-            configurationVersion = repository.configurationVersion();
-        }
-        if (!currentShards.equals(loadedShards) || configurationVersion != loadedConfigurationVersion) {
+        Instant now = clock.instant();
+        boolean shardsChanged = !currentShards.equals(loadedShards);
+        boolean checkConfiguration = now.isBefore(lastConfigurationCheck)
+                || !now.isBefore(
+                        lastConfigurationCheck.plus(options.configurationRefreshInterval())
+                );
+        if (!reloadRequired && !shardsChanged && !checkConfiguration) return;
+
+        long configurationVersion = repository.configurationVersion();
+        lastConfigurationCheck = now;
+        if (reloadRequired || shardsChanged || configurationVersion != loadedConfigurationVersion) {
             timingIndex.replace(repository.listForShards(currentShards, shardCount));
             loadedShards = currentShards;
             loadedConfigurationVersion = configurationVersion;
+            reloadRequired = false;
         }
-        lastConfigurationCheck = clock.instant();
     }
 
     private void forceReload() {
-        loadedConfigurationVersion = Long.MIN_VALUE;
+        reloadRequired = true;
     }
 
     private List<Instant> calculateFireTimes(ScheduledJobRecord record, Instant now) {
