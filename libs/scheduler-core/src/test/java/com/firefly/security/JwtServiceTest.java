@@ -32,8 +32,11 @@ class JwtServiceTest {
     void rejectsExpiredAndTamperedTokens() {
         String token = service(Instant.parse("2026-07-21T08:00:00Z"))
                 .issueUser("admin", Set.of(FireflyRole.ADMIN), 0);
-        char replacement = token.charAt(token.length() - 1) == 'A' ? 'B' : 'A';
-        String tampered = token.substring(0, token.length() - 1) + replacement;
+        int signatureStart = token.lastIndexOf('.') + 1;
+        char replacement = token.charAt(signatureStart) == 'A' ? 'B' : 'A';
+        String tampered = token.substring(0, signatureStart)
+                + replacement
+                + token.substring(signatureStart + 1);
 
         assertThrows(IllegalArgumentException.class, () ->
                 service(Instant.parse("2026-07-21T09:00:01Z")).verify(token));
