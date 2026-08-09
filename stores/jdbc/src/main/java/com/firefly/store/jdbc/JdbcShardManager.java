@@ -13,6 +13,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * JDBC shard lease manager using database transactions as the coordination boundary.
@@ -110,6 +113,62 @@ public final class JdbcShardManager implements ShardManager {
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to renew shard lease", e);
+        }
+    }
+
+    @Override
+    public Map<Integer, ShardLease> renewAll(
+            Collection<ShardLease> leases,
+            String nodeId,
+            Instant now,
+            Duration leaseDuration
+    ) {
+        Objects.requireNonNull(leases, "leases");
+        if (leases.isEmpty()) return Map.of();
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                Instant databaseNow = timeSource.now(connection);
+                Instant leaseUntil = databaseNow.plus(leaseDuration);
+                java.util.List<ShardLease> requested = java.util.List.copyOf(leases);
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        update firefly_shard_lease
+                        set lease_until = ?
+                        where shard_id = ?
+                          and owner_node_id = ?
+                          and fencing_token = ?
+                          and lease_until >= ?
+                        """)) {
+                    for (ShardLease lease : requested) {
+                        validate(lease.shardId(), nodeId, now, leaseDuration);
+                        statement.setTimestamp(1, Timestamp.from(leaseUntil));
+                        statement.setInt(2, lease.shardId());
+                        statement.setString(3, nodeId);
+                        statement.setLong(4, lease.fencingToken());
+                        statement.setTimestamp(5, Timestamp.from(databaseNow));
+                        statement.addBatch();
+                    }
+                    int[] results = statement.executeBatch();
+                    Map<Integer, ShardLease> renewed = new LinkedHashMap<>();
+                    for (int index = 0; index < results.length; index++) {
+                        if (results[index] != 0 && results[index] != java.sql.Statement.EXECUTE_FAILED) {
+                            ShardLease lease = requested.get(index);
+                            renewed.put(lease.shardId(), new ShardLease(
+                                    lease.shardId(), nodeId, leaseUntil, lease.fencingToken()
+                            ));
+                        }
+                    }
+                    connection.commit();
+                    return Map.copyOf(renewed);
+                }
+            } catch (SQLException | RuntimeException failure) {
+                connection.rollback();
+                throw failure;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException failure) {
+            throw new JdbcException("failed to renew shard leases", failure);
         }
     }
 
