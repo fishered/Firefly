@@ -267,7 +267,11 @@ public final class FireflyBootstrap implements AutoCloseable {
         if (!store.jdbcEnabled()) {
             log.info("Storage: memory");
             return new RuntimeAssembly(
-                    new SchedulerModule(shardCount, options.runtimeOptions().schedulerEngine()),
+                    new SchedulerModule(
+                            shardCount,
+                            options.runtimeOptions().schedulerEngine(),
+                            options.runtimeOptions().localWorker()
+                    ),
                     () -> { },
                     new com.firefly.security.InMemoryAdminUserRepository(),
                     new com.firefly.security.InMemoryIntegrationKeyRepository()
@@ -309,7 +313,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                 options.runtimeOptions().schedulerEngine(),
                 new com.firefly.store.jdbc.JdbcAuditRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcJobHistoryRepository(dataSource),
-                new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource)
+                new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource),
+                options.runtimeOptions().localWorker()
         );
         return new RuntimeAssembly(
                 module, clock,

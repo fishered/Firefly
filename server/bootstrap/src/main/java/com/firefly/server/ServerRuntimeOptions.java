@@ -14,6 +14,7 @@ public record ServerRuntimeOptions(
         NettyExecutorGatewayOptions nettyGateway,
         AdminAuthorizationOptions adminAuthorization,
         SchedulerEngineOptions schedulerEngine,
+        LocalWorkerOptions localWorker,
         JwtSecurityOptions jwtSecurity
 ) {
     public ServerRuntimeOptions(
@@ -23,7 +24,8 @@ public record ServerRuntimeOptions(
             NettyExecutorGatewayOptions nettyGateway
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled());
+                AdminAuthorizationOptions.defaults(), SchedulerEngineOptions.defaults(),
+                LocalWorkerOptions.defaults(), JwtSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions(
@@ -34,7 +36,8 @@ public record ServerRuntimeOptions(
             AdminAuthorizationOptions adminAuthorization
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                adminAuthorization, SchedulerEngineOptions.defaults(), JwtSecurityOptions.disabled());
+                adminAuthorization, SchedulerEngineOptions.defaults(),
+                LocalWorkerOptions.defaults(), JwtSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions(
@@ -46,7 +49,7 @@ public record ServerRuntimeOptions(
             SchedulerEngineOptions schedulerEngine
     ) {
         this(dispatchOutbox, executionMaintenance, jdbcClock, nettyGateway,
-                adminAuthorization, schedulerEngine, JwtSecurityOptions.disabled());
+                adminAuthorization, schedulerEngine, LocalWorkerOptions.defaults(), JwtSecurityOptions.disabled());
     }
 
     public ServerRuntimeOptions {
@@ -56,6 +59,7 @@ public record ServerRuntimeOptions(
         Objects.requireNonNull(nettyGateway, "nettyGateway");
         Objects.requireNonNull(adminAuthorization, "adminAuthorization");
         Objects.requireNonNull(schedulerEngine, "schedulerEngine");
+        Objects.requireNonNull(localWorker, "localWorker");
         Objects.requireNonNull(jwtSecurity, "jwtSecurity");
     }
 
@@ -67,6 +71,7 @@ public record ServerRuntimeOptions(
                 NettyExecutorGatewayOptions.defaults(),
                 AdminAuthorizationOptions.defaults(),
                 SchedulerEngineOptions.defaults(),
+                LocalWorkerOptions.defaults(),
                 JwtSecurityOptions.disabled()
         );
     }
