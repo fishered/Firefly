@@ -5,6 +5,7 @@ import com.firefly.domain.ExecutorCompletionPolicy;
 import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.domain.ExecutorRoutingStrategy;
 import com.firefly.domain.ExecutorRetryScope;
+import com.firefly.tracing.TraceCarrier;
 
 import java.util.Objects;
 
@@ -22,7 +23,8 @@ public record RemoteDispatchRequest(
         long fencingToken,
         String rootExecutionId,
         int runAttempt,
-        ExecutorRetryScope retryScope
+        ExecutorRetryScope retryScope,
+        TraceCarrier traceCarrier
 ) {
     public RemoteDispatchRequest(
             String executorName,
@@ -36,7 +38,7 @@ public record RemoteDispatchRequest(
     ) {
         this(executorName, handlerName, context, dispatchMode, routingStrategy, completionPolicy,
                 shardCount, routingKey, "local", 1L, context.executionId(), 0,
-                ExecutorRetryScope.FAILED_TARGETS_ONLY);
+                ExecutorRetryScope.FAILED_TARGETS_ONLY, TraceCarrier.empty());
     }
 
     public RemoteDispatchRequest(
@@ -47,7 +49,7 @@ public record RemoteDispatchRequest(
     ) {
         this(executorName, handlerName, context, dispatchMode, routingStrategy, completionPolicy,
                 shardCount, routingKey, ownerNodeId, fencingToken, context.executionId(), 0,
-                ExecutorRetryScope.FAILED_TARGETS_ONLY);
+                ExecutorRetryScope.FAILED_TARGETS_ONLY, TraceCarrier.empty());
     }
 
     public RemoteDispatchRequest(
@@ -58,7 +60,19 @@ public record RemoteDispatchRequest(
     ) {
         this(executorName, handlerName, context, dispatchMode, routingStrategy, completionPolicy,
                 shardCount, routingKey, ownerNodeId, fencingToken, rootExecutionId, runAttempt,
-                ExecutorRetryScope.FAILED_TARGETS_ONLY);
+                ExecutorRetryScope.FAILED_TARGETS_ONLY, TraceCarrier.empty());
+    }
+
+    public RemoteDispatchRequest(
+            String executorName, String handlerName, ExecutionContext context,
+            ExecutorDispatchMode dispatchMode, ExecutorRoutingStrategy routingStrategy,
+            ExecutorCompletionPolicy completionPolicy, int shardCount, String routingKey,
+            String ownerNodeId, long fencingToken, String rootExecutionId, int runAttempt,
+            ExecutorRetryScope retryScope
+    ) {
+        this(executorName, handlerName, context, dispatchMode, routingStrategy, completionPolicy,
+                shardCount, routingKey, ownerNodeId, fencingToken, rootExecutionId, runAttempt,
+                retryScope, TraceCarrier.empty());
     }
 
     public RemoteDispatchRequest {
@@ -72,6 +86,7 @@ public record RemoteDispatchRequest(
         Objects.requireNonNull(ownerNodeId, "ownerNodeId");
         Objects.requireNonNull(rootExecutionId, "rootExecutionId");
         retryScope = retryScope == null ? ExecutorRetryScope.FAILED_TARGETS_ONLY : retryScope;
+        traceCarrier = traceCarrier == null ? TraceCarrier.empty() : traceCarrier;
         if (executorName.isBlank()) {
             throw new IllegalArgumentException("executorName must not be blank");
         }

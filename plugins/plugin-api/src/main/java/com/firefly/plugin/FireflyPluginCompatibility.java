@@ -17,6 +17,10 @@ public record FireflyPluginCompatibility(int minimumApiLevel, int maximumApiLeve
         return new FireflyPluginCompatibility(CURRENT_API_LEVEL, CURRENT_API_LEVEL);
     }
 
+    public static FireflyPluginCompatibility legacy() {
+        return new FireflyPluginCompatibility(1, 1);
+    }
+
     public boolean supports(int apiLevel) {
         return apiLevel >= minimumApiLevel && apiLevel <= maximumApiLevel;
     }

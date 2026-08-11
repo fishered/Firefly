@@ -8,6 +8,7 @@ import com.firefly.engine.ExecutionCommand;
 import com.firefly.store.DispatchOutboxStatus;
 import com.firefly.store.DispatchType;
 import com.firefly.store.SchedulingAdvance;
+import com.firefly.tracing.TraceCarrier;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
@@ -15,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -24,6 +26,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JdbcDispatchOutboxTest {
+    @Test
+    void persistsTraceContextAcrossOutboxClaim() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.parse("2026-08-11T08:00:00Z");
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> now);
+        ExecutionCommand command = new ExecutionCommand(
+                "traced-execution", remoteJob("traced-job"), now, now
+        ).withTraceCarrier(new TraceCarrier(Map.of(
+                "traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                "tracestate", "vendor=value"
+        )));
+
+        assertTrue(jobs.enqueueManual(command));
+        var claimed = jobs.claimDispatches(
+                "gateway-a", now, 1, Duration.ofSeconds(15), Set.of(DispatchType.REMOTE)
+        ).getFirst();
+
+        assertEquals(command.traceCarrier(), claimed.command().traceCarrier());
+    }
+
     @Test
     void batchAdvanceEnqueuesOnlySuccessfulCursorUpdates() {
         DataSource dataSource = JdbcTestSupport.dataSource();

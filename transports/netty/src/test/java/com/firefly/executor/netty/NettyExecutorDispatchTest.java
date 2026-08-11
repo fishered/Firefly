@@ -10,6 +10,7 @@ import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.catalog.InMemorySchedulerCatalog;
 import com.firefly.execution.InMemoryExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
+import com.firefly.tracing.TraceCarrier;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
@@ -68,6 +69,25 @@ class NettyExecutorDispatchTest {
         assertEquals(4, result.requestedTargets());
         assertEquals(4, result.acceptedTargets());
         assertEquals(4, outboundCount(first) + outboundCount(second));
+    }
+
+    @Test
+    void propagatesW3cTraceContextToExecutorFrame() {
+        NettyExecutorConnectionRegistry connections = new NettyExecutorConnectionRegistry();
+        EmbeddedChannel channel = new EmbeddedChannel();
+        connections.register("orders", "orders-1", channel);
+        RemoteDispatchRequest base = request(ExecutorDispatchMode.UNICAST, 1);
+        String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        RemoteDispatchRequest traced = new RemoteDispatchRequest(
+                base.executorName(), base.handlerName(), base.context(), base.dispatchMode(),
+                base.routingStrategy(), base.completionPolicy(), base.shardCount(), base.routingKey(),
+                base.ownerNodeId(), base.fencingToken(), base.rootExecutionId(), base.runAttempt(),
+                base.retryScope(), new TraceCarrier(Map.of("traceparent", traceparent))
+        );
+
+        gateway(connections).dispatch(traced);
+
+        assertEquals(traceparent, read(channel).payload().get("traceparent"));
     }
 
     @Test

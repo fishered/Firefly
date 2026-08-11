@@ -111,7 +111,24 @@ final class AdminHttpJson {
                     .append("\",\"description\":\"").append(escape(plugin.description()))
                     .append("\",\"implementationClass\":\"").append(escape(plugin.implementationClass()))
                     .append("\",\"source\":\"").append(escape(plugin.source()))
-                    .append("\",\"status\":\"").append(escape(plugin.status())).append("\"}");
+                    .append("\",\"status\":\"").append(escape(plugin.status())).append("\"");
+            if (plugin.runtimeCompatibility() != null) {
+                var compatibility = plugin.runtimeCompatibility();
+                json.append(",\"compatibility\":{\"api\":[")
+                        .append(compatibility.pluginApi().minimumApiLevel()).append(',')
+                        .append(compatibility.pluginApi().maximumApiLevel())
+                        .append("],\"firefly\":[\"").append(escape(compatibility.minimumFireflyVersion()))
+                        .append("\",\"").append(escape(compatibility.maximumFireflyVersion()))
+                        .append("\"],\"executorProtocol\":[")
+                        .append(compatibility.minimumExecutorProtocol()).append(',')
+                        .append(compatibility.maximumExecutorProtocol())
+                        .append("],\"databaseSchema\":[")
+                        .append(compatibility.minimumDatabaseSchema()).append(',')
+                        .append(compatibility.maximumDatabaseSchema())
+                        .append("],\"rollingUpgradeSafe\":")
+                        .append(compatibility.rollingUpgradeSafe()).append('}');
+            }
+            json.append('}');
         }
         return json.append("]}").toString();
     }

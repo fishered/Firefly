@@ -8,7 +8,7 @@ Firefly 的公共 Java 构件使用 `io.github.fishered` 命名空间。普通�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.0.6</version>
+            <version>1.0.7</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

@@ -9,6 +9,7 @@ dependencies {
     implementation project(':stores:jdbc')
     implementation project(':plugins:plugin-api')
     implementation project(':plugins:metrics-prometheus')
+    implementation project(':plugins:tracing-opentelemetry')
     implementation 'com.google.inject:guice:7.0.0'
     testImplementation project(':transports:netty')
     testImplementation 'com.h2database:h2:2.2.224'

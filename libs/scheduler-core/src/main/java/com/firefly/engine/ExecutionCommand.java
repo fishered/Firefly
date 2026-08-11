@@ -1,6 +1,7 @@
 package com.firefly.engine;
 
 import com.firefly.domain.JobDefinition;
+import com.firefly.tracing.TraceCarrier;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -16,7 +17,8 @@ public record ExecutionCommand(
         Instant scheduledFireTime,
         Instant dispatchTime,
         String ownerNodeId,
-        long fencingToken
+        long fencingToken,
+        TraceCarrier traceCarrier
 ) {
     public ExecutionCommand(
             String executionId,
@@ -24,7 +26,8 @@ public record ExecutionCommand(
             Instant scheduledFireTime,
             Instant dispatchTime
     ) {
-        this(executionId, executionId, 0, definition, scheduledFireTime, dispatchTime, "local", 1L);
+        this(executionId, executionId, 0, definition, scheduledFireTime, dispatchTime,
+                "local", 1L, TraceCarrier.empty());
     }
 
     public ExecutionCommand(
@@ -35,7 +38,22 @@ public record ExecutionCommand(
             String ownerNodeId,
             long fencingToken
     ) {
-        this(executionId, executionId, 0, definition, scheduledFireTime, dispatchTime, ownerNodeId, fencingToken);
+        this(executionId, executionId, 0, definition, scheduledFireTime, dispatchTime,
+                ownerNodeId, fencingToken, TraceCarrier.empty());
+    }
+
+    public ExecutionCommand(
+            String executionId,
+            String rootExecutionId,
+            int runAttempt,
+            JobDefinition definition,
+            Instant scheduledFireTime,
+            Instant dispatchTime,
+            String ownerNodeId,
+            long fencingToken
+    ) {
+        this(executionId, rootExecutionId, runAttempt, definition, scheduledFireTime, dispatchTime,
+                ownerNodeId, fencingToken, TraceCarrier.empty());
     }
 
     public ExecutionCommand {
@@ -45,6 +63,7 @@ public record ExecutionCommand(
         Objects.requireNonNull(scheduledFireTime, "scheduledFireTime");
         Objects.requireNonNull(dispatchTime, "dispatchTime");
         Objects.requireNonNull(ownerNodeId, "ownerNodeId");
+        traceCarrier = traceCarrier == null ? TraceCarrier.empty() : traceCarrier;
         if (executionId.isBlank()) {
             throw new IllegalArgumentException("executionId must not be blank");
         }
@@ -56,5 +75,12 @@ public record ExecutionCommand(
         if (fencingToken < 1) {
             throw new IllegalArgumentException("fencingToken must be greater than 0");
         }
+    }
+
+    public ExecutionCommand withTraceCarrier(TraceCarrier carrier) {
+        return new ExecutionCommand(
+                executionId, rootExecutionId, runAttempt, definition, scheduledFireTime,
+                dispatchTime, ownerNodeId, fencingToken, carrier
+        );
     }
 }

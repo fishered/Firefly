@@ -18,6 +18,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import com.firefly.tracing.FireflyTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 
 final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<String> {
     private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(
@@ -233,10 +239,33 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
         }
         try {
             Future<?> task = workScheduler.submit(() -> {
-                ExecutorExecutionResult result = execute(message);
-                executionRegistry.complete(executionId, claim.execution(), result);
-                write(context, resultMessage(message, result.status(), result.errorMessage()));
-                scheduleExecutionRemoval(context, executionId, claim);
+                Span span = FireflyTelemetry.tracer().spanBuilder("firefly.executor.execute")
+                        .setParent(FireflyTelemetry.extract(message.payload()))
+                        .setSpanKind(SpanKind.CONSUMER)
+                        .setAttribute("firefly.phase", "executor")
+                        .setAttribute("firefly.execution.id", executionId)
+                        .setAttribute("firefly.job.id", message.payload().getOrDefault("jobId", ""))
+                        .setAttribute("firefly.executor.name", executorName)
+                        .setAttribute("firefly.executor.instance.id", instanceId)
+                        .setAttribute("firefly.run.attempt", Integer.parseInt(
+                                message.payload().getOrDefault("runAttempt", "0")))
+                        .startSpan();
+                try (Scope ignored = span.makeCurrent()) {
+                    ExecutorExecutionResult result = execute(message);
+                    executionRegistry.complete(executionId, claim.execution(), result);
+                    span.setAttribute("firefly.executor.status", result.status());
+                    if (!"SUCCEEDED".equals(result.status())) {
+                        span.setStatus(StatusCode.ERROR, result.errorMessage());
+                    }
+                    write(context, resultMessage(message, result.status(), result.errorMessage()));
+                    scheduleExecutionRemoval(context, executionId, claim);
+                } catch (RuntimeException failure) {
+                    span.recordException(failure);
+                    span.setStatus(StatusCode.ERROR);
+                    throw failure;
+                } finally {
+                    span.end();
+                }
             });
             write(context, ackMessage(message));
             executionRegistry.attachTask(executionId, task);
@@ -360,22 +389,28 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     }
 
     private NettyExecutorMessage resultMessage(NettyExecutorMessage trigger, String status, String errorMessage) {
+        java.util.LinkedHashMap<String, String> payload = new java.util.LinkedHashMap<>(Map.of(
+                "triggerMessageId", trigger.messageId(),
+                "executionId", trigger.payload().get("executionId"),
+                "parentExecutionId", trigger.payload().getOrDefault(
+                        "parentExecutionId", trigger.payload().get("executionId")
+                ),
+                "instanceId", instanceId,
+                "sessionId", sessionId,
+                "ownerNodeId", trigger.payload().getOrDefault("ownerNodeId", "local"),
+                "fencingToken", trigger.payload().getOrDefault("fencingToken", "1"),
+                "runAttempt", trigger.payload().getOrDefault("runAttempt", "0"),
+                "status", status,
+                "errorMessage", errorMessage
+        ));
+        for (String key : java.util.List.of("traceparent", "tracestate", "baggage")) {
+            if (trigger.payload().containsKey(key)) payload.put(key, trigger.payload().get(key));
+        }
+        FireflyTelemetry.inject(Context.current(), payload);
         return new NettyExecutorMessage(
                 UUID.randomUUID().toString(),
                 NettyExecutorMessageType.REPORT_RESULT,
-                Map.of(
-                        "triggerMessageId", trigger.messageId(),
-                        "executionId", trigger.payload().get("executionId"),
-                        "parentExecutionId", trigger.payload().getOrDefault(
-                                "parentExecutionId", trigger.payload().get("executionId")
-                        ),
-                        "instanceId", instanceId,
-                        "sessionId", sessionId,
-                        "ownerNodeId", trigger.payload().getOrDefault("ownerNodeId", "local"),
-                        "fencingToken", trigger.payload().getOrDefault("fencingToken", "1"),
-                        "status", status,
-                        "errorMessage", errorMessage
-                )
+                payload
         );
     }
 
