@@ -58,4 +58,17 @@ final class ExternalPluginBootstrapTest {
         org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("host API level is 1"));
         assertEquals(0, FutureApiClasspathTestPlugin.STARTED.get());
     }
+
+    @Test
+    void enablesBuiltInTracingWithoutDuplicatingItsClasspathSpi() {
+        ServerOptions options = ServerOptions.parse(new String[]{
+                "--firefly.node.roles=scheduler",
+                "--firefly.tracing.opentelemetry.enabled=true",
+                "--firefly.tracing.opentelemetry.sampling-ratio=0"
+        }, Map.of());
+
+        try (FireflyBootstrap ignored = FireflyBootstrap.start(options)) {
+            // Successful startup proves the built-in instance and its SPI copy were de-duplicated.
+        }
+    }
 }

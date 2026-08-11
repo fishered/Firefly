@@ -11,6 +11,12 @@ import com.firefly.execution.ExecutionRecord;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
 import com.firefly.execution.ExecutionTargetRecord;
+import com.firefly.tracing.FireflyTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -60,15 +66,38 @@ final class NettyExecutorDispatchService {
     }
 
     RemoteDispatchResult dispatch(RemoteDispatchRequest request) {
-        if (schedulerCatalog.findExecutor(request.executorName())
-                .map(definition -> !definition.enabled()).orElse(false)) {
-            return RemoteDispatchResult.unavailable();
+        Span span = FireflyTelemetry.tracer().spanBuilder("firefly.gateway.dispatch")
+                .setParent(FireflyTelemetry.extract(request.traceCarrier()))
+                .setSpanKind(SpanKind.PRODUCER)
+                .setAttribute("firefly.phase", "gateway")
+                .setAttribute("firefly.execution.id", request.context().executionId())
+                .setAttribute("firefly.job.id", request.context().jobId())
+                .setAttribute("firefly.executor.name", request.executorName())
+                .setAttribute("firefly.node.id", gatewayNodeId)
+                .setAttribute("firefly.run.attempt", request.runAttempt())
+                .startSpan();
+        try (Scope ignored = span.makeCurrent()) {
+            if (schedulerCatalog.findExecutor(request.executorName())
+                    .map(definition -> !definition.enabled()).orElse(false)) {
+                span.setStatus(StatusCode.ERROR, "executor disabled");
+                return RemoteDispatchResult.unavailable();
+            }
+            RemoteDispatchResult result = switch (request.dispatchMode()) {
+                case UNICAST -> dispatchUnicast(request);
+                case BROADCAST -> dispatchBroadcast(request);
+                case SHARDING -> dispatchShards(request);
+            };
+            span.setAttribute("firefly.gateway.requested-targets", result.requestedTargets());
+            span.setAttribute("firefly.gateway.accepted-targets", result.acceptedTargets());
+            if (!result.accepted()) span.setStatus(StatusCode.ERROR, "no executor accepted dispatch");
+            return result;
+        } catch (RuntimeException failure) {
+            span.recordException(failure);
+            span.setStatus(StatusCode.ERROR);
+            throw failure;
+        } finally {
+            span.end();
         }
-        return switch (request.dispatchMode()) {
-            case UNICAST -> dispatchUnicast(request);
-            case BROADCAST -> dispatchBroadcast(request);
-            case SHARDING -> dispatchShards(request);
-        };
     }
 
     boolean hasRoute(String executorName) {
@@ -531,6 +560,8 @@ final class NettyExecutorDispatchService {
         payload.put("scheduledFireTime", context.scheduledFireTime().toString());
         payload.put("dispatchTime", context.dispatchTime().toString());
         context.parameters().forEach((key, value) -> payload.put("param." + key, value));
+        payload.putAll(request.traceCarrier().values());
+        FireflyTelemetry.inject(Context.current(), payload);
         if (shardIndex != null && shardTotal != null) {
             payload.put("param.firefly.shard.index", shardIndex.toString());
             payload.put("param.firefly.shard.total", shardTotal.toString());

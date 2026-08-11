@@ -373,7 +373,8 @@ public final class InMemoryJobRepository implements JobRepository {
             ExecutionCommand retry = new ExecutionCommand(
                     executionId, source.command().rootExecutionId(), nextAttempt,
                     source.command().definition(), source.command().scheduledFireTime(), requestedAt,
-                    source.command().ownerNodeId(), source.command().fencingToken()
+                    source.command().ownerNodeId(), source.command().fencingToken(),
+                    source.command().traceCarrier()
             );
             outbox.put(executionId, new DispatchOutboxRecord(
                     executionId, retry, source.dispatchType(), DispatchOutboxStatus.PENDING, 0,

@@ -20,6 +20,7 @@ import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionTargetRecord;
 import com.firefly.execution.InMemoryExecutionRepository;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.tracing.FireflyTelemetry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -441,6 +442,8 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         payload.put("dispatchTime", command.dispatchTime().toString());
         payload.put("ownerNodeId", command.ownerNodeId());
         payload.put("fencingToken", Long.toString(command.fencingToken()));
+        payload.putAll(command.traceCarrier().values());
+        FireflyTelemetry.inject(FireflyTelemetry.extract(command.traceCarrier()), payload);
         command.definition().parameters().forEach((key, value) -> payload.put("param." + key, value));
         return new NettyExecutorMessage(
                 UUID.randomUUID().toString(),

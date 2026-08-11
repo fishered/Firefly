@@ -7,7 +7,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.0.6"
+    version = "1.0.7"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
@@ -296,5 +296,65 @@ tasks.register("verifySpringBootCompatibility") {
     dependsOn(springBootCompatibilityVersions.collect {
         "verifySpringBootCompatibility${it.replaceAll(/[^A-Za-z0-9]/, "")}"
     })
+}
+
+tasks.register("verifyPluginCompatibilityMatrix") {
+    group = "verification"
+    description = "Validates the plugin, protocol, database, and rolling-upgrade compatibility matrix."
+    dependsOn(
+            ":plugins:plugin-api:test",
+            ":plugins:tracing-opentelemetry:test",
+            ":transports:netty:test",
+            ":stores:jdbc:test"
+    )
+    doLast {
+        def matrix = new groovy.json.JsonSlurper().parse(rootProject.file("compatibility/firefly-rolling-upgrade-matrix.json"))
+        assert matrix.matrixVersion == 1 : "unsupported compatibility matrix version"
+        assert matrix.nodes.size() >= 2 : "rolling matrix must include old and new nodes"
+        assert matrix.hostVersions.containsAll(matrix.nodes.version) : "hostVersions must cover every matrix node"
+        def protocolMin = matrix.nodes*.executorProtocol*.getAt(0).max()
+        def protocolMax = matrix.nodes*.executorProtocol*.getAt(1).min()
+        assert protocolMin <= protocolMax : "nodes have no common executor protocol"
+        def schemaMin = matrix.nodes*.databaseSchema*.getAt(0).max()
+        def schemaMax = matrix.nodes*.databaseSchema*.getAt(1).min()
+        assert schemaMin <= schemaMax : "nodes have no common database schema"
+        def versionParts = { String value ->
+            def parts = value.tokenize(".").take(3).collect { it.find(/^[0-9]+/) as int }
+            while (parts.size() < 3) parts.add(0)
+            parts
+        }
+        def compareVersion = { String left, String right ->
+            def a = versionParts(left)
+            def b = versionParts(right)
+            for (int index = 0; index < 3; index++) {
+                if (a[index] != b[index]) return a[index] <=> b[index]
+            }
+            0
+        }
+        matrix.plugins.each { plugin ->
+            assert plugin.api[0] <= plugin.api[1] : "invalid API range for ${plugin.id}"
+            assert plugin.executorProtocol[0] <= plugin.executorProtocol[1] : "invalid protocol range for ${plugin.id}"
+            assert plugin.databaseSchema[0] <= plugin.databaseSchema[1] : "invalid schema range for ${plugin.id}"
+            assert plugin.rollingUpgradeSafe : "${plugin.id} is not declared rolling-upgrade safe"
+            matrix.nodes.each { node ->
+                assert compareVersion(node.version, plugin.firefly[0]) >= 0 &&
+                        compareVersion(node.version, plugin.firefly[1]) <= 0 :
+                        "${plugin.id} does not support Firefly ${node.version}"
+                assert plugin.api[0] <= node.pluginApi && node.pluginApi <= plugin.api[1] :
+                        "${plugin.id} does not support Firefly ${node.version} plugin API"
+                assert plugin.executorProtocol[0] <= node.executorProtocol[1] &&
+                        node.executorProtocol[0] <= plugin.executorProtocol[1] :
+                        "${plugin.id} has no protocol overlap with Firefly ${node.version}"
+                assert plugin.databaseSchema[0] <= node.databaseSchema[1] &&
+                        node.databaseSchema[0] <= plugin.databaseSchema[1] :
+                        "${plugin.id} has no database schema overlap with Firefly ${node.version}"
+            }
+        }
+        println("Firefly plugin rolling-upgrade matrix valid: ${matrix.hostVersions.join(', ')}")
+    }
+}
+
+tasks.named("check") {
+    dependsOn("verifyPluginCompatibilityMatrix")
 }
 

@@ -10,6 +10,10 @@ import com.firefly.store.ScheduledJobRecord;
 import com.firefly.store.SchedulingAdvance;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.lifecycle.ManagedWorker;
+import com.firefly.tracing.FireflyTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.context.Context;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -256,16 +260,42 @@ public final class SchedulerEngine {
         List<Instant> fireTimes = calculateFireTimes(record, now);
         Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
         Instant dispatchTime = clock.instant();
-        List<ExecutionCommand> commands = fireTimes.stream().map(fireTime -> new ExecutionCommand(
-                executionId(record.definition(), fireTime), record.definition(), fireTime, dispatchTime,
-                lease.ownerNodeId(), lease.fencingToken()
-        )).toList();
+        List<ExecutionCommand> commands = fireTimes.stream()
+                .map(fireTime -> tracedCommand(record.definition(), fireTime, dispatchTime, lease))
+                .toList();
         return new PreparedAdvance(
                 record,
                 new SchedulingAdvance(record.definition().id(), record.nextFireTime(), nextFireTime, commands),
                 commands,
                 lease
         );
+    }
+
+    private ExecutionCommand tracedCommand(
+            JobDefinition definition,
+            Instant fireTime,
+            Instant dispatchTime,
+            ShardLease lease
+    ) {
+        String executionId = executionId(definition, fireTime);
+        Span span = FireflyTelemetry.tracer().spanBuilder("firefly.scheduler.schedule")
+                .setSpanKind(SpanKind.PRODUCER)
+                .setAttribute("firefly.phase", "scheduler")
+                .setAttribute("firefly.job.id", definition.id())
+                .setAttribute("firefly.execution.id", executionId)
+                .setAttribute("firefly.node.id", lease.ownerNodeId())
+                .setAttribute("firefly.run.attempt", 0L)
+                .setAttribute("firefly.schedule.delay.ms", Math.max(0L,
+                        Duration.between(fireTime, dispatchTime).toMillis()))
+                .startSpan();
+        try {
+            return new ExecutionCommand(
+                    executionId, definition, fireTime, dispatchTime,
+                    lease.ownerNodeId(), lease.fencingToken()
+            ).withTraceCarrier(FireflyTelemetry.inject(Context.root().with(span)));
+        } finally {
+            span.end();
+        }
     }
 
     private void completeAdvance(PreparedAdvance prepared, boolean updated) {

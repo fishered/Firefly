@@ -23,6 +23,8 @@ import com.firefly.api.admin.http.AdminHttpPlugin;
 import com.firefly.api.admin.http.AdminRequestLimits;
 import com.firefly.plugin.metrics.PrometheusMetricsOptions;
 import com.firefly.plugin.metrics.PrometheusMetricsPlugin;
+import com.firefly.plugin.tracing.OpenTelemetryTracingOptions;
+import com.firefly.plugin.tracing.OpenTelemetryTracingPlugin;
 import com.firefly.registry.JobHandlerRegistry;
 import com.firefly.store.JobRepository;
 import com.firefly.store.DispatchType;
@@ -382,6 +384,13 @@ public final class FireflyBootstrap implements AutoCloseable {
             )));
             log.info("Metrics: http://" + options.prometheusMetricsHost() + ":" + options.prometheusMetricsPort() + "/metrics");
         }
+        if (Boolean.parseBoolean(options.pluginConfiguration().property(
+                "firefly.tracing.opentelemetry.enabled", "false"))) {
+            plugins.add(new OpenTelemetryTracingPlugin(
+                    OpenTelemetryTracingOptions.from(options.pluginConfiguration())
+            ));
+            log.info("OpenTelemetry tracing enabled");
+        }
 
         java.nio.file.Path pluginDirectory = java.nio.file.Path.of(
                 options.pluginConfiguration().property("firefly.plugins.directory", "plugins")
@@ -395,6 +404,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                 putPlugin(available, plugin, "built-in");
             }
             for (FireflyPlugin plugin : discovery.plugins()) {
+                FireflyPlugin existing = available.get(plugin.id());
+                if (existing != null && existing.getClass().equals(plugin.getClass())) continue;
                 putPlugin(available, plugin, "classpath or " + pluginDirectory.toAbsolutePath());
             }
 

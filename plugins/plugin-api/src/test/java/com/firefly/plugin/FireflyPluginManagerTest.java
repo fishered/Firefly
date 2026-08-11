@@ -101,6 +101,32 @@ final class FireflyPluginManagerTest {
         assertEquals(List.of("close:discovery"), events);
     }
 
+    @Test
+    void rejectsLegacyBinaryWhenHostPluginApiMovesForward() {
+        FireflyPlugin legacy = plugin("legacy", new ArrayList<>());
+        FireflyHostCompatibility futureHost = new FireflyHostCompatibility(
+                "1.1.0", 2, 1, 2, 12, 12
+        );
+        assertThrows(IllegalArgumentException.class, () -> new FireflyPluginManager(
+                List.of(legacy), () -> { }, futureHost
+        ));
+    }
+
+    @Test
+    void validatesRollingUpgradeIntersectionAcrossProtocolAndDatabase() {
+        FireflyPluginRuntimeCompatibility tracing = new FireflyPluginRuntimeCompatibility(
+                new FireflyPluginCompatibility(1, 1), "1.0.0", "1.0.6", 1, 2, 12, 12, true
+        );
+        FireflyCompatibilityMatrix.requireValid(List.of(
+                new FireflyHostCompatibility("1.0.4", 1, 1, 2, 12, 12),
+                new FireflyHostCompatibility("1.0.6", 1, 1, 2, 12, 12)
+        ), List.of(tracing));
+        assertThrows(IllegalArgumentException.class, () -> FireflyCompatibilityMatrix.requireValid(List.of(
+                new FireflyHostCompatibility("1.0.6", 1, 2, 2, 12, 12),
+                new FireflyHostCompatibility("1.0.4", 1, 1, 1, 12, 12)
+        ), List.of(tracing)));
+    }
+
     private FireflyPlugin plugin(String id, List<String> events) {
         return new FireflyPlugin() {
             @Override

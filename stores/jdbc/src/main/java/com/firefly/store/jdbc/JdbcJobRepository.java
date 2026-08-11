@@ -35,6 +35,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import com.firefly.engine.ExecutionCommand;
+import com.firefly.tracing.TraceCarrier;
 
 /**
  * JDBC-backed job repository for persisted job definitions and runtime cursors.
@@ -509,7 +510,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                             candidate.id(),
                             new ExecutionCommand(candidate.id(), candidate.rootId(), candidate.runAttempt(),
                                     definition, candidate.fireTime(), candidate.dispatchTime(),
-                                    candidate.owner(), candidate.token()),
+                                candidate.owner(), candidate.token(), decodeTraceCarrier(candidate.snapshot())),
                             candidate.dispatchType(), DispatchOutboxStatus.CLAIMED, candidate.attempt() + 1,
                             databaseNow, claimant, databaseNow.plus(claimDuration), null, ""
                     ));
@@ -794,7 +795,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 String executionId = source.rootId() + "@attempt:" + nextAttempt;
                 ExecutionCommand retry = new ExecutionCommand(
                         executionId, source.rootId(), nextAttempt, definition, source.fireTime(), databaseNow,
-                        source.owner(), source.token()
+                        source.owner(), source.token(), decodeTraceCarrier(source.snapshot())
                 );
                 Instant availableAt = databaseNow.plus(policy.delayBeforeAttempt(nextAttempt));
                 insertPlannedExecution(connection, retry, availableAt);
@@ -881,7 +882,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         statement.setTimestamp(8, Timestamp.from(availableAt)); statement.setString(9, command.ownerNodeId());
         statement.setLong(10, command.fencingToken());
         statement.setString(11, dispatchType(command.definition()).name());
-        statement.setString(12, encodeJobSnapshot(command.definition()));
+        statement.setString(12, encodeJobSnapshot(command));
         statement.setTimestamp(13, Timestamp.from(now));
         statement.setTimestamp(14, Timestamp.from(now));
     }
@@ -895,8 +896,16 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     }
 
     private static String encodeJobSnapshot(JobDefinition definition) {
+        return encodeJobSnapshot(definition, TraceCarrier.empty());
+    }
+
+    private static String encodeJobSnapshot(ExecutionCommand command) {
+        return encodeJobSnapshot(command.definition(), command.traceCarrier());
+    }
+
+    private static String encodeJobSnapshot(JobDefinition definition, TraceCarrier traceCarrier) {
         ScheduleStorage schedule = encodeSchedule(definition.schedule());
-        return DispatchSnapshotCodec.encode(java.util.Map.ofEntries(
+        java.util.Map<String, String> fields = new java.util.LinkedHashMap<>(java.util.Map.ofEntries(
                 java.util.Map.entry("id", definition.id()),
                 java.util.Map.entry("groupId", definition.groupId()),
                 java.util.Map.entry("name", definition.name()),
@@ -926,10 +935,21 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 java.util.Map.entry("retryScope", definition.retryScope().name()),
                 java.util.Map.entry("enabled", Boolean.toString(definition.enabled()))
         ));
+        traceCarrier.values().forEach((key, value) -> fields.put("trace." + key, value));
+        return DispatchSnapshotCodec.encode(fields);
     }
 
     static String encodeSnapshotForMigration(JobDefinition definition) {
         return encodeJobSnapshot(definition);
+    }
+
+    private static TraceCarrier decodeTraceCarrier(String payload) {
+        java.util.Map<String, String> snapshot = DispatchSnapshotCodec.decode(payload);
+        java.util.Map<String, String> carrier = new java.util.LinkedHashMap<>();
+        snapshot.forEach((key, value) -> {
+            if (key.startsWith("trace.")) carrier.put(key.substring("trace.".length()), value);
+        });
+        return new TraceCarrier(carrier);
     }
 
     static JobDefinition findDefinitionForMigration(Connection connection, String jobId) throws SQLException {
@@ -1160,7 +1180,8 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                                     resultSet.getTimestamp("scheduled_fire_time").toInstant(),
                                     resultSet.getTimestamp("dispatch_time").toInstant(),
                                     resultSet.getString("owner_node_id"),
-                                    resultSet.getLong("fencing_token")
+                                    resultSet.getLong("fencing_token"),
+                                    decodeTraceCarrier(resultSet.getString("snapshot_payload"))
                             ),
                             DispatchType.valueOf(resultSet.getString("dispatch_type")),
                             DispatchOutboxStatus.valueOf(resultSet.getString("status")),

@@ -7,11 +7,18 @@ import com.firefly.store.DispatchType;
 import com.firefly.store.JobRepository;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.lifecycle.ManagedWorker;
+import com.firefly.tracing.FireflyTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -105,29 +112,75 @@ public final class DispatchOutboxWorker implements AutoCloseable {
     void drain() {
         if (!claimAdmission.getAsBoolean()) return;
         Instant now = clock.instant();
-        for (DispatchOutboxRecord record : repository.claimDispatches(
-                nodeId, now, options.claimBatchSize(), options.claimDuration(), dispatchTypes
-        )) {
-            metrics.observeOutboxAge(Duration.between(record.command().dispatchTime(), now));
-            if (record.attempt() > options.maxAttempts()) {
-                boolean dead = repository.retryClaimedDispatchAfter(
-                        record.outboxId(), nodeId, record.attempt(), Duration.ZERO,
-                        "maximum delivery attempts exceeded", options.maxAttempts()
-                );
-                if (dead) metrics.recordOutboxDeliveryExhaustion();
-                continue;
+        for (DispatchOutboxRecord record : claimDispatches(now)) {
+            Span span = FireflyTelemetry.tracer().spanBuilder("firefly.outbox.dispatch")
+                    .setParent(FireflyTelemetry.extract(record.command().traceCarrier()))
+                    .setSpanKind(SpanKind.PRODUCER)
+                    .setAttribute("firefly.phase", "outbox")
+                    .setAttribute("firefly.execution.id", record.command().executionId())
+                    .setAttribute("firefly.job.id", record.command().definition().id())
+                    .setAttribute("firefly.node.id", nodeId)
+                    .setAttribute("firefly.run.attempt", record.command().runAttempt())
+                    .setAttribute("firefly.outbox.attempt", record.attempt())
+                    .setAttribute("firefly.outbox.age.ms", Math.max(0L,
+                            Duration.between(record.command().dispatchTime(), now).toMillis()))
+                    .startSpan();
+            try (Scope ignored = span.makeCurrent()) {
+                metrics.observeOutboxAge(Duration.between(record.command().dispatchTime(), now));
+                if (record.attempt() > options.maxAttempts()) {
+                    boolean dead = repository.retryClaimedDispatchAfter(
+                            record.outboxId(), nodeId, record.attempt(), Duration.ZERO,
+                            "maximum delivery attempts exceeded", options.maxAttempts()
+                    );
+                    if (dead) metrics.recordOutboxDeliveryExhaustion();
+                    span.setStatus(StatusCode.ERROR, "maximum delivery attempts exceeded");
+                    continue;
+                }
+                if (!dispatchEligibility.test(record.command())) {
+                    repository.deferClaimedDispatch(
+                            record.outboxId(), nodeId, record.attempt(), options.pollInterval(),
+                            "no local executor route on gateway " + nodeId
+                    );
+                    span.addEvent("route.deferred");
+                    continue;
+                }
+                dispatch(record, span);
+            } finally {
+                span.end();
             }
-            if (!dispatchEligibility.test(record.command())) {
-                repository.deferClaimedDispatch(
-                        record.outboxId(), nodeId, record.attempt(), options.pollInterval(),
-                        "no local executor route on gateway " + nodeId
-                );
-                continue;
-            }
+        }
+    }
+
+    private List<DispatchOutboxRecord> claimDispatches(Instant now) {
+        Span span = FireflyTelemetry.tracer().spanBuilder("firefly.outbox.claim")
+                .setSpanKind(SpanKind.INTERNAL)
+                .setAttribute("firefly.phase", "database")
+                .setAttribute("db.operation.name", "firefly.outbox.claim")
+                .setAttribute("firefly.node.id", nodeId)
+                .startSpan();
+        try (Scope ignored = span.makeCurrent()) {
+            List<DispatchOutboxRecord> records = repository.claimDispatches(
+                    nodeId, now, options.claimBatchSize(), options.claimDuration(), dispatchTypes
+            );
+            span.setAttribute("firefly.outbox.claimed", records.size());
+            return records;
+        } catch (RuntimeException failure) {
+            span.recordException(failure);
+            span.setStatus(StatusCode.ERROR);
+            throw failure;
+        } finally {
+            span.end();
+        }
+    }
+
+    private void dispatch(DispatchOutboxRecord record, Span span) {
             try {
-                DispatchSubmission submission = dispatcher.submit(record.command());
+                DispatchSubmission submission = dispatcher.submit(record.command().withTraceCarrier(
+                        FireflyTelemetry.inject(Context.current())
+                ));
                 if (!submission.accepted()) {
                     retry(record, "dispatch not accepted");
+                    span.setStatus(StatusCode.ERROR, "dispatch not accepted");
                 } else if (submission.remote()) {
                     repository.markClaimedDispatchSentFor(
                             record.outboxId(), nodeId, record.attempt(), options.remoteAckTimeout()
@@ -149,9 +202,10 @@ public final class DispatchOutboxWorker implements AutoCloseable {
                     }
                 }
             } catch (Exception e) {
+                span.recordException(e);
+                span.setStatus(StatusCode.ERROR);
                 retry(record, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             }
-        }
     }
 
     private void retry(DispatchOutboxRecord record, String error) {

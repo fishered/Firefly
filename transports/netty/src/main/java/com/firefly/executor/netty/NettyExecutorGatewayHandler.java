@@ -11,6 +11,12 @@ import com.firefly.executor.InMemoryExecutorInstanceDirectory;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.tracing.FireflyTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 
@@ -440,23 +446,46 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         };
         String parentExecutionId = payload.getOrDefault("parentExecutionId", payload.get("executionId"));
         Instant now = clock.instant();
+        Context parent = FireflyTelemetry.extract(payload);
         persist(context, () -> {
-            if (!validFencing(parentExecutionId, payload)) return;
-            Instant startedAt = target(parentExecutionId, payload.get("executionId"))
-                    .map(target -> target.acknowledgedAt() == null ? target.updatedAt() : target.acknowledgedAt())
-                    .orElse(now);
-            com.firefly.execution.ExecutionMutationResult result = executionRepository.completeResult(
-                    payload.get("executionId"), status, payload.getOrDefault("errorMessage", ""), now
-            );
-            if (result.accepted() && deliveryComplete(parentExecutionId)) {
-                dispatchAcknowledger.accept(parentExecutionId, now);
-            }
-            if (result == com.firefly.execution.ExecutionMutationResult.APPLIED) {
-                metrics.observeExecutionDuration(java.time.Duration.between(startedAt, now));
-                executionRepository.findExecution(parentExecutionId)
-                        .filter(execution -> execution.status() == ExecutionStatus.FAILED
-                                || execution.status() == ExecutionStatus.PARTIAL)
-                        .ifPresent(execution -> retryScheduler.accept(parentExecutionId, false));
+            Span span = FireflyTelemetry.tracer().spanBuilder("firefly.result.persist")
+                    .setParent(parent)
+                    .setSpanKind(SpanKind.CONSUMER)
+                    .setAttribute("firefly.phase", "result")
+                    .setAttribute("firefly.execution.id", payload.getOrDefault("executionId", ""))
+                    .setAttribute("firefly.node.id", gatewayNodeId)
+                    .setAttribute("firefly.run.attempt", runAttempt(payload))
+                    .setAttribute("firefly.result.status", status.name())
+                    .setAttribute("db.operation.name", "firefly.execution.complete")
+                    .startSpan();
+            try (Scope ignored = span.makeCurrent()) {
+                if (status != ExecutionStatus.SUCCEEDED) {
+                    span.setStatus(StatusCode.ERROR, payload.getOrDefault("errorMessage", status.name()));
+                }
+                if (!validFencing(parentExecutionId, payload)) return;
+                Instant startedAt = target(parentExecutionId, payload.get("executionId"))
+                        .map(target -> target.acknowledgedAt() == null ? target.updatedAt() : target.acknowledgedAt())
+                        .orElse(now);
+                com.firefly.execution.ExecutionMutationResult result = executionRepository.completeResult(
+                        payload.get("executionId"), status, payload.getOrDefault("errorMessage", ""), now
+                );
+                span.setAttribute("firefly.result.mutation", result.name());
+                if (result.accepted() && deliveryComplete(parentExecutionId)) {
+                    dispatchAcknowledger.accept(parentExecutionId, now);
+                }
+                if (result == com.firefly.execution.ExecutionMutationResult.APPLIED) {
+                    metrics.observeExecutionDuration(java.time.Duration.between(startedAt, now));
+                    executionRepository.findExecution(parentExecutionId)
+                            .filter(execution -> execution.status() == ExecutionStatus.FAILED
+                                    || execution.status() == ExecutionStatus.PARTIAL)
+                            .ifPresent(execution -> retryScheduler.accept(parentExecutionId, false));
+                }
+            } catch (RuntimeException failure) {
+                span.recordException(failure);
+                span.setStatus(StatusCode.ERROR);
+                throw failure;
+            } finally {
+                span.end();
             }
         });
     }
@@ -467,6 +496,14 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         return executionRepository.listTargets(parentExecutionId).stream()
                 .filter(target -> target.targetExecutionId().equals(targetExecutionId))
                 .findFirst();
+    }
+
+    private long runAttempt(Map<String, String> payload) {
+        try {
+            return Math.max(0L, Long.parseLong(payload.getOrDefault("runAttempt", "0")));
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
     }
 
     private void persist(ChannelHandlerContext context, Runnable task) {

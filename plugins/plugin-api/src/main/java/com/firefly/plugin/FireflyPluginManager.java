@@ -9,6 +9,7 @@ import java.util.Objects;
 public final class FireflyPluginManager implements AutoCloseable {
     private final List<FireflyPlugin> plugins;
     private final AutoCloseable discovery;
+    private final FireflyHostCompatibility hostCompatibility;
     private volatile int started;
     private volatile boolean active;
     private volatile boolean closed;
@@ -18,10 +19,16 @@ public final class FireflyPluginManager implements AutoCloseable {
     }
 
     public FireflyPluginManager(List<FireflyPlugin> plugins, AutoCloseable discovery) {
+        this(plugins, discovery, FireflyHostCompatibility.current());
+    }
+
+    public FireflyPluginManager(List<FireflyPlugin> plugins, AutoCloseable discovery,
+                                FireflyHostCompatibility hostCompatibility) {
         this.discovery = Objects.requireNonNull(discovery, "discovery");
+        this.hostCompatibility = Objects.requireNonNull(hostCompatibility, "hostCompatibility");
         try {
             this.plugins = List.copyOf(Objects.requireNonNull(plugins, "plugins"));
-            this.plugins.forEach(FireflyPluginManager::requireCompatible);
+            this.plugins.forEach(this::requireCompatible);
         } catch (RuntimeException | Error failure) {
             closeDiscoveryAfterValidationFailure(failure);
             throw failure;
@@ -53,7 +60,8 @@ public final class FireflyPluginManager implements AutoCloseable {
             result.add(new FireflyPluginDescriptor(
                     plugin.id(), plugin.displayName(), plugin.version(), plugin.description(),
                     plugin.getClass().getName(), source(plugin),
-                    currentClosed ? "STOPPED" : index < currentStarted ? "ACTIVE" : "LOADED"
+                    currentClosed ? "STOPPED" : index < currentStarted ? "ACTIVE" : "LOADED",
+                    plugin.runtimeCompatibility()
             ));
         }
         return List.copyOf(result);
@@ -64,16 +72,21 @@ public final class FireflyPluginManager implements AutoCloseable {
         return loader instanceof java.net.URLClassLoader ? "EXTERNAL" : "CLASSPATH";
     }
 
-    private static void requireCompatible(FireflyPlugin plugin) {
+    private void requireCompatible(FireflyPlugin plugin) {
         Objects.requireNonNull(plugin, "plugin");
-        FireflyPluginCompatibility compatibility = Objects.requireNonNull(
-                plugin.compatibility(), "plugin compatibility"
-        );
-        if (compatibility.supports(FireflyPluginCompatibility.CURRENT_API_LEVEL)) return;
+        FireflyPluginRuntimeCompatibility runtime = Objects.requireNonNull(
+                plugin.runtimeCompatibility(), "plugin runtime compatibility");
+        FireflyPluginCompatibility compatibility = runtime.pluginApi();
+        if (runtime.supports(hostCompatibility)) return;
         throw new IllegalArgumentException(
                 "Firefly plugin '" + plugin.id() + "' supports API levels "
                         + compatibility.minimumApiLevel() + ".." + compatibility.maximumApiLevel()
-                        + " but the host API level is " + FireflyPluginCompatibility.CURRENT_API_LEVEL
+                        + " but the host API level is " + hostCompatibility.pluginApiLevel()
+                        + " (Firefly " + hostCompatibility.fireflyVersion()
+                        + ", executor protocol " + hostCompatibility.minimumExecutorProtocol() + ".."
+                        + hostCompatibility.maximumExecutorProtocol()
+                        + ", database schema " + hostCompatibility.minimumDatabaseSchema() + ".."
+                        + hostCompatibility.maximumDatabaseSchema() + ")"
         );
     }
 
