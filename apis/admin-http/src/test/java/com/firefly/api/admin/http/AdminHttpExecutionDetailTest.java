@@ -187,6 +187,36 @@ class AdminHttpExecutionDetailTest {
     }
 
     @Test
+    void returnsReconstructedExecutionTimeline() throws Exception {
+        int port = freePort();
+        Instant now = Instant.parse("2026-07-18T10:00:00Z");
+        InMemoryExecutionRepository executions = new InMemoryExecutionRepository();
+        executions.saveExecution(new ExecutionRecord(
+                "timeline-1", "timeline-1", 0, "job-1", now, now.plusSeconds(1),
+                ExecutorDispatchMode.UNICAST, ExecutorCompletionPolicy.ALL_SUCCESS,
+                ExecutionStatus.RUNNING, 1, 1, "node-a", 1L, now.plusSeconds(30), now, now.plusSeconds(2)
+        ));
+        executions.saveTargets(List.of(new ExecutionTargetRecord(
+                "timeline-target", "timeline-1", "instance-a", "gateway-a", null,
+                ExecutionStatus.RUNNING, 1, now.plusSeconds(2), null, "", now, now.plusSeconds(2)
+        )));
+        AdminHttpPlugin plugin = new AdminHttpPlugin(new AdminHttpOptions(
+                "127.0.0.1", port, Duration.ofSeconds(30)
+        ));
+        plugin.start(FireflyPluginContext.builder().executionRepository(executions).build());
+        try {
+            HttpResponse<String> response = get(port, "/api/executions/timeline-1/timeline");
+
+            assertEquals(200, response.statusCode());
+            assertTrue(response.body().contains("\"type\":\"SCHEDULED\""));
+            assertTrue(response.body().contains("\"type\":\"ACKNOWLEDGED\""));
+            assertTrue(response.body().contains("\"type\":\"DEADLINE\""));
+        } finally {
+            plugin.close();
+        }
+    }
+
+    @Test
     void batchCancelsExecutionsAndPersistsAnAuditRecord() throws Exception {
         int port = freePort();
         Instant now = Instant.parse("2026-07-18T10:00:00Z");

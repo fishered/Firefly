@@ -2,6 +2,7 @@ package com.firefly.api.admin.http;
 
 import com.firefly.execution.ExecutionRecord;
 import com.firefly.plugin.FireflyPluginContext;
+import com.firefly.operations.ExecutionTimelineService;
 import com.firefly.store.ScheduledJobRecord;
 import com.sun.net.httpserver.HttpExchange;
 
@@ -41,6 +42,21 @@ final class AdminExecutionController {
             var repository = executionRepository();
             respond(exchange, 200,
                     AdminHttpJson.executionHistory(repository.listByRootExecutionId(rootExecutionId)));
+            return;
+        }
+        if (path.startsWith("/api/executions/") && path.endsWith("/timeline")
+                && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            String executionId = URLDecoder.decode(
+                    path.substring("/api/executions/".length(), path.length() - "/timeline".length()),
+                    StandardCharsets.UTF_8
+            );
+            var repository = executionRepository();
+            if (repository.findExecution(executionId).isEmpty()) {
+                respond(exchange, 404, "{\"error\":\"execution_not_found\"}");
+                return;
+            }
+            respond(exchange, 200,
+                    AdminHttpJson.executionTimeline(new ExecutionTimelineService(repository).timeline(executionId)));
             return;
         }
         if (path.startsWith("/api/executions/") && path.length() > "/api/executions/".length()) {
