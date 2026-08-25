@@ -46,7 +46,7 @@ public final class FireflyTelemetry {
     }
 
     public static Context extract(Map<String, String> carrier) {
-        Map<String, String> safeCarrier = carrier == null ? Map.of() : carrier;
+        Map<String, String> safeCarrier = TraceCarrier.sanitize(carrier);
         return openTelemetry().getPropagators().getTextMapPropagator()
                 .extract(Context.root(), safeCarrier, GETTER);
     }

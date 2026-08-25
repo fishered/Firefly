@@ -27,7 +27,7 @@ jobs:
           cache: npm
           cache-dependency-path: ui/admin/package-lock.json
       - run: chmod +x gradlew
-      - run: ./gradlew --no-parallel test
+      - run: ./gradlew --no-parallel check verifyPluginCompatibilityMatrix
       - run: npm ci
         working-directory: ui/admin
       - run: npm run check

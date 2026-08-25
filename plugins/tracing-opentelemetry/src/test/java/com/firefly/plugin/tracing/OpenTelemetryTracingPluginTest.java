@@ -38,4 +38,24 @@ class OpenTelemetryTracingPluginTest {
         assertEquals("outbox", exporter.getFinishedSpanItems().getFirst().getName());
         plugin.close();
     }
+
+    @Test
+    void usesHostVersionForServiceResourceWhenProvided() {
+        InMemorySpanExporter exporter = InMemorySpanExporter.create();
+        OpenTelemetryTracingPlugin plugin = new OpenTelemetryTracingPlugin(
+                new OpenTelemetryTracingOptions("http://unused", "test-firefly", 1.0,
+                        Duration.ofSeconds(1), Map.of()), exporter
+        );
+        plugin.start(FireflyPluginContext.builder()
+                .configuration(new com.firefly.plugin.FireflyPluginConfiguration(
+                        Map.of("firefly.version", "1.0.8"), Map.of()))
+                .build());
+        Span span = FireflyTelemetry.tracer().spanBuilder("versioned").startSpan();
+        span.end();
+        ((OpenTelemetrySdk) FireflyTelemetry.openTelemetry()).getSdkTracerProvider()
+                .forceFlush().join(1, TimeUnit.SECONDS);
+        assertEquals("1.0.8", exporter.getFinishedSpanItems().getFirst()
+                .getResource().getAttribute(io.opentelemetry.api.common.AttributeKey.stringKey("service.version")));
+        plugin.close();
+    }
 }
