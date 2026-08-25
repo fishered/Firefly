@@ -74,7 +74,7 @@ jobs:
           done
 
       - name: Verify publication artifacts
-        run: ./gradlew --no-parallel --no-configuration-cache verifyMavenCentralPublication
+        run: ./gradlew --no-parallel --no-configuration-cache check verifyPluginCompatibilityMatrix verifyMavenCentralPublication
 
       - name: Publish and release Maven Central artifacts
         run: ./gradlew --no-parallel --no-configuration-cache publishAndReleaseToMavenCentral

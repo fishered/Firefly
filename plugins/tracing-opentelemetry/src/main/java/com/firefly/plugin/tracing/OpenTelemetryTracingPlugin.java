@@ -61,7 +61,7 @@ public final class OpenTelemetryTracingPlugin implements FireflyPlugin {
     @Override
     public FireflyPluginRuntimeCompatibility runtimeCompatibility() {
         return new FireflyPluginRuntimeCompatibility(
-                compatibility(), "1.0.0", "1.0.7", 1, 2, 12, 12, true
+                compatibility(), "1.0.0", "1.0.8", 1, 2, 12, 12, true
         );
     }
 
@@ -82,7 +82,8 @@ public final class OpenTelemetryTracingPlugin implements FireflyPlugin {
                 .setSampler(Sampler.parentBased(rootSampler))
                 .setResource(Resource.create(Attributes.of(
                         AttributeKey.stringKey("service.name"), effective.serviceName(),
-                        AttributeKey.stringKey("service.version"), version()
+                        AttributeKey.stringKey("service.version"),
+                        context.configuration().property("firefly.version", version())
                 )))
                 .addSpanProcessor(BatchSpanProcessor.builder(exporter)
                         .setScheduleDelay(java.time.Duration.ofSeconds(1)).build())

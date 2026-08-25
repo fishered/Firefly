@@ -7,7 +7,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.0.7"
+    version = "1.0.8"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
@@ -45,6 +45,10 @@ subprojects {
         options.charSet = "UTF-8"
         options.docEncoding = "UTF-8"
         options.addStringOption("Xdoclint:none", "-quiet")
+    }
+
+    tasks.withType(Jar).configureEach {
+        manifest.attributes("Implementation-Version": project.version.toString())
     }
 }
 
@@ -350,11 +354,46 @@ tasks.register("verifyPluginCompatibilityMatrix") {
                         "${plugin.id} has no database schema overlap with Firefly ${node.version}"
             }
         }
+        def tracingSource = rootProject.file("plugins/tracing-opentelemetry/src/main/java/com/firefly/plugin/tracing/OpenTelemetryTracingPlugin.java").getText("UTF-8")
+        def tracingMatrix = matrix.plugins.find { it.id == "tracing-opentelemetry" }
+        def declaration = (tracingSource =~ /runtimeCompatibility\(\)\s*\{[\s\S]*?compatibility\(\),\s*"([^"]+)",\s*"([^"]+)",\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(true|false)/)
+        assert declaration.find() : "tracing-opentelemetry runtimeCompatibility declaration not found"
+        assert declaration.group(1) == tracingMatrix.firefly[0].toString() &&
+                declaration.group(2) == tracingMatrix.firefly[1].toString() &&
+                declaration.group(3) as int == tracingMatrix.executorProtocol[0] &&
+                declaration.group(4) as int == tracingMatrix.executorProtocol[1] &&
+                declaration.group(5) as int == tracingMatrix.databaseSchema[0] &&
+                declaration.group(6) as int == tracingMatrix.databaseSchema[1] &&
+                declaration.group(7).toBoolean() == tracingMatrix.rollingUpgradeSafe :
+                "tracing-opentelemetry runtimeCompatibility() drifted from compatibility matrix"
         println("Firefly plugin rolling-upgrade matrix valid: ${matrix.hostVersions.join(', ')}")
+    }
+}
+
+tasks.register("verifyReleaseVersion") {
+    group = "verification"
+    description = "Checks that release version defaults and examples agree with the Gradle project version."
+    doLast {
+        def expected = project.version.toString()
+        def files = [".env.example", "docker-compose.yml", "Dockerfile", "ui/admin/Dockerfile",
+                     "README.md", "docs/deployment.md"]
+                .collect { rootProject.file(it) }
+        files.each { file ->
+            def text = file.getText("UTF-8")
+            assert !text.contains("FIREFLY_VERSION:-1.0.0") && !text.contains("FIREFLY_VERSION=1.0.0") &&
+                    !text.contains("ARG FIREFLY_VERSION=1.0.0") : "stale Docker version default in ${file}"
+            if (file.name == ".env.example") assert text.contains("FIREFLY_VERSION=${expected}")
+            if (file.name == "docker-compose.yml") assert text.contains("FIREFLY_VERSION:-${expected}")
+            if (file.name == "README.md" || file.name == "deployment.md") {
+                assert !text.contains("firefly-server:1.0.0") && !text.contains("firefly-admin-ui:1.0.0") :
+                        "stale Docker image example in ${file}"
+            }
+        }
     }
 }
 
 tasks.named("check") {
     dependsOn("verifyPluginCompatibilityMatrix")
+    dependsOn("verifyReleaseVersion")
 }
 
