@@ -19,12 +19,12 @@ services:
 #      retries: 20
 
   firefly-server:
-    image: firefly/firefly-server:${FIREFLY_VERSION:-1.0.8}
+    image: firefly/firefly-server:${FIREFLY_VERSION:-1.1.0}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.0.8}
+        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.1.0}
     init: true
     restart: unless-stopped
     stop_grace_period: 30s
@@ -32,7 +32,7 @@ services:
 #      postgres:
 #        condition: service_healthy
     environment:
-      - FIREFLY_VERSION=${FIREFLY_VERSION:-1.0.8}
+      - FIREFLY_VERSION=${FIREFLY_VERSION:-1.1.0}
       # Container bind addresses. Host exposure is controlled by the ports section.
       - FIREFLY_CONFIG_PROFILE=${FIREFLY_CONFIG_PROFILE:-pg}
       - FIREFLY_NODE_MODE=${FIREFLY_NODE_MODE:-standalone}
@@ -70,12 +70,12 @@ services:
       retries: 6
 
   firefly-admin-ui:
-    image: firefly/firefly-admin-ui:${FIREFLY_VERSION:-1.0.8}
+    image: firefly/firefly-admin-ui:${FIREFLY_VERSION:-1.1.0}
     build:
       context: ./ui/admin
       dockerfile: Dockerfile
       args:
-        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.0.8}
+        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.1.0}
     init: true
     restart: unless-stopped
 #    depends_on:

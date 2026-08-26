@@ -48,13 +48,13 @@ class OpenTelemetryTracingPluginTest {
         );
         plugin.start(FireflyPluginContext.builder()
                 .configuration(new com.firefly.plugin.FireflyPluginConfiguration(
-                        Map.of("firefly.version", "1.0.8"), Map.of()))
+                        Map.of("firefly.version", "1.1.0"), Map.of()))
                 .build());
         Span span = FireflyTelemetry.tracer().spanBuilder("versioned").startSpan();
         span.end();
         ((OpenTelemetrySdk) FireflyTelemetry.openTelemetry()).getSdkTracerProvider()
                 .forceFlush().join(1, TimeUnit.SECONDS);
-        assertEquals("1.0.8", exporter.getFinishedSpanItems().getFirst()
+        assertEquals("1.1.0", exporter.getFinishedSpanItems().getFirst()
                 .getResource().getAttribute(io.opentelemetry.api.common.AttributeKey.stringKey("service.version")));
         plugin.close();
     }

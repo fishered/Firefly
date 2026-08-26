@@ -1,14 +1,15 @@
 {
   "matrixVersion": 1,
-  "hostVersions": ["1.0.4", "1.0.6", "1.0.7", "1.0.8"],
+  "hostVersions": ["1.0.4", "1.0.6", "1.0.7", "1.0.8", "1.1.0"],
   "nodes": [
     {"version": "1.0.4", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
     {"version": "1.0.6", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
     {"version": "1.0.7", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
-    {"version": "1.0.8", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]}
+    {"version": "1.0.8", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
+    {"version": "1.1.0", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]}
   ],
   "plugins": [
-    {"id": "tracing-opentelemetry", "api": [1, 1], "firefly": ["1.0.0", "1.0.8"],
+    {"id": "tracing-opentelemetry", "api": [1, 1], "firefly": ["1.0.0", "1.1.0"],
      "executorProtocol": [1, 2], "databaseSchema": [12, 12], "rollingUpgradeSafe": true}
   ],
   "checks": ["plugin-load", "protocol-downgrade", "database-schema-compatibility", "outbox-trace-persistence"]
