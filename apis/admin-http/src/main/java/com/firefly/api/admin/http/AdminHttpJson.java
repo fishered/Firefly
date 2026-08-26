@@ -277,6 +277,23 @@ final class AdminHttpJson {
         return json.toString();
     }
 
+    static String executionTimeline(List<com.firefly.operations.ExecutionTimelineEvent> events) {
+        StringBuilder json = new StringBuilder("{\"events\":[");
+        for (int index = 0; index < events.size(); index++) {
+            if (index > 0) json.append(',');
+            var event = events.get(index);
+            json.append("{\"eventId\":\"").append(escape(event.eventId()))
+                    .append("\",\"executionId\":\"").append(escape(event.executionId()))
+                    .append("\",\"targetExecutionId\":\"").append(escape(event.targetExecutionId()))
+                    .append("\",\"type\":\"").append(event.type().name())
+                    .append("\",\"occurredAt\":\"").append(escape(event.occurredAt().toString()))
+                    .append("\",\"status\":\"").append(event.status() == null ? "" : event.status().name())
+                    .append("\",\"message\":\"").append(escape(event.message()))
+                    .append("\",\"source\":\"").append(event.source().name()).append("\"}");
+        }
+        return json.append("]}").toString();
+    }
+
     static String deadDispatches(List<DispatchOutboxRecord> records) {
         StringBuilder json = new StringBuilder("{\"deadDispatches\":[");
         for (int index = 0; index < records.size(); index++) {
