@@ -259,7 +259,16 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .append(snapshot.localWorkerMaxConcurrency()).append('\n')
                 .append("# HELP firefly_local_worker_rejections_total Rejected local scheduler submissions.\n")
                 .append("# TYPE firefly_local_worker_rejections_total counter\n")
-                .append("firefly_local_worker_rejections_total ").append(snapshot.localWorkerRejections()).append('\n');
+                .append("firefly_local_worker_rejections_total ").append(snapshot.localWorkerRejections()).append('\n')
+                .append("# HELP firefly_batch_progress_updates_total Persisted batch progress updates.\n")
+                .append("# TYPE firefly_batch_progress_updates_total counter\n")
+                .append("firefly_batch_progress_updates_total ").append(snapshot.batchProgressUpdates()).append('\n')
+                .append("# HELP firefly_batch_progress_dropped_total Intermediate batch progress updates dropped by rate limiting.\n")
+                .append("# TYPE firefly_batch_progress_dropped_total counter\n")
+                .append("firefly_batch_progress_dropped_total ").append(snapshot.batchProgressDropped()).append('\n')
+                .append("# HELP firefly_batch_shard_failures_total Failed or timed-out batch shard results.\n")
+                .append("# TYPE firefly_batch_shard_failures_total counter\n")
+                .append("firefly_batch_shard_failures_total ").append(snapshot.batchShardFailures()).append('\n');
     }
 
     private void appendHistogram(

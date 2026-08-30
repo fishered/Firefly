@@ -1,5 +1,11 @@
 # Batch Processing Feature
 
+## 当前实现状态（1.1.x）
+
+已落地并可运行：`BatchExecution`、`BatchProgress`、`BatchShardResult`、`BatchCheckpoint` 聚合模型，内存与 JDBC 批处理仓储（带 fencing 条件更新），分片结果/进度聚合器，Netty 结果帧的受限计数与 checkpoint 摘要字段，以及 `GET /api/batches/{rootExecutionId}` 查询。
+
+Netty gateway 已在持久化执行结果后异步写入批处理仓储；进度按 1 秒窗口限频且终态强制落库，Prometheus 已暴露批处理更新/丢弃/失败计数。大结果通过 BatchObjectStore SPI 保存，数据库只记录 location/checksum/count。生产环境仍需注入 S3/OSS 实现并配置告警阈值。
+
 本 Feature 把已有 broadcast/sharding 派发能力包装成数据同步和批处理任务模型，保持现有 execution、target、retry 和 Outbox 协议不变。
 
 ## 实施拆分

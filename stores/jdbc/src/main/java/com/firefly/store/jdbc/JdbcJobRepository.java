@@ -36,6 +36,8 @@ import java.util.Optional;
 import java.util.Set;
 import com.firefly.engine.ExecutionCommand;
 import com.firefly.tracing.TraceCarrier;
+import com.firefly.schedule.DependencyGraphValidator;
+import com.firefly.schedule.JobDependency;
 
 /**
  * JDBC-backed job repository for persisted job definitions and runtime cursors.
@@ -72,6 +74,10 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     public void save(JobDefinition definition, Instant initialNextFireTime) {
         Objects.requireNonNull(definition, "definition");
         Objects.requireNonNull(initialNextFireTime, "initialNextFireTime");
+        java.util.List<JobDependency> dependencies = new java.util.ArrayList<>();
+        list().forEach(record -> dependencies.addAll(record.definition().dependencies()));
+        dependencies.addAll(definition.dependencies());
+        new DependencyGraphValidator().validate(dependencies);
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
             try {
@@ -108,6 +114,41 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         } catch (SQLException e) {
             throw new JdbcException("failed to find firefly job", e);
         }
+    }
+
+    @Override
+    public String dependencyStatus(String prerequisiteJobId, Instant businessTime) {
+        String executionId = prerequisiteJobId + "@" + businessTime;
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "select status from firefly_dispatch_outbox where execution_id=?")) {
+            statement.setString(1, executionId);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) return "PENDING";
+                return switch (result.getString(1)) {
+                    case "DONE" -> "SUCCEEDED";
+                    case "DEAD" -> "FAILED";
+                    default -> "PENDING";
+                };
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to read dependency status", e);
+        }
+    }
+
+    @Override
+    public Optional<com.firefly.schedule.CalendarDefinition> findCalendar(String calendarId) {
+        return new JdbcCalendarRepository(dataSource).find(calendarId);
+    }
+
+    @Override
+    public void saveCalendar(com.firefly.schedule.CalendarDefinition calendar) {
+        new JdbcCalendarRepository(dataSource).save(calendar);
+    }
+
+    @Override
+    public List<com.firefly.schedule.CalendarDefinition> listCalendars() {
+        return new JdbcCalendarRepository(dataSource).list();
     }
 
     @Override
@@ -933,7 +974,9 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 java.util.Map.entry("shardCount", Integer.toString(definition.shardCount())),
                 java.util.Map.entry("routingKey", definition.routingKey()),
                 java.util.Map.entry("retryScope", definition.retryScope().name()),
-                java.util.Map.entry("enabled", Boolean.toString(definition.enabled()))
+                java.util.Map.entry("enabled", Boolean.toString(definition.enabled())),
+                java.util.Map.entry("calendarId", definition.calendarId()),
+                java.util.Map.entry("dependencies", definition.dependencies().stream().map(d -> d.prerequisiteJobId() + ":" + d.maxWaitAttempts()).reduce((a,b)->a+","+b).orElse(""))
         ));
         traceCarrier.values().forEach((key, value) -> fields.put("trace." + key, value));
         return DispatchSnapshotCodec.encode(fields);
@@ -990,7 +1033,9 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 .routingKey(snapshot.get("routingKey"))
                 .retryScope(com.firefly.domain.ExecutorRetryScope.valueOf(
                         snapshot.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")))
-                .enabled(strictBoolean(snapshot, "enabled"));
+                .enabled(strictBoolean(snapshot, "enabled"))
+                .calendarId(snapshot.getOrDefault("calendarId", ""))
+                .dependencies(decodeDependencies(snapshot.get("dependencies"), snapshot.get("id")));
         String destinationType = snapshot.get("destinationType");
         if (destinationType != null) {
             builder.destination(new com.firefly.domain.JobDestination(
@@ -1418,8 +1463,14 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     }
 
     private static java.util.Map<String, String> persistedParameters(JobDefinition definition) {
-        if (!definition.remote()) return definition.parameters();
         java.util.HashMap<String, String> parameters = new java.util.HashMap<>(definition.parameters());
+        if (!definition.calendarId().isBlank()) parameters.put("firefly.calendarId", definition.calendarId());
+        if (!definition.dependencies().isEmpty()) {
+            parameters.put("firefly.dependencies", definition.dependencies().stream()
+                    .map(d -> d.prerequisiteJobId() + ":" + d.maxWaitAttempts())
+                    .collect(java.util.stream.Collectors.joining(",")));
+        }
+        if (!definition.remote()) return java.util.Map.copyOf(parameters);
         parameters.put("executorName", definition.destination().executorName());
         parameters.put("handlerName", definition.businessHandlerName());
         parameters.put("firefly.retry.maxAttempts", Integer.toString(definition.retryPolicy().maxAttempts()));
@@ -1432,6 +1483,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     }
 
     private static ScheduledJobRecord mapRecord(ResultSet resultSet) throws SQLException {
+        java.util.Map<String, String> persisted = JdbcEncoding.decodeMap(resultSet.getString("parameters"));
         JobDefinition definition = JobDefinition.builder()
                 .id(resultSet.getString("job_id"))
                 .groupId(resultSet.getString("group_id"))
@@ -1447,7 +1499,9 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 .concurrencyPolicy(ConcurrencyPolicy.valueOf(resultSet.getString("concurrency_policy")))
                 .maxCatchUpCount(resultSet.getInt("max_catch_up_count"))
                 .timeout(Duration.parse(resultSet.getString("timeout_value")))
-                .parameters(JdbcEncoding.decodeMap(resultSet.getString("parameters")))
+                .parameters(persisted)
+                .calendarId(persisted.getOrDefault("firefly.calendarId", ""))
+                .dependencies(decodeDependencies(persisted.get("firefly.dependencies"), resultSet.getString("job_id")))
                 .dispatchMode(ExecutorDispatchMode.valueOf(resultSet.getString("dispatch_mode")))
                 .routingStrategy(ExecutorRoutingStrategy.valueOf(resultSet.getString("routing_strategy")))
                 .completionPolicy(ExecutorCompletionPolicy.valueOf(resultSet.getString("completion_policy")))
@@ -1457,6 +1511,23 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 .enabled(resultSet.getBoolean("enabled"))
                 .build();
         return new ScheduledJobRecord(definition, resultSet.getTimestamp("next_fire_time").toInstant());
+    }
+
+    private static List<JobDependency> decodeDependencies(String value, String jobId) {
+        if (value == null || value.isBlank()) return List.of();
+        List<JobDependency> result = new ArrayList<>();
+        for (String item : value.split(",")) {
+            String[] parts = item.split(":", 2);
+            if (parts.length != 2 || parts[0].isBlank()) {
+                throw new JdbcException("invalid persisted dependency for job " + jobId);
+            }
+            try {
+                result.add(new JobDependency(jobId, parts[0], Integer.parseInt(parts[1])));
+            } catch (RuntimeException e) {
+                throw new JdbcException("invalid persisted dependency for job " + jobId, e);
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static ScheduleStorage encodeSchedule(Schedule schedule) {

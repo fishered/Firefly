@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import { extname, relative, resolve, sep } from 'node:path';
+import { basename, extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const host = process.env.FIREFLY_ADMIN_UI_HOST ?? '127.0.0.1';
@@ -273,9 +273,15 @@ async function serveStatic(req, url, res) {
       res.end();
       return;
     }
+    const extension = extname(file);
+    const cacheControl = extension === '.html'
+      ? 'no-store'
+      : (basename(file) === 'app.js' || basename(file) === 'i18n.js' || basename(file) === 'styles.css'
+        ? 'no-cache'
+        : 'public, max-age=3600');
     res.writeHead(200, securityHeaders({
-      'Content-Type': contentTypes.get(extname(file)) ?? 'application/octet-stream',
-      'Cache-Control': extname(file) === '.html' ? 'no-store' : 'public, max-age=3600',
+      'Content-Type': contentTypes.get(extension) ?? 'application/octet-stream',
+      'Cache-Control': cacheControl,
       ETag: resource.etag
     }));
     res.end(resource.content);

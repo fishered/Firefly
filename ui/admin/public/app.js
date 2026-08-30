@@ -1,6 +1,7 @@
 const views = {
   overview: { title: '总览' },
   jobs: { title: '任务管理', action: 'new-job' },
+  calendars: { title: '业务日历', action: 'new-calendar' },
   executors: { title: '执行器', action: 'new-executor' },
   executions: { title: '执行记录', action: 'refresh' },
   nodes: { title: '节点与集群', badge: 'Cluster Mode', action: 'refresh' },
@@ -14,6 +15,7 @@ const state = {
   session: null,
   overview: null,
   jobs: [],
+  calendars: [],
   executions: [],
   deadDispatches: [],
   executors: [],
@@ -76,10 +78,14 @@ document.querySelectorAll('[data-locale]').forEach(button => {
 });
 document.addEventListener('firefly:locale-change', () => {
   const view = state.currentView || 'overview';
-  document.getElementById('page-title').textContent = views[view].title;
-  renderActions(view);
+  if (!views[view]) {
+    state.currentView = 'overview';
+  }
+  const activeView = state.currentView;
+  document.getElementById('page-title').textContent = views[activeView].title;
+  renderActions(activeView);
   if (state.session) {
-    renderView(view);
+    renderView(activeView);
     updateSessionSummary();
   } else if (document.body.classList.contains('auth-required')) {
     showLogin();
@@ -288,6 +294,7 @@ function formatRemaining(milliseconds) {
 }
 
 async function setView(view) {
+  if (!views[view]) return;
   state.currentView = view;
   document.querySelectorAll('.nav').forEach(button => {
     button.classList.toggle('active', button.dataset.view === view);
@@ -299,6 +306,7 @@ async function setView(view) {
   renderActions(view);
   renderView(view);
   await refreshView(false, false);
+  window.FireflyI18n.localize(document.body);
 }
 
 async function refreshView(notify = true, force = true) {
@@ -312,6 +320,11 @@ function renderActions(view) {
   if (views[view].action === 'new-job') {
     actions.innerHTML = `<button class="btn primary" type="button"><span>＋</span>新建任务</button>`;
     actions.querySelector('button').addEventListener('click', openJobDialog);
+    return;
+  }
+  if (views[view].action === 'new-calendar') {
+    actions.innerHTML = `<button class="btn primary" type="button"><span>＋</span>新建日历</button>`;
+    actions.querySelector('button').addEventListener('click', openCalendarDialog);
     return;
   }
   if (views[view].action === 'new-executor') {
@@ -337,7 +350,8 @@ async function loadViewData(view, force) {
   if (!force && Date.now() - loadedAt < VIEW_CACHE_MS) return;
   const loaders = {
     overview: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes],
-    jobs: [loadJobs, loadExecutors],
+    jobs: [loadJobs, loadExecutors, loadCalendars],
+    calendars: [loadCalendars],
     executors: [loadExecutors],
     executions: [loadExecutions, loadDeadDispatches],
     nodes: [loadNodes],
@@ -372,6 +386,11 @@ async function loadJobs() {
   } catch {
     state.jobs = [];
   }
+}
+
+async function loadCalendars() {
+  try { state.calendars = normalizeList(await api('/api/calendars'), 'calendars'); }
+  catch { state.calendars = []; }
 }
 
 async function loadExecutors() {
@@ -449,12 +468,406 @@ function renderView(view) {
   const root = document.getElementById('view-root');
   if (view === 'overview') root.innerHTML = overviewPage();
   if (view === 'jobs') root.innerHTML = jobsPage();
+  if (view === 'calendars') root.innerHTML = calendarsPage();
   if (view === 'executors') root.innerHTML = executorsPage();
   if (view === 'executions') root.innerHTML = executionsPage();
   if (view === 'nodes') root.innerHTML = nodesPage();
   if (view === 'plugins') root.innerHTML = pluginsPage();
   if (view === 'settings') root.innerHTML = usersPage();
   bindViewActions(view);
+}
+
+function calendarsPage() {
+  const calendars = latestCalendars();
+  return `
+    <section class="calendar-intro-card">
+      <div>
+        <span class="calendar-eyebrow">SCHEDULING SEMANTICS</span>
+        <h2>让任务跟随业务时间运行</h2>
+        <p>每套日历拥有独立时区、每周工作模板和日期例外。任务绑定后，调度器会按该日历判断是否创建执行。</p>
+      </div>
+      <div class="calendar-legend" aria-label="日历图例">
+        <span><i class="calendar-dot working"></i>工作日</span>
+        <span><i class="calendar-dot holiday"></i>节假日</span>
+        <span><i class="calendar-dot makeup"></i>调休工作日</span>
+      </div>
+    </section>
+    ${calendars.length ? `
+      <section class="calendar-card-grid">
+        ${calendars.map(calendar => calendarSummaryCard(calendar)).join('')}
+      </section>` : `
+      <section class="card empty-state calendar-empty-state">
+        <div class="empty-calendar-mark" aria-hidden="true"><span>${new Date().getDate()}</span></div>
+        <h2>还没有业务日历</h2>
+        <p class="muted">创建第一套日历，在月历上直接标记节假日和调休工作日。</p>
+        <button class="btn primary" type="button" data-create-calendar>创建业务日历</button>
+      </section>`}
+  `;
+}
+
+function latestCalendars() {
+  const byId = new Map();
+  for (const calendar of state.calendars) {
+    const current = byId.get(calendar.id);
+    if (!current || Number(calendar.version) > Number(current.version)) byId.set(calendar.id, calendar);
+  }
+  return [...byId.values()].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+}
+
+function calendarSummaryCard(calendar) {
+  const holidays = csvValues(calendar.holidays);
+  const makeupDays = csvValues(calendar.extraWorkingDays);
+  const workingDays = csvValues(calendar.workingDays);
+  return `
+    <article class="calendar-summary-card">
+      <div class="calendar-card-accent"></div>
+      <div class="calendar-card-heading">
+        <div><h3>${escapeHtml(calendar.id)}</h3><span class="calendar-version">v${Number(calendar.version ?? 1)}</span></div>
+        <button class="icon-button" type="button" data-edit-calendar="${escapeHtml(calendar.id)}" aria-label="编辑业务日历" title="编辑业务日历">&#9998;</button>
+      </div>
+      <div class="calendar-zone"><span>时区</span><strong>${escapeHtml(calendar.zoneId)}</strong></div>
+      <div class="calendar-counts">
+        <div><strong>${workingDays.length}</strong><span>每周工作日</span></div>
+        <div><strong>${holidays.length}</strong><span>节假日</span></div>
+        <div><strong>${makeupDays.length}</strong><span>调休</span></div>
+      </div>
+      <div class="calendar-next-rule">${nextCalendarException(calendar)}</div>
+      <button class="calendar-card-action" type="button" data-edit-calendar="${escapeHtml(calendar.id)}">查看并编辑日历 <span>→</span></button>
+    </article>`;
+}
+
+function nextCalendarException(calendar) {
+  const today = localDateString(new Date());
+  const upcoming = [
+    ...csvValues(calendar.holidays).map(date => ({ date, label: '节假日', tone: 'holiday' })),
+    ...csvValues(calendar.extraWorkingDays).map(date => ({ date, label: '调休工作日', tone: 'makeup' }))
+  ].filter(item => item.date >= today).sort((left, right) => left.date.localeCompare(right.date))[0];
+  if (!upcoming) return '<span class="muted">暂无未来日期例外</span>';
+  return `<span class="calendar-rule-pill ${upcoming.tone}">${upcoming.label}</span><span>${escapeHtml(upcoming.date)}</span>`;
+}
+
+function openCalendarDialog(existing = null) {
+  const editing = Boolean(existing);
+  const calendarState = {
+    month: startOfMonth(existingCalendarFocus(existing)),
+    mode: 'holiday',
+    selectedDates: new Set(),
+    selectionAnchor: null,
+    selecting: false,
+    workingDays: new Set(csvValues(existing?.workingDays || 'MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY')),
+    holidays: new Set(csvValues(existing?.holidays)),
+    extraWorkingDays: new Set(csvValues(existing?.extraWorkingDays))
+  };
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="calendar-dialog-title">
+      <form id="calendar-dialog" class="modal calendar-editor-modal">
+        <div class="modal-header calendar-editor-header">
+          <div>
+            <h2 id="calendar-dialog-title">${editing ? '编辑业务日历' : '新建业务日历'}</h2>
+            <div class="modal-subtitle">规则按日期例外 → 每周模板的优先级执行</div>
+          </div>
+          <button class="btn icon" type="button" data-close aria-label="关闭">×</button>
+        </div>
+        <div class="calendar-editor-body">
+          <aside class="calendar-rule-panel">
+            <div class="calendar-fields">
+              <label class="field">日历 ID<input name="id" value="${escapeHtml(existing?.id ?? 'cn-workday')}" required pattern="[A-Za-z0-9._-]{1,128}" ${editing ? 'readonly' : ''}></label>
+              <input type="hidden" name="version" value="${editing ? Number(existing.version ?? 1) + 1 : 1}">
+              <label class="field timezone-field">时区
+                <span class="combobox-input">
+                  <input name="zoneId" value="${escapeHtml(existing?.zoneId ?? 'Asia/Shanghai')}" list="calendar-timezone-list" required autocomplete="off">
+                  <button type="button" data-calendar-timezone-load aria-label="加载时区">⌄</button>
+                </span>
+                <datalist id="calendar-timezone-list">
+                  ${['Asia/Shanghai', 'UTC', 'America/New_York', 'Europe/London', 'Asia/Tokyo'].map(zone => `<option value="${zone}"></option>`).join('')}
+                </datalist>
+              </label>
+            </div>
+
+            <section class="calendar-rule-section">
+              <div class="calendar-rule-title"><span class="rule-priority">2</span><div><strong>每周工作模板</strong><small>作为所有日期的默认规则</small></div></div>
+              <div class="weekday-picker" role="group" aria-label="每周工作日">
+                ${calendarWeekdayButtons(calendarState.workingDays)}
+              </div>
+            </section>
+
+            <section class="calendar-rule-section date-exception-section">
+              <div class="calendar-rule-title"><span class="rule-priority priority-one">1</span><div><strong>日期例外</strong><small>优先覆盖每周工作模板</small></div></div>
+              <div class="calendar-mode-tabs" role="radiogroup" aria-label="日期标记类型">
+                <button class="active holiday" type="button" data-calendar-mode="holiday"><i></i>节假日</button>
+                <button class="workday" type="button" data-calendar-mode="workday"><i></i>工作日</button>
+                <button type="button" data-calendar-mode="clear"><i></i>恢复默认</button>
+              </div>
+              <div class="calendar-range-fields">
+                <label>开始日期<input type="date" data-calendar-range-start></label>
+                <label>结束日期<input type="date" data-calendar-range-end></label>
+              </div>
+              <button class="btn calendar-apply-range" type="button" data-calendar-apply-range>应用到日期范围</button>
+              <button class="btn calendar-apply-selection" type="button" data-calendar-apply-selection disabled>将类型应用到已选日期</button>
+              <button class="calendar-clear-selection" type="button" data-calendar-clear-selection disabled>清空当前选择</button>
+              <p class="calendar-rule-hint">点击可多选；按住 Shift 选择连续范围，拖拽也可以快速框选。</p>
+            </section>
+
+            <div class="calendar-rule-ladder" aria-label="规则优先级">
+              <div><span>1</span><strong>日期例外</strong><small>节假日 / 调休</small></div>
+              <i>→</i>
+              <div><span>2</span><strong>每周模板</strong><small>周一至周日</small></div>
+            </div>
+          </aside>
+
+          <section class="calendar-canvas-panel">
+            <div class="calendar-canvas-toolbar">
+              <button class="icon-button" type="button" data-calendar-month="previous" aria-label="上个月">‹</button>
+              <div><strong data-calendar-month-label></strong><span data-calendar-zone-label>${escapeHtml(existing?.zoneId ?? 'Asia/Shanghai')}</span></div>
+              <button class="icon-button" type="button" data-calendar-month="next" aria-label="下个月">›</button>
+            </div>
+            <div class="calendar-week-header">${['一','二','三','四','五','六','日'].map(day => `<span>${day}</span>`).join('')}</div>
+            <div class="calendar-month-grid" data-calendar-grid></div>
+            <div class="calendar-selection-summary">
+              <span><i class="calendar-dot holiday"></i><strong data-calendar-holiday-count>${calendarState.holidays.size}</strong> 个节假日</span>
+              <span><i class="calendar-dot makeup"></i><strong data-calendar-makeup-count>${calendarState.extraWorkingDays.size}</strong> 个工作日</span>
+              <span class="calendar-selected-count">已选 <strong data-calendar-selected-count>0</strong> 天</span>
+              <span class="calendar-click-tip">当前类型：<strong data-calendar-mode-label>节假日</strong></span>
+            </div>
+          </section>
+        </div>
+        <input type="hidden" name="workingDays">
+        <input type="hidden" name="holidays">
+        <input type="hidden" name="extraWorkingDays">
+        <div class="modal-footer">
+          <span class="calendar-save-note">保存后，任务可在“业务日历”字段中绑定此版本</span>
+          <button class="btn" type="button" data-close>取消</button>
+          <button class="btn primary" type="submit">${editing ? '保存为新版本' : '保存日历'}</button>
+        </div>
+      </form>
+    </div>`;
+  const form = root.querySelector('#calendar-dialog');
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  bindCalendarEditor(form, calendarState);
+  form.addEventListener('submit', event => saveCalendar(event, calendarState));
+}
+
+function calendarWeekdayButtons(selected) {
+  const days = [
+    ['MONDAY','一'], ['TUESDAY','二'], ['WEDNESDAY','三'], ['THURSDAY','四'],
+    ['FRIDAY','五'], ['SATURDAY','六'], ['SUNDAY','日']
+  ];
+  return days.map(([value, label]) => `<button class="${selected.has(value) ? 'active' : ''}" type="button" data-weekday="${value}" aria-pressed="${selected.has(value)}">${label}</button>`).join('');
+}
+
+function bindCalendarEditor(form, calendarState) {
+  const zone = form.elements.zoneId;
+  let suppressNextClick = false;
+  const syncHiddenFields = () => {
+    form.elements.workingDays.value = [...calendarState.workingDays].sort().join(',');
+    form.elements.holidays.value = [...calendarState.holidays].sort().join(',');
+    form.elements.extraWorkingDays.value = [...calendarState.extraWorkingDays].sort().join(',');
+    form.querySelector('[data-calendar-holiday-count]').textContent = calendarState.holidays.size;
+    form.querySelector('[data-calendar-makeup-count]').textContent = calendarState.extraWorkingDays.size;
+    form.querySelector('[data-calendar-selected-count]').textContent = calendarState.selectedDates.size;
+    form.querySelector('[data-calendar-apply-selection]').disabled = calendarState.selectedDates.size === 0;
+    form.querySelector('[data-calendar-clear-selection]').disabled = calendarState.selectedDates.size === 0;
+  };
+  const render = () => {
+    renderCalendarMonth(form, calendarState);
+    syncHiddenFields();
+  };
+  form.querySelectorAll('[data-weekday]').forEach(button => button.addEventListener('click', () => {
+    if (calendarState.workingDays.has(button.dataset.weekday)) calendarState.workingDays.delete(button.dataset.weekday);
+    else calendarState.workingDays.add(button.dataset.weekday);
+    button.classList.toggle('active', calendarState.workingDays.has(button.dataset.weekday));
+    button.setAttribute('aria-pressed', String(calendarState.workingDays.has(button.dataset.weekday)));
+    render();
+  }));
+  form.querySelectorAll('[data-calendar-mode]').forEach(button => button.addEventListener('click', () => {
+    calendarState.mode = button.dataset.calendarMode;
+    form.querySelectorAll('[data-calendar-mode]').forEach(item => item.classList.toggle('active', item === button));
+    form.querySelector('[data-calendar-mode-label]').textContent = { holiday: '节假日', workday: '工作日', makeup: '工作日', clear: '恢复默认' }[calendarState.mode];
+  }));
+  form.querySelectorAll('[data-calendar-month]').forEach(button => button.addEventListener('click', () => {
+    calendarState.month = addCalendarMonths(calendarState.month, button.dataset.calendarMonth === 'next' ? 1 : -1);
+    render();
+  }));
+  form.querySelector('[data-calendar-apply-range]').addEventListener('click', () => {
+    const start = form.querySelector('[data-calendar-range-start]').value;
+    const end = form.querySelector('[data-calendar-range-end]').value;
+    if (!start || !end) { toast('请选择开始日期和结束日期'); return; }
+    if (start > end) { toast('结束日期不能早于开始日期'); return; }
+    const dates = dateRange(start, end, 732);
+    if (!dates) { toast('单次日期范围不能超过 732 天'); return; }
+    dates.forEach(date => applyCalendarDate(calendarState, date));
+    calendarState.month = startOfMonth(dateFromLocalString(start));
+    render();
+  });
+  form.querySelector('[data-calendar-apply-selection]').addEventListener('click', () => {
+    calendarState.selectedDates.forEach(date => applyCalendarDate(calendarState, date));
+    calendarState.selectedDates.clear();
+    calendarState.selectionAnchor = null;
+    render();
+  });
+  form.querySelector('[data-calendar-clear-selection]').addEventListener('click', () => {
+    calendarState.selectedDates.clear();
+    calendarState.selectionAnchor = null;
+    render();
+  });
+  form.querySelector('[data-calendar-timezone-load]').addEventListener('click', () => loadCalendarTimezones(form));
+  zone.addEventListener('change', () => { form.querySelector('[data-calendar-zone-label]').textContent = zone.value; });
+  form.addEventListener('pointerdown', event => {
+    const day = event.target.closest('[data-calendar-date]');
+    if (!day) return;
+    event.preventDefault();
+    suppressNextClick = true;
+    calendarState.selecting = true;
+    const date = day.dataset.calendarDate;
+    const anchor = calendarState.selectionAnchor;
+    if (event.shiftKey && anchor) {
+      const range = dateRangeBetween(anchor, date, 3660);
+      if (!range) { toast('单次选择范围不能超过 10 年'); return; }
+      range.forEach(item => calendarState.selectedDates.add(item));
+    } else {
+      calendarState.selectionAnchor = date;
+      if (!event.ctrlKey && !event.metaKey) calendarState.selectedDates.clear();
+      calendarState.selectedDates.add(date);
+    }
+    render();
+  });
+  form.addEventListener('pointerover', event => {
+    if (!calendarState.selecting) return;
+    const day = event.target.closest('[data-calendar-date]');
+    if (!day || !calendarState.selectionAnchor) return;
+    const range = dateRangeBetween(calendarState.selectionAnchor, day.dataset.calendarDate, 3660);
+    if (!range) return;
+    let changed = false;
+    range.forEach(item => {
+      if (!calendarState.selectedDates.has(item)) {
+        calendarState.selectedDates.add(item);
+        changed = true;
+      }
+    });
+    // Do not replace the grid DOM when hovering an already selected cell. A
+    // pointerdown/click sequence must keep its original target actionable.
+    if (changed) render();
+  });
+  const stopSelecting = () => { calendarState.selecting = false; };
+  form.addEventListener('pointerup', stopSelecting);
+  form.addEventListener('pointercancel', stopSelecting);
+  form.addEventListener('pointerleave', stopSelecting);
+  form.addEventListener('click', event => {
+    const day = event.target.closest('[data-calendar-date]');
+    if (!day) return;
+    if (suppressNextClick) { suppressNextClick = false; return; }
+    const date = day.dataset.calendarDate;
+    if (event.shiftKey && calendarState.selectionAnchor) {
+      const range = dateRangeBetween(calendarState.selectionAnchor, date, 3660);
+      if (range) range.forEach(item => calendarState.selectedDates.add(item));
+    } else if (calendarState.selectedDates.has(date)) calendarState.selectedDates.delete(date);
+    else calendarState.selectedDates.add(date);
+    calendarState.selectionAnchor = date;
+    render();
+  });
+  render();
+}
+
+function renderCalendarMonth(form, calendarState) {
+  const year = calendarState.month.getUTCFullYear();
+  const month = calendarState.month.getUTCMonth();
+  form.querySelector('[data-calendar-month-label]').textContent = `${year} 年 ${month + 1} 月`;
+  const firstWeekday = (calendarState.month.getUTCDay() + 6) % 7;
+  const monthDays = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const previousDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const cells = [];
+  for (let index = 0; index < 42; index += 1) {
+    const dayOffset = index - firstWeekday + 1;
+    let cellYear = year;
+    let cellMonth = month;
+    let day = dayOffset;
+    let outside = false;
+    if (dayOffset < 1) { cellMonth -= 1; day = previousDays + dayOffset; outside = true; }
+    if (dayOffset > monthDays) { cellMonth += 1; day = dayOffset - monthDays; outside = true; }
+    const date = new Date(Date.UTC(cellYear, cellMonth, day));
+    const value = localDateString(date);
+    const weekday = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'][date.getUTCDay()];
+    const exception = calendarState.holidays.has(value) ? 'holiday' : (calendarState.extraWorkingDays.has(value) ? 'makeup' : '');
+    const working = exception === 'makeup' || (!exception && calendarState.workingDays.has(weekday));
+    const today = value === localDateString(new Date());
+    const selected = calendarState.selectedDates.has(value);
+    cells.push(`<button type="button" class="calendar-day ${outside ? 'outside' : ''} ${exception} ${working ? 'working' : 'rest'} ${today ? 'today' : ''} ${selected ? 'selected' : ''}" data-calendar-date="${value}" aria-pressed="${selected}" aria-label="${value}${exception === 'holiday' ? ' 节假日' : exception === 'makeup' ? ' 工作日' : working ? ' 工作日' : ' 休息日'}"><span>${date.getUTCDate()}</span>${exception ? `<i>${exception === 'holiday' ? '休' : '班'}</i>` : ''}${selected ? '<b>✓</b>' : ''}</button>`);
+  }
+  form.querySelector('[data-calendar-grid]').innerHTML = cells.join('');
+}
+
+function applyCalendarDate(calendarState, date) {
+  calendarState.holidays.delete(date);
+  calendarState.extraWorkingDays.delete(date);
+  if (calendarState.mode === 'holiday') calendarState.holidays.add(date);
+  if (calendarState.mode === 'makeup' || calendarState.mode === 'workday') calendarState.extraWorkingDays.add(date);
+}
+
+async function loadCalendarTimezones(form) {
+  try {
+    const data = await api('/api/schedules/timezones?query=');
+    const values = normalizeList(data, 'timezones');
+    const list = form.querySelector('#calendar-timezone-list');
+    list.innerHTML = values.map(value => `<option value="${escapeHtml(value)}"></option>`).join('');
+    form.elements.zoneId.focus();
+    try { form.elements.zoneId.showPicker?.(); } catch { /* native picker may be unavailable */ }
+  } catch (error) { toast(scheduleApiError(error)); }
+}
+
+async function saveCalendar(event, calendarState) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!calendarState.workingDays.size) { toast('请至少选择一个每周工作日'); return; }
+  const body = Object.fromEntries(new FormData(form));
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    await api('/api/calendars', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    closeDialog();
+    await refreshView(false);
+    toast(`日历已保存：${body.id}（v${body.version}）`);
+  } catch (error) { toast(error.message); }
+  finally { submit.disabled = false; }
+}
+
+function existingCalendarFocus(calendar) {
+  const date = [...csvValues(calendar?.holidays), ...csvValues(calendar?.extraWorkingDays)].sort()[0];
+  return date ? dateFromLocalString(date) : new Date();
+}
+
+function csvValues(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  return String(value ?? '').split(',').map(item => item.trim()).filter(Boolean);
+}
+
+function startOfMonth(date) { return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)); }
+function addCalendarMonths(date, amount) { return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + amount, 1)); }
+function dateFromLocalString(value) { const [year, month, day] = value.split('-').map(Number); return new Date(Date.UTC(year, month - 1, day)); }
+function localDateString(date) { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`; }
+function dateRange(start, end, limit) {
+  const values = [];
+  const cursor = dateFromLocalString(start);
+  const last = dateFromLocalString(end);
+  while (cursor <= last) {
+    values.push(localDateString(cursor));
+    if (values.length > limit) return null;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return values;
+}
+
+function dateRangeBetween(start, end, limit = 3660) {
+  const values = [];
+  const cursor = dateFromLocalString(start);
+  const last = dateFromLocalString(end);
+  const direction = cursor <= last ? 1 : -1;
+  while (true) {
+    values.push(localDateString(cursor));
+    if (values.length > limit) return null;
+    if (localDateString(cursor) === localDateString(last)) return values;
+    cursor.setUTCDate(cursor.getUTCDate() + direction);
+  }
 }
 
 function overviewPage() {
@@ -1048,6 +1461,7 @@ function openJobDialog() {
           ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'], jobFieldHelp.retryScope)}
           ${dialogField('分片数', 'shardCount', '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
           ${dialogField('路由键', 'routingKey', '', false, 'text', jobFieldHelp.routingKey)}
+          ${calendarSelect('')}
           ${scheduleEditorFields('*/5 * * * * *', 'Asia/Shanghai')}
         </div>
         <div class="modal-footer">
@@ -1061,6 +1475,7 @@ function openJobDialog() {
   const form = root.querySelector('#job-dialog');
   bindJobDestinationFields(form);
   bindJobPolicyFields(form);
+  bindCalendarBinding(form);
   bindScheduleEditor(form);
   form.addEventListener('submit', createJob);
 }
@@ -1090,6 +1505,26 @@ function dialogField(label, name, value, required, type = 'text', help = null, a
 
 function dialogSelect(label, name, options, help = null) {
   return `<label class="field" data-field="${escapeHtml(name)}">${fieldLabel(label, help)}<select name="${escapeHtml(name)}">${options.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select></label>`;
+}
+
+function calendarSelect(value = '') {
+  const options = [`<option value="">不使用业务日历</option>`, ...latestCalendars().map(c => `<option value="${escapeHtml(c.id)}" ${c.id === value ? 'selected' : ''}>${escapeHtml(c.id)}（v${c.version}）</option>`)].join('');
+  const selected = latestCalendars().find(calendar => calendar.id === value);
+  return `<label class="field calendar-binding-field" data-field="calendarId">${fieldLabel('业务日历', ['任务会按绑定日历的时区和日期例外判断是否触发。'])}<select name="calendarId">${options}</select><span class="calendar-binding-preview" data-calendar-binding-preview>${calendarBindingSummary(selected)}</span></label>`;
+}
+
+function calendarBindingSummary(calendar) {
+  if (!calendar) return '不绑定日历：按 Cron 原计划执行';
+  return `${calendar.zoneId} · ${csvValues(calendar.holidays).length} 个节假日 · ${csvValues(calendar.extraWorkingDays).length} 个调休`;
+}
+
+function bindCalendarBinding(form) {
+  const select = form.elements.calendarId;
+  const preview = form.querySelector('[data-calendar-binding-preview]');
+  if (!select || !preview) return;
+  const update = () => preview.textContent = calendarBindingSummary(latestCalendars().find(calendar => calendar.id === select.value));
+  select.addEventListener('change', update);
+  update();
 }
 
 function executorProtocolSelect() {
@@ -1920,6 +2355,15 @@ function bindViewActions(view) {
       renderView('jobs');
     });
   }
+  if (view === 'calendars') {
+    document.querySelector('[data-create-calendar]')?.addEventListener('click', () => openCalendarDialog());
+    document.querySelectorAll('[data-edit-calendar]').forEach(button => {
+      button.addEventListener('click', () => {
+        const calendar = latestCalendars().find(item => item.id === button.dataset.editCalendar);
+        if (calendar) openCalendarDialog(calendar);
+      });
+    });
+  }
   if (view === 'executions') {
     document.querySelectorAll('[data-execution-detail]').forEach(button => {
       button.addEventListener('click', () => openExecutionDetail(button.dataset.executionDetail));
@@ -2177,6 +2621,7 @@ function openJobEditDialog(job) {
           ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'], jobFieldHelp.retryScope)}
           ${dialogField('分片数量', 'shardCount', job.shardCount ?? '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
           ${dialogField('路由键', 'routingKey', job.routingKey ?? '', false, 'text', jobFieldHelp.routingKey)}
+          ${calendarSelect(job.calendarId ?? '')}
           ${dialogField('最大重试次数', 'retryMaxAttempts', job.retryMaxAttempts ?? '1', true, 'number')}
           ${dialogSelect('状态', 'enabled', ['true', 'false'])}
         </div>
@@ -2198,6 +2643,7 @@ function openJobEditDialog(job) {
   const form = root.querySelector('#job-edit-dialog');
   bindJobDestinationFields(form);
   bindJobPolicyFields(form);
+  bindCalendarBinding(form);
   bindScheduleEditor(form);
   form.addEventListener('submit', submitJobEdit);
 }

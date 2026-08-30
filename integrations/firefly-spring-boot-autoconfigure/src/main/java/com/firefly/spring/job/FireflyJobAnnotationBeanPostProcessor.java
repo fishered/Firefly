@@ -159,6 +159,7 @@ public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProc
                     .retryScope(declaration.retryScope())
                     .retryMaxAttempts(declaration.retryMaxAttempts());
             parameters(declaration).forEach(builder::parameter);
+            if (!declaration.calendarId().isBlank()) builder.parameter("firefly.calendarId", declaration.calendarId());
             return builder.build();
         }
 

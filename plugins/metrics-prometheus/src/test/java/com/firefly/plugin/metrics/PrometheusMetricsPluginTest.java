@@ -47,6 +47,9 @@ class PrometheusMetricsPluginTest {
         metrics.localWorkerCapacity(256);
         metrics.localWorkerActive(7);
         metrics.recordLocalWorkerRejection();
+        metrics.recordBatchProgressUpdate();
+        metrics.recordBatchProgressDropped();
+        metrics.recordBatchShardFailure();
         Instant now = Instant.parse("2026-07-16T10:00:00Z");
         InMemoryJobRepository jobs = new InMemoryJobRepository();
         jobs.save(JobDefinition.builder().id("due-job").name("Due").handlerName("handler")
@@ -93,6 +96,9 @@ class PrometheusMetricsPluginTest {
             assertTrue(body.contains("firefly_local_worker_active 7"));
             assertTrue(body.contains("firefly_local_worker_max_concurrency 256"));
             assertTrue(body.contains("firefly_local_worker_rejections_total 1"));
+            assertTrue(body.contains("firefly_batch_progress_updates_total 1"));
+            assertTrue(body.contains("firefly_batch_progress_dropped_total 1"));
+            assertTrue(body.contains("firefly_batch_shard_failures_total 1"));
         } finally {
             plugin.close();
         }

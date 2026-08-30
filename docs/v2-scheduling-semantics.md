@@ -1,5 +1,11 @@
 # Scheduling Semantics Feature
 
+## 当前实现状态（1.1.x）
+
+已落地并可运行：`CalendarDefinition`/日历评估、黑名单 `SKIP`/`DELAY_TO_END` 决策、任务定义中的日历与黑名单配置、依赖环检测、事件 inbox 幂等模型、有限补数展开，以及 Admin HTTP 的事件和补数入口。事件和补数都复用普通 `ExecutionCommand` 与 Dispatch Outbox；JDBC inbox 实现已提供，HTTP 默认使用内存实现。
+
+依赖状态已按业务时间窗口从 execution/outbox 状态查询，保存任务时执行环检测；事件入口提供 HMAC-SHA256 签名校验器（时间窗默认由调用方配置），JDBC inbox 使用唯一幂等键。生产环境仍需在网关层强制启用签名校验，并补充日历/依赖管理 UI 与运维查询页面。
+
 本 Feature 负责在现有 Cron、fixed-rate、misfire、时区和并发策略之上增加业务日历、黑名单窗口、轻量依赖、事件触发和补数，不引入任意 DAG 图引擎。
 
 ## 实施拆分

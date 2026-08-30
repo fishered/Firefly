@@ -28,6 +28,7 @@ public final class AdminRoutePolicies {
             .allowIntegrationKey("PUT", SINGLE_SEGMENT)
             .build();
     public static final AdminRoutePolicy EXECUTIONS = standardBuilder()
+            .require(AdminRole.OPERATOR, "POST", ANY)
             .require(AdminRole.OPERATOR, "POST", CANCEL)
             .require(AdminRole.OPERATOR, "POST", BATCH_CANCEL)
             .build();

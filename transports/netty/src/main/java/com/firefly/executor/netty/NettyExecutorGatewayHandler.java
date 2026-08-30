@@ -10,6 +10,11 @@ import com.firefly.executor.ExecutorInstanceLocation;
 import com.firefly.executor.InMemoryExecutorInstanceDirectory;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
+import com.firefly.batch.BatchRepository;
+import com.firefly.batch.BatchShardResult;
+import com.firefly.batch.BatchProgressAggregator;
+import com.firefly.batch.BatchSlaStatus;
+import com.firefly.batch.BatchProgressLimiter;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.tracing.FireflyTelemetry;
 import io.opentelemetry.api.trace.Span;
@@ -49,6 +54,8 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
     private final java.time.Duration instanceLocationRefreshInterval;
     private Instant lastLocationRefreshAt = Instant.EPOCH;
     private final java.util.function.BooleanSupplier registrationAdmission;
+    private BatchRepository batchRepository;
+    private final BatchProgressLimiter batchProgressLimiter = new BatchProgressLimiter(java.time.Duration.ofSeconds(1));
 
     NettyExecutorGatewayHandler(
             ExecutorRegistry executorRegistry,
@@ -113,10 +120,39 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
             java.util.function.BooleanSupplier registrationAdmission
     ) {
         this(executorRegistry, connectionRegistry, codec, clock, schedulerCatalog,
+                autoCreateExecutorDefinitions, gatewayNodeId, executionRepository,
+                dispatchAcknowledger, resultPersistenceExecutor, sharedTokenAuthenticator(executorAuthToken),
+                retryScheduler, metrics, instanceDirectory, advertisedGatewayAddress,
+                instanceLocationRefreshInterval, instanceLocationLease, registrationAdmission);
+    }
+
+    NettyExecutorGatewayHandler(
+            ExecutorRegistry executorRegistry,
+            NettyExecutorConnectionRegistry connectionRegistry,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            SchedulerCatalog schedulerCatalog,
+            boolean autoCreateExecutorDefinitions,
+            String gatewayNodeId,
+            ExecutionRepository executionRepository,
+            java.util.function.BiConsumer<String, Instant> dispatchAcknowledger,
+            java.util.concurrent.Executor resultPersistenceExecutor,
+            java.util.function.BiPredicate<String, String> registrationAuthenticator,
+            java.util.function.BiConsumer<String, Boolean> retryScheduler,
+            SchedulerMetrics metrics,
+            ExecutorInstanceDirectory instanceDirectory,
+            String advertisedGatewayAddress,
+            java.time.Duration instanceLocationRefreshInterval,
+            java.time.Duration instanceLocationLease,
+            java.util.function.BooleanSupplier registrationAdmission,
+            BatchRepository batchRepository
+    ) {
+        this(executorRegistry, connectionRegistry, codec, clock, schedulerCatalog,
                 autoCreateExecutorDefinitions, gatewayNodeId, executionRepository, dispatchAcknowledger,
-                resultPersistenceExecutor, sharedTokenAuthenticator(executorAuthToken), retryScheduler, metrics,
+                resultPersistenceExecutor, registrationAuthenticator, retryScheduler, metrics,
                 instanceDirectory, advertisedGatewayAddress, instanceLocationRefreshInterval,
                 instanceLocationLease, registrationAdmission);
+        this.batchRepository = batchRepository;
     }
 
     NettyExecutorGatewayHandler(
@@ -158,6 +194,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
         this.instanceLocationRefreshInterval = instanceLocationRefreshInterval;
         this.instanceLocationLease = instanceLocationLease;
         this.registrationAdmission = registrationAdmission;
+        this.batchRepository = null;
     }
 
     @Override
@@ -475,6 +512,7 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 }
                 if (result == com.firefly.execution.ExecutionMutationResult.APPLIED) {
                     metrics.observeExecutionDuration(java.time.Duration.between(startedAt, now));
+                    persistBatchResult(payload, parentExecutionId, status, now);
                     executionRepository.findExecution(parentExecutionId)
                             .filter(execution -> execution.status() == ExecutionStatus.FAILED
                                     || execution.status() == ExecutionStatus.PARTIAL)
@@ -488,6 +526,47 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 span.end();
             }
         });
+    }
+
+    private void persistBatchResult(Map<String, String> payload, String rootExecutionId,
+                                    ExecutionStatus status, Instant now) {
+        if (batchRepository == null || payload.get("shardIndex") == null) return;
+        try {
+            int shard = Integer.parseInt(payload.get("shardIndex"));
+            long input = parseNonNegative(payload.get("inputRecords"));
+            long output = parseNonNegative(payload.get("outputRecords"));
+            int attempt = (int) runAttempt(payload);
+            BatchShardResult shardResult = new BatchShardResult(
+                    rootExecutionId, shard, attempt, status.name(), input, output,
+                    payload.get("checkpointId"), payload.get("checkpointChecksum"),
+                    payload.getOrDefault("errorMessage", ""), now);
+            long fence = parseNonNegative(payload.get("fencingToken"));
+            if (!batchRepository.saveShardResult(shardResult, fence)) return;
+            batchRepository.find(rootExecutionId).ifPresent(batch -> {
+                var aggregate = new BatchProgressAggregator().aggregate(
+                        batch.progress().totalShards(), batchRepository.listShardResults(rootExecutionId),
+                        now, batch.slaAt(now));
+                boolean terminal = aggregate.percent() >= 100 || aggregate.failedShards() > 0
+                        && aggregate.completedShards() + aggregate.failedShards() >= aggregate.totalShards();
+                if (batchProgressLimiter.admit(rootExecutionId, aggregate, now, terminal)) {
+                    batchRepository.saveProgress(rootExecutionId, aggregate, fence);
+                    metrics.recordBatchProgressUpdate();
+                } else {
+                    metrics.recordBatchProgressDropped();
+                }
+                if ("FAILED".equals(status.name()) || "TIMEOUT".equals(status.name())) {
+                    metrics.recordBatchShardFailure();
+                }
+            });
+        } catch (RuntimeException invalid) {
+            log.warning("ignoring invalid batch result for " + rootExecutionId + ": " + invalid.getMessage());
+        }
+    }
+
+    private long parseNonNegative(String value) {
+        if (value == null || value.isBlank()) return 0L;
+        try { return Math.max(0L, Long.parseLong(value)); }
+        catch (NumberFormatException ignored) { return 0L; }
     }
 
     private java.util.Optional<com.firefly.execution.ExecutionTargetRecord> target(

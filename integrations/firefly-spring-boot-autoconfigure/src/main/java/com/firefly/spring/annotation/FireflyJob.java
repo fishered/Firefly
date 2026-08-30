@@ -36,6 +36,9 @@ public @interface FireflyJob {
     /** IANA time-zone ID validated by the Starter while the Spring bean is initialized. */
     String zoneId() default "UTC";
 
+    /** Optional business calendar id managed in the Firefly console. */
+    String calendarId() default "";
+
     boolean enabled() default true;
 
     ExecutorDispatchMode dispatchMode() default ExecutorDispatchMode.UNICAST;

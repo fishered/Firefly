@@ -12,6 +12,26 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await expect(page.locator('html')).toHaveAttribute('lang', 'en-US');
     await expect(page.locator('[data-view="jobs"]')).toContainText('Jobs');
 
+    await page.locator('[data-view="calendars"]').click();
+    await expect(page.locator('#page-title')).toContainText('Calendars');
+    await expect(page.locator('#page-actions button')).toContainText('New calendar');
+    await page.locator('#page-actions button').click();
+    await expect(page.locator('#calendar-dialog')).toBeVisible();
+    await page.locator('#calendar-dialog [data-calendar-mode="workday"]').click();
+    const calendarDays = page.locator('#calendar-dialog [data-calendar-date]:not(.outside)');
+    await calendarDays.nth(3).click();
+    await calendarDays.nth(4).click({ modifiers: ['Control'] });
+    await expect(page.locator('[data-calendar-selected-count]')).toHaveText('2');
+    await page.locator('#calendar-dialog [data-calendar-apply-selection]').click();
+    await expect(page.locator('[data-calendar-selected-count]')).toHaveText('0');
+    await calendarDays.nth(7).click();
+    await calendarDays.nth(9).click({ modifiers: ['Shift'] });
+    await expect(page.locator('[data-calendar-selected-count]')).toHaveText('3');
+    await page.locator('#calendar-dialog [data-calendar-clear-selection]').click();
+    await expect(page.locator('[data-calendar-selected-count]')).toHaveText('0');
+    await page.locator('#calendar-dialog button[type="submit"]').click();
+    await expect(page.locator('.calendar-summary-card')).toContainText('cn-workday');
+
     await page.locator('[data-view="executors"]').click();
     await page.locator('#page-actions button').click();
     await expect(page.locator('#executor-dialog')).toBeVisible();
@@ -138,6 +158,22 @@ async function routeMockRequest(state, method, url, body, response) {
     json(response, 200, { jobs: state.jobs });
     return;
   }
+  if (method === 'GET' && url.pathname === '/api/calendars') {
+    json(response, 200, { calendars: state.calendars });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/api/calendars') {
+    state.calendars.push({
+      id: body.id,
+      version: Number(body.version ?? 1),
+      zoneId: body.zoneId ?? 'Asia/Shanghai',
+      workingDays: body.workingDays ?? 'MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY',
+      holidays: body.holidays ?? '',
+      extraWorkingDays: body.extraWorkingDays ?? ''
+    });
+    json(response, 201, { status: 'created' });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/api/jobs') {
     state.jobs.push(normalizeJob(body));
     json(response, 201, { status: 'created' });
@@ -241,6 +277,7 @@ function createMockState() {
   const startedAt = new Date(now.getTime() - 60_000).toISOString();
   return {
     startedAt,
+    calendars: [],
     jobs: [normalizeJob({ id: 'sample-job', name: 'Sample job' })],
     executorDefinitions: [{
       name: 'order-executor',

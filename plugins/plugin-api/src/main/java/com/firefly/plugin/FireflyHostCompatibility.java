@@ -24,7 +24,7 @@ public record FireflyHostCompatibility(
     }
 
     public static FireflyHostCompatibility current() {
-        return new FireflyHostCompatibility("1.1.0", FireflyPluginCompatibility.CURRENT_API_LEVEL,
+        return new FireflyHostCompatibility("1.1.1", FireflyPluginCompatibility.CURRENT_API_LEVEL,
                 1, 2, 12, 12);
     }
 }

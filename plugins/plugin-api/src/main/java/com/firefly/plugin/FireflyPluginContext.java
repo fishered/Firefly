@@ -11,6 +11,10 @@ import com.firefly.audit.AuditRepository;
 import com.firefly.store.JobHistoryRepository;
 import com.firefly.security.AdminUserRepository;
 import com.firefly.security.IntegrationKeyRepository;
+import com.firefly.batch.BatchRepository;
+import com.firefly.batch.InMemoryBatchRepository;
+import com.firefly.trigger.TriggerInbox;
+import com.firefly.trigger.InMemoryTriggerInbox;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -39,6 +43,8 @@ public final class FireflyPluginContext {
     private final IntegrationKeyRepository integrationKeyRepository;
     private final PluginStatusProvider pluginStatusProvider;
     private final FireflyPluginConfiguration configuration;
+    private final BatchRepository batchRepository;
+    private final TriggerInbox triggerInbox;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -60,6 +66,8 @@ public final class FireflyPluginContext {
         this.integrationKeyRepository = builder.integrationKeyRepository;
         this.pluginStatusProvider = builder.pluginStatusProvider;
         this.configuration = builder.configuration;
+        this.batchRepository = builder.batchRepository;
+        this.triggerInbox = builder.triggerInbox;
     }
 
     public static Builder builder() {
@@ -142,6 +150,9 @@ public final class FireflyPluginContext {
         return configuration;
     }
 
+    public java.util.Optional<BatchRepository> batchRepository() { return java.util.Optional.ofNullable(batchRepository); }
+    public java.util.Optional<TriggerInbox> triggerInbox() { return java.util.Optional.ofNullable(triggerInbox); }
+
     public static final class Builder {
         private Clock clock = Clock.systemUTC();
         private JobRepository jobRepository;
@@ -162,6 +173,8 @@ public final class FireflyPluginContext {
         private IntegrationKeyRepository integrationKeyRepository;
         private PluginStatusProvider pluginStatusProvider;
         private FireflyPluginConfiguration configuration = FireflyPluginConfiguration.empty();
+        private BatchRepository batchRepository = new InMemoryBatchRepository();
+        private TriggerInbox triggerInbox = new InMemoryTriggerInbox();
 
         private Builder() {
         }
@@ -265,6 +278,9 @@ public final class FireflyPluginContext {
             this.configuration = Objects.requireNonNull(configuration, "configuration");
             return this;
         }
+
+        public Builder batchRepository(BatchRepository repository) { this.batchRepository = Objects.requireNonNull(repository, "batchRepository"); return this; }
+        public Builder triggerInbox(TriggerInbox inbox) { this.triggerInbox = Objects.requireNonNull(inbox, "triggerInbox"); return this; }
 
         public FireflyPluginContext build() {
             return new FireflyPluginContext(this);

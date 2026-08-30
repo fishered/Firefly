@@ -28,6 +28,8 @@ import com.firefly.audit.AuditRepository;
 import com.firefly.audit.InMemoryAuditRepository;
 import com.firefly.store.JobHistoryRepository;
 import com.firefly.store.InMemoryJobHistoryRepository;
+import com.firefly.batch.BatchRepository;
+import com.firefly.batch.InMemoryBatchRepository;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -47,6 +49,7 @@ public final class SchedulerModule extends AbstractModule {
     private final JobHistoryRepository jobHistoryRepository;
     private final ExecutorInstanceDirectory executorInstanceDirectory;
     private final LocalWorkerOptions localWorkerOptions;
+    private final BatchRepository batchRepository;
 
     public SchedulerModule() {
         this(SchedulerShardConfig.DEFAULT_SHARD_COUNT);
@@ -195,6 +198,28 @@ public final class SchedulerModule extends AbstractModule {
             ExecutorInstanceDirectory executorInstanceDirectory,
             LocalWorkerOptions localWorkerOptions
     ) {
+        this(jobRepository, nodeRegistry, schedulerCatalog, shardManager, executionRepository,
+                shardCount, runtimeClock, metrics, schedulerEngineOptions, auditRepository,
+                jobHistoryRepository, executorInstanceDirectory, localWorkerOptions,
+                new InMemoryBatchRepository());
+    }
+
+    public SchedulerModule(
+            JobRepository jobRepository,
+            NodeRegistry nodeRegistry,
+            SchedulerCatalog schedulerCatalog,
+            ShardManager shardManager,
+            ExecutionRepository executionRepository,
+            int shardCount,
+            Clock runtimeClock,
+            SchedulerMetrics metrics,
+            SchedulerEngineOptions schedulerEngineOptions,
+            AuditRepository auditRepository,
+            JobHistoryRepository jobHistoryRepository,
+            ExecutorInstanceDirectory executorInstanceDirectory,
+            LocalWorkerOptions localWorkerOptions,
+            BatchRepository batchRepository
+    ) {
         this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository");
         this.nodeRegistry = Objects.requireNonNull(nodeRegistry, "nodeRegistry");
         this.schedulerCatalog = Objects.requireNonNull(schedulerCatalog, "schedulerCatalog");
@@ -208,6 +233,7 @@ public final class SchedulerModule extends AbstractModule {
         this.jobHistoryRepository = Objects.requireNonNull(jobHistoryRepository, "jobHistoryRepository");
         this.executorInstanceDirectory = Objects.requireNonNull(executorInstanceDirectory, "executorInstanceDirectory");
         this.localWorkerOptions = Objects.requireNonNull(localWorkerOptions, "localWorkerOptions");
+        this.batchRepository = Objects.requireNonNull(batchRepository, "batchRepository");
     }
 
     @Override
@@ -221,6 +247,7 @@ public final class SchedulerModule extends AbstractModule {
         bind(AuditRepository.class).toInstance(auditRepository);
         bind(JobHistoryRepository.class).toInstance(jobHistoryRepository);
         bind(ExecutorInstanceDirectory.class).toInstance(executorInstanceDirectory);
+        bind(BatchRepository.class).toInstance(batchRepository);
         bind(JobHandlerRegistry.class).to(InMemoryJobHandlerRegistry.class).in(Singleton.class);
         bind(SwitchableRemoteExecutionGateway.class).in(Singleton.class);
         bind(RemoteExecutionGateway.class).to(SwitchableRemoteExecutionGateway.class);

@@ -47,6 +47,9 @@ public final class SchedulerMetrics {
     private final AtomicInteger localWorkerActive = new AtomicInteger();
     private final AtomicInteger localWorkerMaxConcurrency = new AtomicInteger();
     private final LongAdder localWorkerRejections = new LongAdder();
+    private final LongAdder batchProgressUpdates = new LongAdder();
+    private final LongAdder batchProgressDropped = new LongAdder();
+    private final LongAdder batchShardFailures = new LongAdder();
 
     public void observeScheduleDelay(Duration value) {
         scheduleDelay.observe(value);
@@ -137,6 +140,10 @@ public final class SchedulerMetrics {
         localWorkerRejections.increment();
     }
 
+    public void recordBatchProgressUpdate() { batchProgressUpdates.increment(); }
+    public void recordBatchProgressDropped() { batchProgressDropped.increment(); }
+    public void recordBatchShardFailure() { batchShardFailures.increment(); }
+
     public Snapshot snapshot() {
         return new Snapshot(
                 scheduleDelay.snapshot(), outboxAge.snapshot(), acknowledgementDelay.snapshot(),
@@ -150,7 +157,8 @@ public final class SchedulerMetrics {
                 gatewayForwardAttempts.sum(), gatewayForwardSuccesses.sum(), gatewayForwardFailures.sum(),
                 ownedShards.get(), clockOffsetMillis.get(),
                 clockDriftWarnings.sum(), clockSyncFailures.sum(),
-                localWorkerActive.get(), localWorkerMaxConcurrency.get(), localWorkerRejections.sum()
+                localWorkerActive.get(), localWorkerMaxConcurrency.get(), localWorkerRejections.sum(),
+                batchProgressUpdates.sum(), batchProgressDropped.sum(), batchShardFailures.sum()
         );
     }
 
@@ -180,7 +188,10 @@ public final class SchedulerMetrics {
             long clockSyncFailures,
             int localWorkerActive,
             int localWorkerMaxConcurrency,
-            long localWorkerRejections
+            long localWorkerRejections,
+            long batchProgressUpdates,
+            long batchProgressDropped,
+            long batchShardFailures
     ) {
     }
 

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#172033">
   <title>Firefly Console</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=calendar-management-3">
 </head>
 <body class="auth-pending">
   <div class="language-control" role="group" aria-label="语言">
@@ -22,6 +22,7 @@
     <nav class="nav-list" aria-label="Firefly admin navigation">
       <button class="nav active" type="button" data-view="overview"><span class="nav-icon">⌁</span><span>总览</span></button>
       <button class="nav" type="button" data-view="jobs"><span class="nav-icon">☷</span><span>任务管理</span></button>
+      <button class="nav" type="button" data-view="calendars"><span class="nav-icon">◫</span><span>业务日历</span></button>
       <button class="nav" type="button" data-view="executors"><span class="nav-icon">▤</span><span>执行器</span></button>
       <button class="nav" type="button" data-view="executions"><span class="nav-icon">↺</span><span>执行记录</span></button>
       <button class="nav" type="button" data-view="nodes"><span class="nav-icon">⌘</span><span>节点与集群</span></button>
@@ -54,6 +55,6 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
   <script src="/i18n.js"></script>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=calendar-management-3"></script>
 </body>
 </html>

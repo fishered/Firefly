@@ -13,6 +13,20 @@ public interface JobRepository {
 
     Optional<ScheduledJobRecord> find(String jobId);
 
+    default java.util.Optional<com.firefly.schedule.CalendarDefinition> findCalendar(String calendarId) {
+        return java.util.Optional.empty();
+    }
+
+    default void saveCalendar(com.firefly.schedule.CalendarDefinition calendar) {
+        throw unsupported("saveCalendar");
+    }
+
+    default java.util.List<com.firefly.schedule.CalendarDefinition> listCalendars() { return java.util.List.of(); }
+
+    default String dependencyStatus(String prerequisiteJobId, Instant businessTime) {
+        return "PENDING";
+    }
+
     default List<ScheduledJobRecord> findDue(Instant now, int limit) {
         return findDueBatch(now, limit, limit).records();
     }

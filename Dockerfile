@@ -7,7 +7,7 @@ RUN chmod +x gradlew \
 
 FROM amazoncorretto:21-alpine
 
-ARG FIREFLY_VERSION=1.1.0
+ARG FIREFLY_VERSION=1.1.1
 LABEL org.opencontainers.image.title="Firefly Server" \
       org.opencontainers.image.description="Distributed scheduling server" \
       org.opencontainers.image.version="${FIREFLY_VERSION}"
