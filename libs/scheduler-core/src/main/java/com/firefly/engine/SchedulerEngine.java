@@ -23,6 +23,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import com.firefly.schedule.SchedulingDecision;
+import com.firefly.schedule.SchedulingSemanticsEvaluator;
+import com.firefly.schedule.DependencyEvaluator;
+import com.firefly.schedule.DependencyStatus;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -50,6 +54,10 @@ public final class SchedulerEngine {
     private final SchedulerMetrics metrics;
     private final SchedulerEngineOptions options;
     private final SchedulerTimingIndex timingIndex = new SchedulerTimingIndex();
+    private final SchedulingSemanticsEvaluator semanticsEvaluator = new SchedulingSemanticsEvaluator();
+    private final DependencyEvaluator dependencyEvaluator;
+    private final Map<String, Integer> dependencyWaitAttempts = new java.util.HashMap<>();
+    private final Map<String, Instant> dependencyBusinessTimes = new java.util.HashMap<>();
     private long loadedConfigurationVersion = Long.MIN_VALUE;
     private Set<Integer> loadedShards = Set.of();
     private Instant lastConfigurationCheck = Instant.MIN;
@@ -105,6 +113,7 @@ public final class SchedulerEngine {
             SchedulerEngineOptions options
     ) {
         this.repository = Objects.requireNonNull(repository, "repository");
+        this.dependencyEvaluator = new DependencyEvaluator(this.repository);
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.shardOwnership = Objects.requireNonNull(shardOwnership, "shardOwnership");
@@ -260,15 +269,55 @@ public final class SchedulerEngine {
         List<Instant> fireTimes = calculateFireTimes(record, now);
         Instant nextFireTime = calculateNextFireTime(record.definition(), fireTimes, now);
         Instant dispatchTime = clock.instant();
-        List<ExecutionCommand> commands = fireTimes.stream()
-                .map(fireTime -> tracedCommand(record.definition(), fireTime, dispatchTime, lease))
-                .toList();
+        List<ExecutionCommand> commands = new ArrayList<>();
+        boolean waitingDependency = false;
+        for (Instant fireTime : fireTimes) {
+            SchedulingDecision decision = semantics(record.definition(), fireTime);
+            if (decision.decision() == SchedulingDecision.Decision.SKIP) continue;
+            String waitKey = record.definition().id() + "@" + fireTime;
+            Instant businessTime = dependencyBusinessTimes.getOrDefault(waitKey, fireTime);
+            DependencyStatus dependencyStatus = dependencyStatus(record.definition(), businessTime,
+                    dependencyWaitAttempts.getOrDefault(waitKey, 0));
+            if (dependencyStatus == DependencyStatus.WAITING) {
+                waitingDependency = true;
+                dependencyWaitAttempts.merge(waitKey, 1, Integer::sum);
+                dependencyBusinessTimes.putIfAbsent(record.definition().id() + "@" + nextFireTime, businessTime);
+                continue;
+            }
+            dependencyWaitAttempts.remove(waitKey);
+            dependencyBusinessTimes.remove(waitKey);
+            if (dependencyStatus == DependencyStatus.BLOCKED) continue;
+            commands.add(tracedCommand(record.definition(), decision.fireTime(),
+                    decision.decision() == SchedulingDecision.Decision.DELAY ? decision.effectiveTime() : dispatchTime,
+                    lease));
+        }
+        // Keep the scheduler from spinning while a prerequisite is still running.
+        if (waitingDependency && commands.isEmpty()) {
+            nextFireTime = now.plusSeconds(1);
+        }
         return new PreparedAdvance(
                 record,
                 new SchedulingAdvance(record.definition().id(), record.nextFireTime(), nextFireTime, commands),
                 commands,
                 lease
         );
+    }
+
+    private DependencyStatus dependencyStatus(JobDefinition definition, Instant fireTime, int waitAttempts) {
+        DependencyStatus result = DependencyStatus.ALLOWED;
+        for (com.firefly.schedule.JobDependency dependency : definition.dependencies()) {
+            DependencyStatus current = dependencyEvaluator.evaluate(
+                    dependency, fireTime, waitAttempts);
+            if (current == DependencyStatus.BLOCKED) return current;
+            if (current == DependencyStatus.WAITING) result = current;
+        }
+        return result;
+    }
+
+    private SchedulingDecision semantics(JobDefinition definition, Instant fireTime) {
+        com.firefly.schedule.CalendarDefinition calendar = definition.calendarId().isBlank()
+                ? null : repository.findCalendar(definition.calendarId()).orElse(null);
+        return semanticsEvaluator.evaluate(fireTime, calendar, definition.blackoutWindows(), definition.zoneId());
     }
 
     private ExecutionCommand tracedCommand(

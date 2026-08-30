@@ -138,6 +138,8 @@ public final class JdbcSchema {
         } catch (SQLException e) {
             throw new JdbcException("failed to initialize firefly jdbc schema", e);
         }
+        // Feature tables are additive and deliberately do not advance the v12 compatibility marker.
+        JdbcFeatureSchema.initialize(dataSource, options);
         validate(dataSource, options);
     }
 
@@ -522,7 +524,7 @@ public final class JdbcSchema {
         }
     }
 
-    private static void ensureIndex(Connection connection, String table, String index, String columns) throws SQLException {
+    static void ensureIndex(Connection connection, String table, String index, String columns) throws SQLException {
         boolean exists = false;
         for (String candidate : tableNameCandidates(table)) {
             try (ResultSet resultSet = connection.getMetaData().getIndexInfo(null, null, candidate, false, false)) {

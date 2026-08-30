@@ -12,11 +12,23 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import com.firefly.trigger.TriggerInbox;
+import com.firefly.trigger.EventTriggerService;
+import com.firefly.trigger.BackfillRequest;
+import com.firefly.trigger.BackfillService;
+import com.firefly.schedule.CalendarDefinition;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Set;
 
 final class AdminExecutionController {
     private final FireflyPluginContext context;
     private final AdminRequestReader requests;
     private final AdminHttpResponder responses;
+    private final TriggerInbox triggerInbox;
 
     AdminExecutionController(
             FireflyPluginContext context,
@@ -26,6 +38,7 @@ final class AdminExecutionController {
         this.context = java.util.Objects.requireNonNull(context, "context");
         this.requests = java.util.Objects.requireNonNull(requests, "requests");
         this.responses = java.util.Objects.requireNonNull(responses, "responses");
+        this.triggerInbox = context.triggerInbox().orElseThrow(() -> new IllegalStateException("trigger inbox is required"));
     }
 
     void executions(HttpExchange exchange) throws IOException {
@@ -84,6 +97,76 @@ final class AdminExecutionController {
                 ? AdminHttpJson.executions(jobs(), context.clock().instant())
                 : AdminHttpJson.executionHistory(executions);
         respond(exchange, 200, json);
+    }
+
+    void triggers(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        String prefix = "/api/triggers/";
+        if (!exchange.getRequestURI().getPath().startsWith(prefix)) { respond(exchange, 400, "{\"error\":\"job_id_required\"}"); return; }
+        String jobId = URLDecoder.decode(exchange.getRequestURI().getPath().substring(prefix.length()), StandardCharsets.UTF_8);
+        Map<String, String> request = requests.object(exchange);
+        var jobs = context.jobRepository().orElseThrow(() -> new IllegalStateException("jobRepository is required"));
+        var result = new EventTriggerService(triggerInbox, jobs, context.clock()).accept(jobId,
+                required(request, "eventId"), required(request, "eventType"), required(request, "idempotencyKey"), request.getOrDefault("payload", ""));
+        respond(exchange, result.duplicate() ? 200 : 202, "{\"accepted\":" + result.accepted() + ",\"duplicate\":" + result.duplicate() + ",\"status\":\"" + responses.escape(result.status()) + "\"}");
+    }
+
+    void backfills(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        Map<String, String> request = requests.object(exchange);
+        BackfillRequest backfill = new BackfillRequest(required(request, "requestId"), required(request, "jobId"),
+                Instant.parse(required(request, "fromInclusive")), Instant.parse(required(request, "toInclusive")),
+                Integer.parseInt(request.getOrDefault("maxExecutions", "10000")), request.getOrDefault("rootExecutionId", ""));
+        var result = new BackfillService(context.jobRepository().orElseThrow(() -> new IllegalStateException("jobRepository is required")), context.clock()).submit(backfill);
+        respond(exchange, 202, "{\"requestId\":\"" + responses.escape(result.requestId()) + "\",\"expanded\":" + result.expanded() + ",\"queued\":" + result.queued() + "}");
+    }
+
+    void batches(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        String prefix = "/api/batches/";
+        if (!exchange.getRequestURI().getPath().startsWith(prefix)) { respond(exchange, 400, "{\"error\":\"batch_id_required\"}"); return; }
+        String root = URLDecoder.decode(exchange.getRequestURI().getPath().substring(prefix.length()), StandardCharsets.UTF_8);
+        var batch = context.batchRepository().flatMap(repository -> repository.find(root)).orElse(null);
+        if (batch == null) { respond(exchange, 404, "{\"error\":\"batch_not_found\"}"); return; }
+        var progress = batch.progress();
+        respond(exchange, 200, "{\"rootExecutionId\":\"" + responses.escape(batch.rootExecutionId()) + "\",\"jobId\":\"" + responses.escape(batch.jobId()) + "\",\"progress\":{\"totalShards\":" + progress.totalShards() + ",\"completedShards\":" + progress.completedShards() + ",\"failedShards\":" + progress.failedShards() + ",\"retriedShards\":" + progress.retriedShards() + ",\"inputRecords\":" + progress.inputRecords() + ",\"outputRecords\":" + progress.outputRecords() + ",\"percent\":" + progress.percent() + ",\"slaStatus\":\"" + progress.slaStatus().name() + "\"}}");
+    }
+
+    void calendars(HttpExchange exchange) throws IOException {
+        var jobs = context.jobRepository().orElseThrow(() -> new IllegalStateException("jobRepository is required"));
+        if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            StringBuilder body = new StringBuilder("{\"calendars\":[");
+            boolean first = true;
+            for (CalendarDefinition c : jobs.listCalendars()) {
+                if (!first) body.append(','); first = false;
+                body.append("{\"id\":\"").append(responses.escape(c.id())).append("\",\"version\":").append(c.version())
+                        .append(",\"zoneId\":\"").append(responses.escape(c.zoneId().getId())).append("\",\"workingDays\":\"")
+                        .append(c.workingDays().stream().map(Enum::name).sorted().reduce((a,b)->a+","+b).orElse(""))
+                        .append("\",\"holidays\":\"").append(c.holidays().stream().map(LocalDate::toString).sorted().reduce((a,b)->a+","+b).orElse(""))
+                        .append("\",\"extraWorkingDays\":\"").append(c.extraWorkingDays().stream().map(LocalDate::toString).sorted().reduce((a,b)->a+","+b).orElse(""))
+                        .append("\"}");
+            }
+            respond(exchange, 200, body.append("]}").toString()); return;
+        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        Map<String,String> request = requests.object(exchange);
+        String[] days = request.getOrDefault("workingDays", "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY").split(",");
+        EnumSet<DayOfWeek> working = EnumSet.noneOf(DayOfWeek.class);
+        for (String day : days) working.add(DayOfWeek.valueOf(day.trim().toUpperCase(java.util.Locale.ROOT)));
+        Set<LocalDate> holidays = parseDates(request.get("holidays"));
+        Set<LocalDate> extra = parseDates(request.get("extraWorkingDays"));
+        CalendarDefinition calendar = new CalendarDefinition(required(request,"id"), Long.parseLong(request.getOrDefault("version","1")),
+                ZoneId.of(request.getOrDefault("zoneId","Asia/Shanghai")), working, holidays, extra);
+        jobs.saveCalendar(calendar); respond(exchange, 201, "{\"status\":\"created\",\"id\":\"" + responses.escape(calendar.id()) + "\"}");
+    }
+
+    private Set<LocalDate> parseDates(String value) {
+        if (value == null || value.isBlank()) return Set.of();
+        Set<LocalDate> dates = new HashSet<>(); for (String item : value.split(",")) dates.add(LocalDate.parse(item.trim())); return Set.copyOf(dates);
+    }
+
+    private String required(Map<String, String> request, String name) {
+        String value = request.get(name); if (value == null || value.isBlank()) throw new IllegalArgumentException("missing required field: " + name); return value;
     }
 
     void outbox(HttpExchange exchange) throws IOException {

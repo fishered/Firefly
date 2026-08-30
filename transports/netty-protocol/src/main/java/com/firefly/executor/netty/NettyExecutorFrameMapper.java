@@ -15,7 +15,10 @@ public final class NettyExecutorFrameMapper {
                     required(payload, "sessionId"));
             case REPORT_RESULT -> new ReportResultFrame(
                     required(payload, "executionId"), required(payload, "instanceId"),
-                    required(payload, "sessionId"), required(payload, "status"), payload.get("errorMessage"));
+                    required(payload, "sessionId"), required(payload, "status"), payload.get("errorMessage"),
+                    optionalInt(payload, "shardIndex"), optionalLong(payload, "inputRecords"),
+                    optionalLong(payload, "outputRecords"), payload.get("checkpointId"),
+                    payload.get("checkpointChecksum"));
             default -> throw new IllegalArgumentException("message type has no typed command frame: " + message.type());
         };
     }
@@ -24,5 +27,19 @@ public final class NettyExecutorFrameMapper {
         String value = payload.get(field);
         if (value == null || value.isBlank()) throw new IllegalArgumentException("missing payload field: " + field);
         return value;
+    }
+
+    private static Integer optionalInt(Map<String, String> payload, String field) {
+        String value = payload.get(field);
+        if (value == null || value.isBlank()) return null;
+        try { return Integer.valueOf(value); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("invalid " + field, e); }
+    }
+
+    private static Long optionalLong(Map<String, String> payload, String field) {
+        String value = payload.get(field);
+        if (value == null || value.isBlank()) return null;
+        try { return Long.valueOf(value); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("invalid " + field, e); }
     }
 }

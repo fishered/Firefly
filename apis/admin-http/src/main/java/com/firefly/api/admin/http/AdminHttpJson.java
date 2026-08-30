@@ -38,6 +38,7 @@ final class AdminHttpJson {
                     .append("\",\"businessHandlerName\":\"").append(escape(job.definition().businessHandlerName()))
                     .append("\",\"schedule\":\"").append(escape(job.definition().schedule().toString()))
                     .append("\",\"zoneId\":\"").append(escape(job.definition().zoneId().getId()))
+                    .append("\",\"calendarId\":\"").append(escape(job.definition().calendarId()))
                     .append("\",\"enabled\":").append(job.definition().enabled())
                     .append(",\"misfirePolicy\":\"").append(job.definition().misfirePolicy().name())
                     .append("\",\"concurrencyPolicy\":\"").append(job.definition().concurrencyPolicy().name())

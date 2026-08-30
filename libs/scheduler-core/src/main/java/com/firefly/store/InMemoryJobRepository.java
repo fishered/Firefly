@@ -16,6 +16,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import com.firefly.schedule.DependencyGraphValidator;
 
 /**
  * In-memory repository optimized for local and test usage.
@@ -29,6 +30,7 @@ public final class InMemoryJobRepository implements JobRepository {
     private final Clock clock;
     private final Map<String, ScheduledJobRecord> jobs = new HashMap<>();
     private final Map<String, DispatchOutboxRecord> outbox = new HashMap<>();
+    private final Map<String, com.firefly.schedule.CalendarDefinition> calendars = new HashMap<>();
     private final Set<String> retryScheduled = new java.util.HashSet<>();
     private long configurationVersion;
     private final NavigableSet<ScheduledJobRecord> nextFireTimeIndex = new TreeSet<>(
@@ -48,6 +50,10 @@ public final class InMemoryJobRepository implements JobRepository {
     public void save(JobDefinition definition, Instant initialNextFireTime) {
         ScheduledJobRecord record = new ScheduledJobRecord(definition, initialNextFireTime);
         synchronized (lock) {
+            List<com.firefly.schedule.JobDependency> allDependencies = new ArrayList<>();
+            jobs.values().forEach(existing -> allDependencies.addAll(existing.definition().dependencies()));
+            allDependencies.addAll(definition.dependencies());
+            new DependencyGraphValidator().validate(allDependencies);
             ScheduledJobRecord previous = jobs.put(definition.id(), record);
             removeFromIndex(previous);
             addToIndex(record);
@@ -59,6 +65,34 @@ public final class InMemoryJobRepository implements JobRepository {
     public Optional<ScheduledJobRecord> find(String jobId) {
         synchronized (lock) {
             return Optional.ofNullable(jobs.get(jobId));
+        }
+    }
+
+    public void saveCalendar(com.firefly.schedule.CalendarDefinition calendar) {
+        synchronized (lock) { calendars.put(calendar.id(), calendar); configurationVersion++; }
+    }
+
+    @Override
+    public List<com.firefly.schedule.CalendarDefinition> listCalendars() {
+        synchronized (lock) { return calendars.values().stream().sorted(java.util.Comparator.comparing(com.firefly.schedule.CalendarDefinition::id)).toList(); }
+    }
+
+    @Override
+    public Optional<com.firefly.schedule.CalendarDefinition> findCalendar(String calendarId) {
+        synchronized (lock) { return Optional.ofNullable(calendars.get(calendarId)); }
+    }
+
+    @Override
+    public String dependencyStatus(String prerequisiteJobId, Instant businessTime) {
+        synchronized (lock) {
+            String executionId = prerequisiteJobId + "@" + businessTime;
+            DispatchOutboxRecord record = outbox.get(executionId);
+            if (record == null) return "PENDING";
+            return switch (record.status()) {
+                case DONE -> "SUCCEEDED";
+                case DEAD -> "FAILED";
+                default -> "PENDING";
+            };
         }
     }
 

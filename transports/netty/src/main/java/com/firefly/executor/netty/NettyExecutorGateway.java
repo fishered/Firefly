@@ -18,6 +18,7 @@ import com.firefly.executor.RemoteExecutorTransport;
 import com.firefly.execution.ExecutionRecord;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionTargetRecord;
+import com.firefly.batch.BatchRepository;
 import com.firefly.execution.InMemoryExecutionRepository;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.tracing.FireflyTelemetry;
@@ -64,6 +65,7 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
     private final NettyGatewayForwardingTransport forwardingTransport;
     private final NettyExecutorDispatchService dispatchService;
     private volatile java.util.function.BooleanSupplier registrationAdmission = () -> true;
+    private volatile BatchRepository batchRepository;
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -293,7 +295,8 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
                                         options.advertisedInternalAddress(),
                                         options.instanceLocationRefreshInterval(),
                                         options.instanceLocationLease(),
-                                        () -> registrationAdmission.getAsBoolean()
+                                        () -> registrationAdmission.getAsBoolean(),
+                                        batchRepository
                                 ));
                     }
                 });
@@ -351,6 +354,14 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
 
     public void setRegistrationAdmission(java.util.function.BooleanSupplier registrationAdmission) {
         this.registrationAdmission = Objects.requireNonNull(registrationAdmission, "registrationAdmission");
+    }
+
+    /**
+     * Installs the optional batch result sink. It is read when child channels are
+     * initialized, keeping JDBC/object-store work off the Netty event loop.
+     */
+    public void setBatchRepository(BatchRepository batchRepository) {
+        this.batchRepository = batchRepository;
     }
 
     public int connectedExecutorCount() {

@@ -36,6 +36,7 @@ import com.firefly.store.jdbc.JdbcExecutionRepository;
 import com.firefly.store.jdbc.JdbcSchema;
 import com.firefly.store.jdbc.JdbcSchemaOptions;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.batch.BatchRepository;
 
 import javax.sql.DataSource;
 import java.time.Duration;
@@ -148,7 +149,8 @@ public final class FireflyBootstrap implements AutoCloseable {
             RemoteExecutorTransport executorGateway = startExecutorGateway(
                     options, schedulerCatalog, executionRepository, repository, metrics, runtimeClock,
                     injector.getInstance(com.firefly.executor.ExecutorInstanceDirectory.class),
-                    assembly.integrationKeyRepository(), acceptingNewWork
+                    assembly.integrationKeyRepository(), acceptingNewWork,
+                    injector.getInstance(BatchRepository.class)
             );
             if (executorGateway != null) {
                 startup.add("executor gateway", executorGateway);
@@ -178,6 +180,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                     .pluginStatusProvider(plugins::descriptors)
                     .nodeDrainStatusProvider(nodeDrainMonitor)
                     .configuration(options.pluginConfiguration());
+            pluginContext.batchRepository(injector.getInstance(BatchRepository.class));
             if (executorGateway != null) {
                 pluginContext.remoteExecutorDispatcher(executorGateway::dispatch);
                 pluginContext.executionCancellationDispatcher(executorGateway::cancel);
@@ -316,7 +319,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new com.firefly.store.jdbc.JdbcAuditRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcJobHistoryRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource),
-                options.runtimeOptions().localWorker()
+                options.runtimeOptions().localWorker(),
+                new com.firefly.store.jdbc.JdbcBatchRepository(dataSource)
         );
         return new RuntimeAssembly(
                 module, clock,
@@ -528,7 +532,8 @@ public final class FireflyBootstrap implements AutoCloseable {
             java.time.Clock runtimeClock,
             com.firefly.executor.ExecutorInstanceDirectory instanceDirectory,
             com.firefly.security.IntegrationKeyRepository integrationKeyRepository,
-            java.util.function.BooleanSupplier registrationAdmission
+            java.util.function.BooleanSupplier registrationAdmission,
+            BatchRepository batchRepository
     ) {
         if (!options.nettyExecutorGatewayEnabled()) {
             log.info("Netty executor gateway disabled");
@@ -552,6 +557,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                 options.runtimeOptions().nettyGateway(),
                 instanceDirectory
         );
+        gateway.setBatchRepository(batchRepository);
         com.firefly.security.IntegrationKeyService integrationKeys =
                 new com.firefly.security.IntegrationKeyService(integrationKeyRepository, runtimeClock);
         gateway.setRegistrationAuthenticator((provided, executorName) -> integrationKeys.verify(provided));

@@ -193,6 +193,7 @@ final class AdminJobController {
                 .routingKey(request.getOrDefault("routingKey", previous.routingKey()))
                 .retryScope(enumValue(ExecutorRetryScope.class, request.getOrDefault(
                         "retryScope", previous.retryScope().name())))
+                .calendarId(request.getOrDefault("calendarId", previous.calendarId()))
                 .enabled(requests.booleanValue(request, "enabled", previous.enabled()))
                 .build();
         Instant now = context.clock().instant();
@@ -259,6 +260,7 @@ final class AdminJobController {
                 .routingKey(request.getOrDefault("routingKey", ""))
                 .retryScope(enumValue(ExecutorRetryScope.class,
                         request.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")))
+                .calendarId(request.getOrDefault("calendarId", parameters.getOrDefault("firefly.calendarId", "")))
                 .enabled(requests.booleanValue(request, "enabled", true))
                 .build();
         repository.save(job, job.schedule().nextAfter(context.clock().instant(), job.zoneId()));

@@ -6,6 +6,9 @@ import java.time.Duration;
 import java.time.ZoneId;
 import java.util.Map;
 import java.util.Objects;
+import java.util.List;
+import com.firefly.schedule.BlackoutWindow;
+import com.firefly.schedule.JobDependency;
 
 /**
  * Defines the stable scheduling contract for a job without carrying runtime execution state.
@@ -32,8 +35,25 @@ public record JobDefinition(
         int shardCount,
         String routingKey,
         ExecutorRetryScope retryScope,
-        boolean enabled
+        boolean enabled,
+        String calendarId,
+        List<BlackoutWindow> blackoutWindows,
+        List<JobDependency> dependencies
 ) {
+    /** Source-compatible constructor retained for clients compiled against the 1.1.x line. */
+    public JobDefinition(
+            String id, String groupId, String name, String handlerName, Schedule schedule, ZoneId zoneId,
+            MisfirePolicy misfirePolicy, Duration misfireGrace, ConcurrencyPolicy concurrencyPolicy,
+            int maxCatchUpCount, Duration timeout, Map<String, String> parameters, JobDestination destination,
+            ExecutionRetryPolicy retryPolicy, ExecutorDispatchMode dispatchMode,
+            ExecutorRoutingStrategy routingStrategy, ExecutorCompletionPolicy completionPolicy, int shardCount,
+            String routingKey, ExecutorRetryScope retryScope, boolean enabled
+    ) {
+        this(id, groupId, name, handlerName, schedule, zoneId, misfirePolicy, misfireGrace, concurrencyPolicy,
+                maxCatchUpCount, timeout, parameters, destination, retryPolicy, dispatchMode, routingStrategy,
+                completionPolicy, shardCount, routingKey, retryScope, enabled, "", List.of(), List.of());
+    }
+
     /**
      * Keeps builder-created and manually-created definitions under the same validation rules.
      */
@@ -54,6 +74,9 @@ public record JobDefinition(
         Objects.requireNonNull(concurrencyPolicy, "concurrencyPolicy");
         Objects.requireNonNull(timeout, "timeout");
         parameters = Map.copyOf(Objects.requireNonNull(parameters, "parameters"));
+        calendarId = calendarId == null ? "" : calendarId;
+        blackoutWindows = List.copyOf(blackoutWindows == null ? List.of() : blackoutWindows);
+        dependencies = List.copyOf(dependencies == null ? List.of() : dependencies);
         destination = destination == null ? legacyDestination(handlerName, parameters) : destination;
         retryPolicy = retryPolicy == null ? legacyRetryPolicy(parameters) : retryPolicy;
         Objects.requireNonNull(dispatchMode, "dispatchMode");
@@ -105,7 +128,10 @@ public record JobDefinition(
                 .shardCount(1)
                 .routingKey("")
                 .retryScope(ExecutorRetryScope.FAILED_TARGETS_ONLY)
-                .enabled(true);
+                .enabled(true)
+                .calendarId("")
+                .blackoutWindows(List.of())
+                .dependencies(List.of());
     }
 
     public JobDefinition withEnabled(boolean value) {
@@ -114,6 +140,7 @@ public record JobDefinition(
                 concurrencyPolicy, maxCatchUpCount, timeout, parameters, destination, retryPolicy,
                 dispatchMode, routingStrategy,
                 completionPolicy, shardCount, routingKey, retryScope, value
+                , calendarId, blackoutWindows, dependencies
         );
     }
 
