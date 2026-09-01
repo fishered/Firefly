@@ -8,7 +8,7 @@
     {"version": "1.0.8", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
     {"version": "1.1.0", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
     {"version": "1.1.1", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]},
-    {"version": "1.1.2", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [16, 16]}
+    {"version": "1.1.2", "pluginApi": 1, "executorProtocol": [1, 2], "databaseSchema": [12, 12]}
   ],
   "plugins": [
     {"id": "tracing-opentelemetry", "api": [1, 1], "firefly": ["1.0.0", "1.1.2"],
