@@ -261,7 +261,9 @@ tasks.register("publishToFireflyMavenLocal") {
 tasks.register("verifyMavenCentralPublication") {
     group = "verification"
     description = "Builds tests, POMs, sources, and Javadocs for every Maven Central module without uploading."
-    dependsOn(subprojects.findAll { it.path != ":platform:firefly-bom" }.collect { "${it.path}:test" })
+    // Only published library projects have test tasks; top-level aggregators use
+    // the base plugin and intentionally do not expose a project-level test task.
+    dependsOn(publishedProjects.findAll { it != ":platform:firefly-bom" }.collect { "${it}:test" })
     dependsOn(publishedProjects.collectMany {
         if (it == ":platform:firefly-bom") {
             return ["${it}:generatePomFileForMavenPublication"]
