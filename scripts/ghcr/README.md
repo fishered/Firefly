@@ -14,7 +14,7 @@ default it only builds and validates images; uploading requires the explicit
 ## Prerequisites
 
 - Docker Desktop is installed and the Docker Engine is running.
-- The release commit has an annotated Git tag such as `v1.1.1`.
+- The release commit has an annotated Git tag such as `v1.1.2`.
 - The version in the tagged `build.gradle` matches the requested version.
 - GitHub CLI is installed and authenticated as the package owner.
 
@@ -27,11 +27,11 @@ gh auth status
 
 ## Build and Validate Locally
 
-Run this first. It builds both images for `linux/amd64`, assigns the `1.1.1`
+Run this first. It builds both images for `linux/amd64`, assigns the `1.1.2`
 and `1.1` tags, and verifies the OCI version label. It does not upload images.
 
 ```powershell
-.\scripts\ghcr\publish-ghcr.ps1 -Version 1.1.1
+.\scripts\ghcr\publish-ghcr.ps1 -Version 1.1.2
 ```
 
 The initial workflow intentionally publishes `linux/amd64` images only. It is
@@ -43,7 +43,7 @@ After checking the local images, publish the version, minor, and `latest` tags:
 
 ```powershell
 .\scripts\ghcr\publish-ghcr.ps1 `
-  -Version 1.1.1 `
+  -Version 1.1.2 `
   -PublishLatest `
   -Push
 ```
@@ -56,7 +56,7 @@ the command. It never uses `docker push --all-tags`.
 Use a different GitHub owner when publishing a fork:
 
 ```powershell
-.\scripts\ghcr\publish-ghcr.ps1 -Version 1.1.1 -Owner another-owner -Push
+.\scripts\ghcr\publish-ghcr.ps1 -Version 1.1.2 -Owner another-owner -Push
 ```
 
 ### Reuse Existing Local Images
@@ -66,7 +66,7 @@ their OCI version labels are correct:
 
 ```powershell
 .\scripts\ghcr\publish-ghcr.ps1 `
-  -Version 1.1.1 `
+  -Version 1.1.2 `
   -PublishLatest `
   -SkipBuild `
   -Push
@@ -79,7 +79,7 @@ account that can write both packages:
 
 ```powershell
 .\scripts\ghcr\publish-ghcr.ps1 `
-  -Version 1.1.1 `
+  -Version 1.1.2 `
   -PublishLatest `
   -SkipLogin `
   -Push
@@ -92,7 +92,7 @@ latest base image metadata for the Dockerfile tag. If Docker Hub is temporarily
 unreachable but the base image is already cached locally, use `-NoPull`:
 
 ```powershell
-.\scripts\ghcr\publish-ghcr.ps1 -Version 1.1.1 -NoPull
+.\scripts\ghcr\publish-ghcr.ps1 -Version 1.1.2 -NoPull
 ```
 
 This is only useful when the required base images already exist on the local
@@ -116,8 +116,8 @@ only when that is acceptable for the current machine:
 
 ```powershell
 docker logout ghcr.io
-docker pull ghcr.io/fishered/firefly:1.1.1
-docker pull ghcr.io/fishered/firefly-admin:1.1.1
+docker pull ghcr.io/fishered/firefly:1.1.2
+docker pull ghcr.io/fishered/firefly-admin:1.1.2
 ```
 
 ## Troubleshooting
@@ -166,8 +166,8 @@ the visibility separately for both packages in GitHub package settings.
 Create and push an annotated release tag from the intended release commit:
 
 ```powershell
-git tag -a v1.1.1 -m "Release 1.1.1"
-git push origin v1.1.1
+git tag -a v1.1.2 -m "Release 1.1.2"
+git push origin v1.1.2
 ```
 
 Do not move or recreate a published release tag.

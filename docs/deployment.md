@@ -69,8 +69,8 @@ firefly:
 ## 分别构建两个镜像
 
 ```powershell
-docker build -t firefly/firefly-server:1.1.1 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.1.1 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.1.2 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.1.2 -f ui/admin/Dockerfile ui/admin
 ```
 
 服务镜像使用 Amazon Corretto OpenJDK 21 Alpine 和 Gradle `installDist` 产物，以非 root 用户运行。前端镜像使用 Node 22 Alpine，
@@ -81,7 +81,7 @@ docker build -t firefly/firefly-admin-ui:1.1.1 -f ui/admin/Dockerfile ui/admin
 Compose 默认使用固定镜像名和 `.env` 中的统一版本：
 
 ```dotenv
-FIREFLY_VERSION=1.1.1
+FIREFLY_VERSION=1.1.2
 ```
 
 需要私有仓库时，对镜像重新打标签，并在部署侧 Compose 覆盖文件中替换 `image` 地址；运行配置不再承担镜像仓库选择职责。
@@ -96,10 +96,10 @@ docker compose up -d --no-build
 也可以分别发布：
 
 ```powershell
-docker tag firefly/firefly-server:1.1.1 registry.example.com/firefly/firefly-server:1.1.1
-docker tag firefly/firefly-admin-ui:1.1.1 registry.example.com/firefly/firefly-admin-ui:1.1.1
-docker push registry.example.com/firefly/firefly-server:1.1.1
-docker push registry.example.com/firefly/firefly-admin-ui:1.1.1
+docker tag firefly/firefly-server:1.1.2 registry.example.com/firefly/firefly-server:1.1.2
+docker tag firefly/firefly-admin-ui:1.1.2 registry.example.com/firefly/firefly-admin-ui:1.1.2
+docker push registry.example.com/firefly/firefly-server:1.1.2
+docker push registry.example.com/firefly/firefly-admin-ui:1.1.2
 ```
 
 ## 分别运行容器
@@ -124,12 +124,12 @@ docker run -d --name firefly-server --network firefly `
   -e FIREFLY_JDBC_SCHEMA_MODE=initialize-if-empty `
   -e FIREFLY_SECURITY_JWT_ENABLED=true `
   -e FIREFLY_SECURITY_JWT_SECRET=change-me-to-a-long-random-signing-secret `
-  firefly/firefly-server:1.1.1
+  firefly/firefly-server:1.1.2
 
 docker run -d --name firefly-admin-ui --network firefly `
   -p 9720:9720 `
   -e FIREFLY_ADMIN_API=http://firefly-server:9710 `
-  firefly/firefly-admin-ui:1.1.1
+  firefly/firefly-admin-ui:1.1.2
 ```
 
 `FIREFLY_ADMIN_API` 必须是前端容器可以访问的地址。容器内的 `127.0.0.1:9710` 指向前端容器自身，不能
