@@ -5,7 +5,13 @@ Firefly 采用轻量调度核心、运行时宿主、可替换存储、独立通
 ## 模块边界
 
 ```text
-libs/scheduler-core          纯 Java 调度领域与端口
+libs/firefly-domain          稳定领域模型与任务定义
+libs/firefly-scheduling      日历、黑名单、依赖和调度语义
+libs/firefly-execution       execution 生命周期、fencing 与 trace
+libs/firefly-batch           分片、进度、checkpoint 与对象存储 SPI
+libs/firefly-store-api       持久化契约与记录
+libs/firefly-engine          调度引擎编排与内存实现
+libs/scheduler-core          兼容 facade（旧包名入口）
 stores/jdbc                 JDBC 持久化、事务、迁移与 HA 协调
 transports/netty            Netty Gateway 与传输实现
 clients/executor-netty      业务侧 Executor Client

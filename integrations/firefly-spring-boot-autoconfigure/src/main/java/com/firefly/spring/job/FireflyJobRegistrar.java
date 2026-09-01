@@ -278,6 +278,13 @@ public final class FireflyJobRegistrar implements ApplicationListener<Applicatio
         append(json, "routingKey", job.routingKey());
         append(json, "retryScope", job.retryScope().name());
         append(json, "retryMaxAttempts", Integer.toString(job.retryMaxAttempts()), false);
+        append(json, "calendarId", job.calendarId());
+        if (!job.dependencies().isEmpty()) {
+            String deps = job.dependencies().stream()
+                    .map(d -> d.prerequisiteJobId() + ":" + d.maxWaitAttempts())
+                    .collect(java.util.stream.Collectors.joining(","));
+            append(json, "dependencies", deps);
+        }
         for (Map.Entry<String, String> parameter : job.parameters().entrySet()) {
             append(json, "param." + parameter.getKey(), parameter.getValue());
         }

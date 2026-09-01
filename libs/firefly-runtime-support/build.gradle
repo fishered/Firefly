@@ -1,0 +1,11 @@
+plugins { id "java-library" }
+dependencies {
+    api project(":libs:firefly-domain")
+    api project(":libs:firefly-execution")
+    api project(":libs:firefly-store-api")
+    api project(":libs:firefly-cluster")
+    implementation project(":libs:firefly-scheduling")
+    implementation "io.opentelemetry:opentelemetry-api:1.44.1"
+    compileOnly "org.projectlombok:lombok:1.18.34"
+    annotationProcessor "org.projectlombok:lombok:1.18.34"
+}

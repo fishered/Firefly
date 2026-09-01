@@ -48,7 +48,15 @@ final class AdminHttpJson {
                     .append("\",\"shardCount\":").append(job.definition().shardCount())
                     .append(",\"routingKey\":\"").append(escape(job.definition().routingKey()))
                     .append("\",\"retryScope\":\"").append(job.definition().retryScope().name())
-                    .append("\",\"retryMaxAttempts\":").append(job.definition().retryPolicy().maxAttempts())
+                    .append("\",\"dependencies\":[");
+            for (int dependencyIndex = 0; dependencyIndex < job.definition().dependencies().size(); dependencyIndex++) {
+                var dependency = job.definition().dependencies().get(dependencyIndex);
+                if (dependencyIndex > 0) json.append(',');
+                json.append("{\"prerequisiteJobId\":\"").append(escape(dependency.prerequisiteJobId()))
+                        .append("\",\"maxWaitAttempts\":").append(dependency.maxWaitAttempts()).append('}');
+            }
+            json.append("]")
+                    .append(",\"retryMaxAttempts\":").append(job.definition().retryPolicy().maxAttempts())
                     .append(",\"retryInitialDelay\":\"").append(job.definition().retryPolicy().initialDelay())
                     .append("\",\"retryMultiplier\":").append(job.definition().retryPolicy().multiplier())
                     .append(",\"retryMaxDelay\":\"").append(job.definition().retryPolicy().maxDelay())

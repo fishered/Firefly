@@ -3,7 +3,9 @@ plugins {
 }
 
 dependencies {
-    api project(":libs:scheduler-core")
+    api project(":libs:firefly-domain")
+    api project(":libs:firefly-handler")
+    api project(":libs:firefly-executor")
     implementation project(":clients:executor-netty")
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"

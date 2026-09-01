@@ -3,9 +3,22 @@ plugins {
 }
 
 dependencies {
+    api project(":libs:firefly-batch")
+    api project(":libs:firefly-domain")
+    api project(":libs:firefly-catalog")
+    api project(":libs:firefly-execution")
+    api project(":libs:firefly-scheduling")
+    api project(":libs:firefly-store-api")
+    api project(":libs:firefly-trigger")
+    api project(":libs:firefly-operations")
+    api project(":libs:firefly-handler")
+    api project(":libs:firefly-cluster")
+    api project(":libs:firefly-security")
+    api project(":libs:firefly-executor")
+    api project(":libs:firefly-engine")
+    api project(":libs:firefly-runtime-support")
     api "io.opentelemetry:opentelemetry-api:1.44.1"
 
-    implementation "com.cronutils:cron-utils:9.2.1"
     implementation "com.fasterxml.jackson.core:jackson-databind:2.17.2"
 
     compileOnly "org.projectlombok:lombok:1.18.34"

@@ -3,7 +3,10 @@ plugins {
 }
 
 dependencies {
-    api project(':libs:scheduler-core')
+    api project(':libs:firefly-engine')
+    api project(':libs:firefly-runtime-support')
+    api project(':libs:firefly-trigger')
+    api project(':libs:firefly-operations')
     implementation 'com.google.inject:guice:7.0.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'

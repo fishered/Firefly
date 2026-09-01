@@ -1,0 +1,2 @@
+plugins { id "base" }
+description = "Firefly integration modules (aggregator only)."

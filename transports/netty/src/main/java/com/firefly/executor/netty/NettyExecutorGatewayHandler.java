@@ -541,6 +541,14 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                     payload.get("checkpointId"), payload.get("checkpointChecksum"),
                     payload.getOrDefault("errorMessage", ""), now);
             long fence = parseNonNegative(payload.get("fencingToken"));
+            String checkpointId = payload.getOrDefault("checkpointId", "");
+            String checkpointLocation = payload.getOrDefault("checkpointLocation", "");
+            String checkpointChecksum = payload.getOrDefault("checkpointChecksum", "");
+            if (!checkpointId.isBlank() && !checkpointLocation.isBlank() && !checkpointChecksum.isBlank()) {
+                batchRepository.saveCheckpoint(new com.firefly.batch.BatchCheckpoint(
+                        checkpointId, rootExecutionId, shard, attempt,
+                        checkpointLocation, checkpointChecksum, now), fence);
+            }
             if (!batchRepository.saveShardResult(shardResult, fence)) return;
             batchRepository.find(rootExecutionId).ifPresent(batch -> {
                 var aggregate = new BatchProgressAggregator().aggregate(

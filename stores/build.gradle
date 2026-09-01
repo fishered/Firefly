@@ -1,0 +1,2 @@
+plugins { id "base" }
+description = "Firefly storage modules (aggregator only)."

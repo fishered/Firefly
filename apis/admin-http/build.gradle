@@ -3,7 +3,11 @@ plugins {
 }
 
 dependencies {
-    implementation project(':libs:scheduler-core')
+    implementation project(':libs:firefly-engine')
+    implementation project(':libs:firefly-operations')
+    implementation project(':libs:firefly-trigger')
+    implementation project(':libs:firefly-security')
+    implementation project(':libs:firefly-runtime-support')
     implementation project(':plugins:plugin-api')
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'

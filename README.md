@@ -387,7 +387,20 @@ firefly.node.roles=api,gateway,scheduler
 
 ```text
 firefly/
-├── libs/scheduler-core                  # 纯 Java 调度模型与核心算法
+├── libs/firefly-domain                  # 稳定领域模型与任务定义
+├── libs/firefly-scheduling               # 日历、黑名单、依赖和调度语义
+├── libs/firefly-execution                # execution 生命周期、fencing 与 trace
+├── libs/firefly-batch                    # 分片、进度、checkpoint 与对象存储 SPI
+├── libs/firefly-store-api                # 持久化契约与存储记录
+├── libs/firefly-engine                   # 调度引擎编排与内存实现
+├── libs/firefly-catalog                  # 任务/执行器目录契约
+├── libs/firefly-trigger                  # 事件 Inbox 与历史补数
+├── libs/firefly-handler                  # Handler 注册与幂等封装
+├── libs/firefly-operations               # 时间线与告警评估
+├── libs/firefly-cluster                  # 节点、分片租约与 fencing
+├── libs/firefly-security                 # Admin 身份、JWT 与集成密钥
+├── libs/firefly-executor                 # Executor 注册和传输无关协议
+├── libs/scheduler-core                  # 兼容 facade（旧包名入口）
 ├── server/runtime                       # Scheduler、Outbox、协调器运行时
 ├── server/bootstrap                     # 配置解析、模块装配与生命周期
 ├── server/launcher                      # 独立 Server 启动入口
@@ -400,6 +413,7 @@ firefly/
 ├── ui/admin                             # 独立 Node Admin UI
 ├── plugins/plugin-api                   # 插件 SPI 与生命周期
 ├── plugins/metrics-prometheus           # Prometheus Metrics 插件
+├── support                               # 基准测试与仓库辅助技能（非运行时）
 ├── examples                             # 最小集成示例
 └── config                               # 主配置与 pg/h2/memory profiles
 ```

@@ -4,6 +4,22 @@ plugins {
 
 dependencies {
     constraints {
+        api project(":libs:firefly-batch")
+        api project(":libs:firefly-domain")
+        api project(":libs:firefly-catalog")
+        api project(":libs:firefly-execution")
+        api project(":libs:firefly-scheduling")
+        api project(":libs:firefly-store-api")
+        api project(":libs:firefly-trigger")
+        api project(":libs:firefly-operations")
+        api project(":libs:firefly-handler")
+        api project(":libs:firefly-cluster")
+        api project(":libs:firefly-security")
+        api project(":libs:firefly-executor")
+        api project(":libs:firefly-engine")
+        api project(":libs:firefly-runtime-support")
+    }
+    constraints {
         api project(":libs:scheduler-core")
         api project(":plugins:plugin-api")
         api project(":transports:netty-protocol")

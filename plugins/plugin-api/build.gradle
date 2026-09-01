@@ -3,7 +3,16 @@ plugins {
 }
 
 dependencies {
-    api project(":libs:scheduler-core")
+    api project(":libs:firefly-batch")
+    api project(":libs:firefly-catalog")
+    api project(":libs:firefly-cluster")
+    api project(":libs:firefly-execution")
+    api project(":libs:firefly-executor")
+    api project(":libs:firefly-handler")
+    api project(":libs:firefly-runtime-support")
+    api project(":libs:firefly-security")
+    api project(":libs:firefly-store-api")
+    api project(":libs:firefly-trigger")
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"

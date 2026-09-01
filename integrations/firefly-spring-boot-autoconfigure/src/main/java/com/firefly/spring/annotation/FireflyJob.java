@@ -39,6 +39,9 @@ public @interface FireflyJob {
     /** Optional business calendar id managed in the Firefly console. */
     String calendarId() default "";
 
+    /** Prerequisites in {@code jobId:maxWaitAttempts} form, comma-free one per entry. */
+    String[] dependencies() default {};
+
     boolean enabled() default true;
 
     ExecutorDispatchMode dispatchMode() default ExecutorDispatchMode.UNICAST;

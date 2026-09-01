@@ -30,6 +30,8 @@ stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/mysql.sql
 | `firefly_executor_instance_location` | Executor 实例所在 Gateway、session fencing、内部地址和短租约 |
 | `firefly_audit_log` | Admin 变更的持久化审计记录 |
 | `firefly_job_history` | 任务创建、启停和删除的变更历史 |
+| `firefly_dependency_wait` | 依赖门控等待次数、下次检查时间和跨节点恢复状态 |
+| `firefly_dependency_gate` | 每个业务触发时间的有界依赖门控、claim、释放和过期状态 |
 | `firefly_user` | Admin 控制台账号、PBKDF2 密码摘要、角色、启停状态和乐观锁版本 |
 | `firefly_integration_key` | 系统 Integration Key 的 PBKDF2 摘要、轮换版本和更新时间，不保存明文 |
 

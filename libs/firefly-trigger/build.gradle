@@ -1,0 +1,6 @@
+plugins { id "java-library" }
+dependencies {
+    api project(":libs:firefly-domain")
+    api project(":libs:firefly-execution")
+    api project(":libs:firefly-store-api")
+}

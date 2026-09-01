@@ -3,7 +3,10 @@ plugins {
 }
 
 dependencies {
-    api project(":libs:scheduler-core")
+    api project(":libs:firefly-engine")
+    api project(":libs:firefly-runtime-support")
+    api project(":libs:firefly-trigger")
+    api project(":libs:firefly-operations")
 
     compileOnly "org.projectlombok:lombok:1.18.34"
     annotationProcessor "org.projectlombok:lombok:1.18.34"

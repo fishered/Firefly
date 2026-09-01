@@ -3,9 +3,21 @@ plugins {
 }
 
 dependencies {
-    api project(":libs:scheduler-core")
+    api project(":libs:firefly-store-api")
+    api project(":libs:firefly-domain")
+    api project(":libs:firefly-execution")
+    api project(":libs:firefly-scheduling")
+    api project(":libs:firefly-batch")
+    api project(":libs:firefly-catalog")
+    api project(":libs:firefly-cluster")
+    api project(":libs:firefly-executor")
+    api project(":libs:firefly-security")
+    api project(":libs:firefly-trigger")
+    api project(":libs:firefly-runtime-support")
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+    testImplementation project(":libs:firefly-engine")
+    testImplementation project(":libs:firefly-handler")
     testImplementation "com.h2database:h2:2.2.224"
     testImplementation "org.testcontainers:junit-jupiter:1.17.3"
     testImplementation "org.testcontainers:postgresql:1.17.3"

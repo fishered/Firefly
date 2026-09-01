@@ -1,12 +1,3 @@
-// Parent project for server runtime modules.
+plugins { id "base" }
 
-sourceSets {
-    main {
-        java.setSrcDirs([])
-        resources.setSrcDirs([])
-    }
-    test {
-        java.setSrcDirs([])
-        resources.setSrcDirs([])
-    }
-}
+// Parent project for server runtime modules. It does not publish an artifact.

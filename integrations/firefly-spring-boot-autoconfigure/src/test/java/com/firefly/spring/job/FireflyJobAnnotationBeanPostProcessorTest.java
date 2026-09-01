@@ -27,6 +27,19 @@ class FireflyJobAnnotationBeanPostProcessorTest {
     }
 
     @Test
+    void supportsFriendlyTaskContextAndTypedSchedulingOptions() throws Exception {
+        FriendlyJobs bean = new FriendlyJobs();
+        FireflyJobAnnotationBeanPostProcessor processor = new FireflyJobAnnotationBeanPostProcessor();
+        processor.postProcessAfterInitialization(bean, "friendlyJobs");
+        var discovered = processor.discoveredMethods().getFirst();
+        var registration = discovered.registration(discovered.declarations().getFirst());
+        assertEquals("calendar-main", registration.calendarId());
+        assertEquals("import-job", registration.dependencies().getFirst().prerequisiteJobId());
+        discovered.handler().handle(context());
+        assertEquals("friendly", bean.value);
+    }
+
+    @Test
     void derivesJobIdFromFullyQualifiedMethodName() {
         FireflyJobAnnotationBeanPostProcessor processor = new FireflyJobAnnotationBeanPostProcessor();
         processor.postProcessAfterInitialization(new DefaultIdJobs(), "defaultIdJobs");
@@ -134,6 +147,12 @@ class FireflyJobAnnotationBeanPostProcessorTest {
         return new ExecutionContext(
                 "execution-1", "cleanup-job", "cleanup", now, now, now, Map.of()
         );
+    }
+
+    static final class FriendlyJobs {
+        String value;
+        @FireflyJob(cron = "0 * * * * *", calendarId = "calendar-main", dependencies = {"import-job:3"})
+        void run(FireflyTaskContext context) { value = "friendly"; }
     }
 
     static class NoArgumentJobs {

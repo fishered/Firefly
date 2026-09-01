@@ -10,6 +10,8 @@ import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.List;
+import com.firefly.schedule.JobDependency;
 
 /**
  * Declares a remote scheduled job that the Spring Boot starter can create in Firefly.
@@ -29,7 +31,9 @@ public record FireflyJobRegistration(
         String routingKey,
         ExecutorRetryScope retryScope,
         int retryMaxAttempts,
-        Map<String, String> parameters
+        Map<String, String> parameters,
+        String calendarId,
+        List<JobDependency> dependencies
 ) {
     public FireflyJobRegistration {
         id = requireNonBlank(id, "id");
@@ -44,12 +48,24 @@ public record FireflyJobRegistration(
         Objects.requireNonNull(retryScope, "retryScope");
         routingKey = routingKey == null ? "" : routingKey;
         parameters = parameters == null ? Map.of() : Map.copyOf(parameters);
+        calendarId = calendarId == null ? "" : calendarId;
+        dependencies = List.copyOf(dependencies == null ? List.of() : dependencies);
         if (shardCount < 1) {
             throw new IllegalArgumentException("shardCount must be positive");
         }
         if (retryMaxAttempts < 1) {
             throw new IllegalArgumentException("retryMaxAttempts must be positive");
         }
+    }
+
+    /** Backward-compatible constructor for integrations compiled against 1.1.x. */
+    public FireflyJobRegistration(String id, String name, String groupId, String handlerName, String cron,
+                                  String zoneId, boolean enabled, ExecutorDispatchMode dispatchMode,
+                                  ExecutorRoutingStrategy routingStrategy, ExecutorCompletionPolicy completionPolicy,
+                                  int shardCount, String routingKey, ExecutorRetryScope retryScope,
+                                  int retryMaxAttempts, Map<String, String> parameters) {
+        this(id, name, groupId, handlerName, cron, zoneId, enabled, dispatchMode, routingStrategy,
+                completionPolicy, shardCount, routingKey, retryScope, retryMaxAttempts, parameters, "", List.of());
     }
 
     public static FireflyJobRegistration of(String id, String handlerName, String cron) {
@@ -76,6 +92,8 @@ public record FireflyJobRegistration(
         private ExecutorRetryScope retryScope = ExecutorRetryScope.FAILED_TARGETS_ONLY;
         private int retryMaxAttempts = 1;
         private final Map<String, String> parameters = new LinkedHashMap<>();
+        private String calendarId = "";
+        private final java.util.List<JobDependency> dependencies = new java.util.ArrayList<>();
 
         private Builder(String id, String handlerName, String cron) {
             this.id = id;
@@ -144,11 +162,24 @@ public record FireflyJobRegistration(
             return this;
         }
 
+        public Builder calendarId(String calendarId) { this.calendarId = calendarId == null ? "" : calendarId; return this; }
+
+        public Builder dependency(String prerequisiteJobId, int maxWaitAttempts) {
+            dependencies.add(new JobDependency(id, prerequisiteJobId, maxWaitAttempts));
+            return this;
+        }
+
+        public Builder dependencies(List<JobDependency> dependencies) {
+            this.dependencies.clear();
+            if (dependencies != null) this.dependencies.addAll(dependencies);
+            return this;
+        }
+
         public FireflyJobRegistration build() {
             return new FireflyJobRegistration(
                     id, name, groupId, handlerName, cron, zoneId, enabled,
                     dispatchMode, routingStrategy, completionPolicy, shardCount,
-                    routingKey, retryScope, retryMaxAttempts, parameters
+                    routingKey, retryScope, retryMaxAttempts, parameters, calendarId, dependencies
             );
         }
     }

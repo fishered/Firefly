@@ -51,6 +51,10 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     private final DataSource dataSource;
     private final JdbcTimeSource timeSource;
     private final int schedulerShardCount;
+    private static boolean constraint(SQLException e) {
+        String state = e.getSQLState();
+        return "23505".equals(state) || "23000".equals(state);
+    }
 
     public JdbcJobRepository(DataSource dataSource) {
         this(dataSource, JdbcTimeSource.database(), SchedulerShardConfig.DEFAULT_SHARD_COUNT);
@@ -118,23 +122,76 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
 
     @Override
     public String dependencyStatus(String prerequisiteJobId, Instant businessTime) {
-        String executionId = prerequisiteJobId + "@" + businessTime;
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "select status from firefly_dispatch_outbox where execution_id=?")) {
-            statement.setString(1, executionId);
+                     "select status from firefly_execution where job_id=? and scheduled_fire_time=? " +
+                             "order by run_attempt desc, created_at desc limit 1")) {
+            statement.setString(1, prerequisiteJobId);
+            statement.setTimestamp(2, Timestamp.from(businessTime));
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) return "PENDING";
-                return switch (result.getString(1)) {
-                    case "DONE" -> "SUCCEEDED";
-                    case "DEAD" -> "FAILED";
-                    default -> "PENDING";
-                };
+                return result.getString(1);
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to read dependency status", e);
         }
     }
+
+    @Override
+    public int dependencyWaitAttempts(String jobId, Instant businessTime) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement p = c.prepareStatement(
+                "select wait_attempts from firefly_dependency_wait where job_id=? and business_time=?")) {
+            p.setString(1, jobId); p.setTimestamp(2, Timestamp.from(businessTime));
+            try (ResultSet r = p.executeQuery()) { return r.next() ? r.getInt(1) : 0; }
+        } catch (SQLException e) { throw new JdbcException("failed to read dependency wait state", e); }
+    }
+
+    @Override
+    public void recordDependencyWait(String jobId, Instant businessTime, int attempts, Instant nextCheckAt) {
+        String sql = "merge into firefly_dependency_wait (job_id,business_time,wait_attempts,next_check_at,updated_at) key(job_id,business_time) values(?,?,?,?,?)";
+        try (Connection c = dataSource.getConnection()) {
+            JdbcDialect dialect = JdbcDialect.resolve(c, JdbcSchemaOptions.auto());
+            String merge = switch (dialect) {
+                case POSTGRESQL -> "insert into firefly_dependency_wait(job_id,business_time,wait_attempts,next_check_at,updated_at) values(?,?,?,?,?) on conflict(job_id,business_time) do update set wait_attempts=excluded.wait_attempts,next_check_at=excluded.next_check_at,updated_at=excluded.updated_at";
+                case MYSQL -> "insert into firefly_dependency_wait(job_id,business_time,wait_attempts,next_check_at,updated_at) values(?,?,?,?,?) on duplicate key update wait_attempts=values(wait_attempts),next_check_at=values(next_check_at),updated_at=values(updated_at)";
+                case H2 -> sql;
+            };
+            try (PreparedStatement p = c.prepareStatement(merge)) {
+                p.setString(1, jobId); p.setTimestamp(2, Timestamp.from(businessTime)); p.setInt(3, attempts);
+                p.setTimestamp(4, Timestamp.from(nextCheckAt)); p.setTimestamp(5, Timestamp.from(Instant.now())); p.executeUpdate();
+            }
+        } catch (SQLException e) { throw new JdbcException("failed to persist dependency wait state", e); }
+    }
+
+    @Override
+    public void clearDependencyWait(String jobId, Instant businessTime) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement p = c.prepareStatement(
+                "delete from firefly_dependency_wait where job_id=? and business_time=?")) {
+            p.setString(1, jobId); p.setTimestamp(2, Timestamp.from(businessTime)); p.executeUpdate();
+        } catch (SQLException e) { throw new JdbcException("failed to clear dependency wait state", e); }
+    }
+
+    @Override public com.firefly.schedule.ConditionStatus conditionStatus(String jobId, Instant businessTime) {
+        try (Connection c=dataSource.getConnection(); PreparedStatement p=c.prepareStatement("select status from firefly_condition_state where job_id=? and business_time=?")) {
+            p.setString(1,jobId); p.setTimestamp(2,Timestamp.from(businessTime));
+            try(ResultSet r=p.executeQuery()){ return r.next()?com.firefly.schedule.ConditionStatus.valueOf(r.getString(1)):com.firefly.schedule.ConditionStatus.ALLOWED; }
+        } catch(SQLException e){ throw new JdbcException("failed to read condition state",e); }
+    }
+    @Override public void setConditionStatus(String jobId, Instant businessTime, com.firefly.schedule.ConditionStatus status, String reason) {
+        try(Connection c=dataSource.getConnection()) {
+            JdbcDialect d=JdbcDialect.resolve(c,JdbcSchemaOptions.auto());
+            String sql=switch(d){case POSTGRESQL->"insert into firefly_condition_state(job_id,business_time,status,reason,updated_at) values(?,?,?,?,?) on conflict(job_id,business_time) do update set status=excluded.status,reason=excluded.reason,updated_at=excluded.updated_at";case MYSQL->"insert into firefly_condition_state(job_id,business_time,status,reason,updated_at) values(?,?,?,?,?) on duplicate key update status=values(status),reason=values(reason),updated_at=values(updated_at)";case H2->"merge into firefly_condition_state(job_id,business_time,status,reason,updated_at) key(job_id,business_time) values(?,?,?,?,?)";};
+            try(PreparedStatement p=c.prepareStatement(sql)){p.setString(1,jobId);p.setTimestamp(2,Timestamp.from(businessTime));p.setString(3,status.name());p.setString(4,reason==null?"":reason);p.setTimestamp(5,Timestamp.from(Instant.now()));p.executeUpdate();}
+        } catch(SQLException e){ throw new JdbcException("failed to persist condition state",e); }
+    }
+
+    @Override public boolean openDependencyGate(com.firefly.schedule.DependencyGate gate) {
+        String sql="insert into firefly_dependency_gate(gate_id,job_id,business_time,next_check_at,deadline_at,wait_attempts,status,reason,updated_at) values(?,?,?,?,?,?,?,?,?)";
+        try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setString(1,gate.gateId());p.setString(2,gate.jobId());p.setTimestamp(3,Timestamp.from(gate.businessTime()));p.setTimestamp(4,Timestamp.from(gate.nextCheckAt()));p.setTimestamp(5,Timestamp.from(gate.deadlineAt()));p.setInt(6,gate.waitAttempts());p.setString(7,gate.status().name());p.setString(8,gate.reason());p.setTimestamp(9,Timestamp.from(Instant.now()));p.executeUpdate();return true;}catch(SQLException e){if(constraint(e))return false;throw new JdbcException("failed to open dependency gate",e);}
+    }
+    @Override public List<com.firefly.schedule.DependencyGate> dueDependencyGates(Instant now,int limit){List<com.firefly.schedule.DependencyGate> out=new ArrayList<>();String q="select gate_id,job_id,business_time,next_check_at,deadline_at,wait_attempts,status,reason from firefly_dependency_gate where status in ('WAITING','CLAIMED') and next_check_at<=? order by next_check_at,gate_id limit ?";try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(q)){p.setTimestamp(1,Timestamp.from(now));p.setInt(2,limit);try(ResultSet r=p.executeQuery()){while(r.next())out.add(new com.firefly.schedule.DependencyGate(r.getString(1),r.getString(2),r.getTimestamp(3).toInstant(),r.getTimestamp(4).toInstant(),r.getTimestamp(5).toInstant(),r.getInt(6),com.firefly.schedule.DependencyGateStatus.valueOf(r.getString(7)),r.getString(8)));}}catch(SQLException e){throw new JdbcException("failed to read dependency gates",e);}return List.copyOf(out);}
+    @Override public boolean claimDependencyGate(String gateId,int expectedAttempts,String owner,Instant claimUntil){String q="update firefly_dependency_gate set status='CLAIMED',reason=?,next_check_at=?,updated_at=? where gate_id=? and wait_attempts=? and status in ('WAITING','CLAIMED') and next_check_at<=?";try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(q)){p.setString(1,owner);p.setTimestamp(2,Timestamp.from(claimUntil));p.setTimestamp(3,Timestamp.from(Instant.now()));p.setString(4,gateId);p.setInt(5,expectedAttempts);p.setTimestamp(6,Timestamp.from(Instant.now()));return p.executeUpdate()==1;}catch(SQLException e){throw new JdbcException("failed to claim dependency gate",e);}}
+    @Override public boolean updateDependencyGate(com.firefly.schedule.DependencyGate gate){String q="update firefly_dependency_gate set next_check_at=?,deadline_at=?,wait_attempts=?,status=?,reason=?,updated_at=? where gate_id=? and status in ('WAITING','CLAIMED')";try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(q)){p.setTimestamp(1,Timestamp.from(gate.nextCheckAt()));p.setTimestamp(2,Timestamp.from(gate.deadlineAt()));p.setInt(3,gate.waitAttempts());p.setString(4,gate.status().name());p.setString(5,gate.reason());p.setTimestamp(6,Timestamp.from(Instant.now()));p.setString(7,gate.gateId());return p.executeUpdate()==1;}catch(SQLException e){throw new JdbcException("failed to update dependency gate",e);}}
 
     @Override
     public Optional<com.firefly.schedule.CalendarDefinition> findCalendar(String calendarId) {

@@ -25,6 +25,19 @@ Firefly 的公共 Java 构件使用 `io.github.fishered` 命名空间。普通�
 
 - `firefly-bom`
 - `scheduler-core`
+- `firefly-domain`
+- `firefly-scheduling`
+- `firefly-execution`
+- `firefly-batch`
+- `firefly-store-api`
+- `firefly-engine`
+- `firefly-catalog`
+- `firefly-trigger`
+- `firefly-operations`
+- `firefly-handler`
+- `firefly-cluster`
+- `firefly-security`
+- `firefly-executor`
 - `plugin-api`
 - `netty-protocol`
 - `netty`

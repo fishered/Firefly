@@ -73,9 +73,10 @@ public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProc
         }
         Class<?>[] parameterTypes = method.getParameterTypes();
         if (parameterTypes.length > 1
-                || (parameterTypes.length == 1 && parameterTypes[0] != ExecutionContext.class)) {
+                || (parameterTypes.length == 1 && parameterTypes[0] != ExecutionContext.class
+                && parameterTypes[0] != FireflyTaskContext.class)) {
             throw new IllegalStateException(
-                    "@FireflyJob method must accept no arguments or one ExecutionContext: "
+                    "@FireflyJob method must accept no arguments, ExecutionContext, or FireflyTaskContext: "
                             + method.toGenericString()
             );
         }
@@ -157,9 +158,20 @@ public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProc
                     .shardCount(declaration.shardCount())
                     .routingKey(declaration.routingKey())
                     .retryScope(declaration.retryScope())
-                    .retryMaxAttempts(declaration.retryMaxAttempts());
+                    .retryMaxAttempts(declaration.retryMaxAttempts())
+                    .calendarId(declaration.calendarId());
+            for (String dependency : declaration.dependencies()) {
+                String[] parts = dependency.trim().split(":", 2);
+                if (parts.length != 2 || parts[0].isBlank()) {
+                    throw new IllegalStateException("@FireflyJob dependency must use prerequisiteJobId:maxWaitAttempts on " + method.toGenericString());
+                }
+                try {
+                    builder.dependency(parts[0].trim(), Integer.parseInt(parts[1].trim()));
+                } catch (NumberFormatException e) {
+                    throw new IllegalStateException("invalid @FireflyJob dependency wait attempts on " + method.toGenericString(), e);
+                }
+            }
             parameters(declaration).forEach(builder::parameter);
-            if (!declaration.calendarId().isBlank()) builder.parameter("firefly.calendarId", declaration.calendarId());
             return builder.build();
         }
 
@@ -168,7 +180,8 @@ public final class FireflyJobAnnotationBeanPostProcessor implements BeanPostProc
                 if (method.getParameterCount() == 0) {
                     method.invoke(bean);
                 } else {
-                    method.invoke(bean, context);
+                    method.invoke(bean, method.getParameterTypes()[0] == FireflyTaskContext.class
+                            ? new FireflyTaskContext(context) : context);
                 }
             } catch (InvocationTargetException e) {
                 Throwable cause = e.getTargetException();

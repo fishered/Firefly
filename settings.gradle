@@ -58,7 +58,23 @@ dependencyResolutionManagement {
 
 rootProject.name = "firefly"
 
+// Explicit aggregator projects. They are parent-POM equivalents and do not publish artifacts.
+include("apis", "clients", "examples", "integrations", "libs", "platform", "plugins", "server", "stores", "transports", "ui")
 include("libs:scheduler-core")
+include("libs:firefly-batch")
+include("libs:firefly-domain")
+include("libs:firefly-catalog")
+include("libs:firefly-execution")
+include("libs:firefly-scheduling")
+include("libs:firefly-store-api")
+include("libs:firefly-trigger")
+include("libs:firefly-operations")
+include("libs:firefly-handler")
+include("libs:firefly-cluster")
+include("libs:firefly-security")
+include("libs:firefly-executor")
+include("libs:firefly-engine")
+include("libs:firefly-runtime-support")
 include("platform:firefly-bom")
 include("integrations:embedded")
 include("integrations:firefly-remote-adapter")

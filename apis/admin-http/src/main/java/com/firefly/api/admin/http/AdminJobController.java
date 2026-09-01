@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -194,6 +195,7 @@ final class AdminJobController {
                 .retryScope(enumValue(ExecutorRetryScope.class, request.getOrDefault(
                         "retryScope", previous.retryScope().name())))
                 .calendarId(request.getOrDefault("calendarId", previous.calendarId()))
+                .dependencies(parseDependencies(request.getOrDefault("dependencies", ""), previous.id()))
                 .enabled(requests.booleanValue(request, "enabled", previous.enabled()))
                 .build();
         Instant now = context.clock().instant();
@@ -261,6 +263,7 @@ final class AdminJobController {
                 .retryScope(enumValue(ExecutorRetryScope.class,
                         request.getOrDefault("retryScope", "FAILED_TARGETS_ONLY")))
                 .calendarId(request.getOrDefault("calendarId", parameters.getOrDefault("firefly.calendarId", "")))
+                .dependencies(parseDependencies(request.getOrDefault("dependencies", ""), jobId))
                 .enabled(requests.booleanValue(request, "enabled", true))
                 .build();
         repository.save(job, job.schedule().nextAfter(context.clock().instant(), job.zoneId()));
@@ -270,6 +273,17 @@ final class AdminJobController {
 
     private List<ScheduledJobRecord> listJobs() {
         return context.jobRepository().map(repository -> repository.list()).orElse(List.of());
+    }
+
+    private static List<com.firefly.schedule.JobDependency> parseDependencies(String value, String jobId) {
+        if (value == null || value.isBlank()) return List.of();
+        List<com.firefly.schedule.JobDependency> result = new ArrayList<>();
+        for (String item : value.split(",")) {
+            String[] parts = item.trim().split(":", 2);
+            if (parts.length != 2 || parts[0].isBlank()) throw new IllegalArgumentException("dependencies must use prerequisiteJobId:maxWaitAttempts");
+            result.add(new com.firefly.schedule.JobDependency(jobId, parts[0].trim(), Integer.parseInt(parts[1].trim())));
+        }
+        return List.copyOf(result);
     }
 
     private void recordJobHistory(

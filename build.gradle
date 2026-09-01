@@ -17,8 +17,13 @@ allprojects {
     }
 }
 
+def aggregatorProjectPaths = [
+        ":apis", ":clients", ":examples", ":integrations", ":libs", ":platform",
+        ":plugins", ":server", ":stores", ":transports", ":ui"
+] as Set
+
 subprojects {
-    if (project.path != ":platform:firefly-bom") {
+    if (!aggregatorProjectPaths.contains(project.path) && project.path != ":platform:firefly-bom") {
         apply plugin: "java-library"
 
         java {
@@ -50,10 +55,32 @@ subprojects {
     tasks.withType(Jar).configureEach {
         manifest.attributes("Implementation-Version": project.version.toString())
     }
+
+    if (aggregatorProjectPaths.contains(project.path)) {
+        afterEvaluate {
+            def children = childProjects.values().collect { it.path }
+            tasks.named("assemble") { dependsOn(children.collect { "${it}:assemble" }) }
+            tasks.named("check") { dependsOn(children.collect { "${it}:check" }) }
+        }
+    }
 }
 
 def publishedProjects = [
         ":platform:firefly-bom",
+        ":libs:firefly-batch",
+        ":libs:firefly-domain",
+        ":libs:firefly-catalog",
+        ":libs:firefly-execution",
+        ":libs:firefly-scheduling",
+        ":libs:firefly-store-api",
+        ":libs:firefly-trigger",
+        ":libs:firefly-operations",
+        ":libs:firefly-handler",
+        ":libs:firefly-cluster",
+        ":libs:firefly-security",
+        ":libs:firefly-executor",
+        ":libs:firefly-engine",
+        ":libs:firefly-runtime-support",
         ":libs:scheduler-core",
         ":plugins:plugin-api",
         ":transports:netty-protocol",
@@ -66,6 +93,20 @@ def publishedProjects = [
 
 def publishedProjectDescriptions = [
         ":platform:firefly-bom"                         : "Bill of materials for using a consistent set of Firefly Java modules.",
+        ":libs:firefly-batch"                            : "Batch partitioning, progress, checkpoint, and object-store contracts for Firefly.",
+        ":libs:firefly-domain"                           : "Stable Firefly scheduling and execution domain model.",
+        ":libs:firefly-catalog"                           : "Scheduler configuration catalog contracts and in-memory implementation.",
+        ":libs:firefly-execution"                         : "Execution lifecycle, command, and tracing contracts.",
+        ":libs:firefly-scheduling"                         : "Calendar, blackout, dependency, and scheduling semantics.",
+        ":libs:firefly-store-api"                          : "Persistence contracts and scheduler storage records.",
+        ":libs:firefly-trigger"                            : "Event trigger inbox and bounded backfill services.",
+        ":libs:firefly-operations"                        : "Execution timeline and alert evaluation services.",
+        ":libs:firefly-handler"                            : "Job handler registry and idempotency wrappers.",
+        ":libs:firefly-cluster"                            : "Scheduler node, shard lease, and coordination contracts.",
+        ":libs:firefly-security"                           : "Admin identity, JWT, integration keys, and password hashing.",
+        ":libs:firefly-executor"                           : "Executor registry and transport-neutral dispatch contracts.",
+        ":libs:firefly-engine"                             : "Scheduler engine orchestration and in-memory runtime implementations.",
+        ":libs:firefly-runtime-support"                    : "In-memory stores, audit, metrics, and lifecycle support.",
         ":libs:scheduler-core"                            : "Core scheduling domain, execution model, routing, and storage contracts for Firefly.",
         ":plugins:plugin-api"                             : "Public plugin API for extending Firefly without coupling plugins to server internals.",
         ":transports:netty-protocol"                      : "Shared wire protocol model for Firefly Netty gateways and executor clients.",
@@ -175,6 +216,38 @@ tasks.register("publishToMavenLocal") {
             "${it}:publishMavenPublicationToFireflyLocalRepository"
         })
     }
+}
+
+tasks.register("verifyModuleBoundaries") {
+    group = "verification"
+    description = "Checks aggregator projects and prevents new runtime coupling to scheduler-core."
+    doLast {
+        def aggregators = [":apis", ":clients", ":examples", ":integrations", ":libs", ":platform",
+                           ":plugins", ":server", ":stores", ":transports", ":ui"]
+        aggregators.each { path ->
+            def project = project(path)
+            if (!project.plugins.hasPlugin("base")) {
+                throw new GradleException("Aggregator ${path} must apply the base plugin")
+            }
+            if (project.plugins.hasPlugin("java") || project.plugins.hasPlugin("java-library")) {
+                throw new GradleException("Aggregator ${path} must not apply a Java plugin")
+            }
+        }
+        subprojects.findAll { it.path != ":libs:scheduler-core" }.each { project ->
+            project.configurations.findAll { it.canBeResolved || it.canBeConsumed }.each { configuration ->
+                configuration.dependencies.each { dependency ->
+                    if (dependency instanceof ProjectDependency && dependency.dependencyProject.path == ":libs:scheduler-core") {
+                        throw new GradleException("${project.path}:${configuration.name} must depend on split modules, not scheduler-core")
+                    }
+                }
+            }
+        }
+    }
+
+}
+
+tasks.named("check") {
+    dependsOn("verifyModuleBoundaries")
 }
 
 tasks.register("publishToFireflyMavenLocal") {

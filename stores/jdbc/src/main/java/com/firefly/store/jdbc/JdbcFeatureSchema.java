@@ -15,8 +15,12 @@ public final class JdbcFeatureSchema {
             JdbcDialect dialect = JdbcDialect.resolve(connection, options);
             for (String sql : JdbcSchemaScript.loadMigration(dialect, 13)) statement.execute(sql);
             for (String sql : JdbcSchemaScript.loadMigration(dialect, 14)) statement.execute(sql);
+            for (String sql : JdbcSchemaScript.loadMigration(dialect, 15)) statement.execute(sql);
+            for (String sql : JdbcSchemaScript.loadMigration(dialect, 16)) statement.execute(sql);
             JdbcSchema.ensureIndex(connection, "firefly_calendar_date_rule", "idx_firefly_calendar_rule_date", "calendar_id, calendar_version, rule_date");
             JdbcSchema.ensureIndex(connection, "firefly_calendar_import", "idx_firefly_calendar_import_status", "calendar_id, status, imported_at");
+            JdbcSchema.ensureIndex(connection, "firefly_dependency_wait", "idx_firefly_dependency_wait_next", "next_check_at, job_id");
+            JdbcSchema.ensureIndex(connection, "firefly_dependency_gate", "idx_firefly_dependency_gate_due", "status, next_check_at, job_id");
         } catch (SQLException e) {
             throw new JdbcException("failed to initialize feature schema", e);
         }

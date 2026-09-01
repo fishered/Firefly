@@ -42,6 +42,38 @@ class BillingJobs {
 }
 ```
 
+For a more convenient object-style handler, accept `FireflyTaskContext`; the
+Starter unwraps shard, attempt and parameter details for you:
+
+```java
+import com.firefly.spring.job.FireflyTaskContext;
+
+@Component
+class OrderJobs {
+    @FireflyJob(
+            cron = "0 */5 * * * *",
+            zoneId = "Asia/Shanghai",
+            calendarId = "cn-mainland",
+            dependencies = {"order-import:10"},
+            dispatchMode = ExecutorDispatchMode.SHARDING,
+            shardCount = 8,
+            routingKey = "orders"
+    )
+    public void sync(FireflyTaskContext task) {
+        if (task.sharded()) {
+            int shard = task.shardIndex();
+            int total = task.shardTotal();
+            // process only this deterministic shard
+        }
+    }
+}
+```
+
+The annotation and `FireflyJobRegistration.builder(...)` support the same
+calendar, dependency and sharding fields. Business code no longer needs to
+construct `JobDefinition`, manipulate scheduler repositories, or parse protocol
+parameter names.
+
 The fully qualified class and method name, such as
 `com.example.BillingJobs#billingHandler`, is the automatic entrypoint and job ID.
 No global ID or handler name is required. A method may carry multiple
