@@ -144,6 +144,15 @@ public record JobDefinition(
         );
     }
 
+    public JobDefinition withParameters(Map<String, String> value) {
+        return new JobDefinition(
+                id, groupId, name, handlerName, schedule, zoneId, misfirePolicy, misfireGrace,
+                concurrencyPolicy, maxCatchUpCount, timeout, value, destination, retryPolicy,
+                dispatchMode, routingStrategy, completionPolicy, shardCount, routingKey, retryScope,
+                enabled, calendarId, blackoutWindows, dependencies
+        );
+    }
+
     public boolean remote() {
         return destination.remote();
     }
