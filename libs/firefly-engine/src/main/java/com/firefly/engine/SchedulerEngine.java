@@ -28,6 +28,7 @@ import com.firefly.schedule.SchedulingSemanticsEvaluator;
 import com.firefly.schedule.DependencyEvaluator;
 import com.firefly.schedule.DependencyStatus;
 import com.firefly.schedule.ConditionStatus;
+import com.firefly.schedule.SchedulingConditionEvaluator;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -56,6 +57,7 @@ public final class SchedulerEngine {
     private final SchedulerEngineOptions options;
     private final SchedulerTimingIndex timingIndex = new SchedulerTimingIndex();
     private final SchedulingSemanticsEvaluator semanticsEvaluator = new SchedulingSemanticsEvaluator();
+    private final SchedulingConditionEvaluator conditionEvaluator;
     private final DependencyEvaluator dependencyEvaluator;
     private final Map<String, Integer> dependencyWaitAttempts = new java.util.HashMap<>();
     private final Map<String, Instant> dependencyBusinessTimes = new java.util.HashMap<>();
@@ -87,7 +89,7 @@ public final class SchedulerEngine {
             boolean transactionalOutbox
     ) {
         this(repository, dispatcher, clock, shardOwnership, shardCount, transactionalOutbox,
-                new SchedulerMetrics(), SchedulerEngineOptions.defaults());
+                new SchedulerMetrics(), SchedulerEngineOptions.defaults(), SchedulingConditionEvaluator.allowAll());
     }
 
     public SchedulerEngine(
@@ -100,7 +102,7 @@ public final class SchedulerEngine {
             SchedulerMetrics metrics
     ) {
         this(repository, dispatcher, clock, shardOwnership, shardCount, transactionalOutbox,
-                metrics, SchedulerEngineOptions.defaults());
+                metrics, SchedulerEngineOptions.defaults(), SchedulingConditionEvaluator.allowAll());
     }
 
     public SchedulerEngine(
@@ -113,6 +115,21 @@ public final class SchedulerEngine {
             SchedulerMetrics metrics,
             SchedulerEngineOptions options
     ) {
+        this(repository, dispatcher, clock, shardOwnership, shardCount, transactionalOutbox,
+                metrics, options, SchedulingConditionEvaluator.allowAll());
+    }
+
+    public SchedulerEngine(
+            JobRepository repository,
+            JobDispatcher dispatcher,
+            Clock clock,
+            ShardOwnership shardOwnership,
+            int shardCount,
+            boolean transactionalOutbox,
+            SchedulerMetrics metrics,
+            SchedulerEngineOptions options,
+            SchedulingConditionEvaluator conditionEvaluator
+    ) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.dependencyEvaluator = new DependencyEvaluator(this.repository);
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
@@ -122,6 +139,7 @@ public final class SchedulerEngine {
         this.transactionalOutbox = transactionalOutbox;
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.options = Objects.requireNonNull(options, "options");
+        this.conditionEvaluator = Objects.requireNonNull(conditionEvaluator, "conditionEvaluator");
         this.timer = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "firefly-timer");
             thread.setDaemon(false);
@@ -279,7 +297,7 @@ public final class SchedulerEngine {
             if (decision.decision() == SchedulingDecision.Decision.SKIP) continue;
             String waitKey = record.definition().id() + "@" + fireTime;
             Instant businessTime = dependencyBusinessTimes.getOrDefault(waitKey, fireTime);
-            ConditionStatus conditionStatus = repository.conditionStatus(record.definition().id(), businessTime);
+            ConditionStatus conditionStatus = conditionStatus(record.definition(), businessTime);
             if (conditionStatus == ConditionStatus.WAITING) {
                 waitingDependency = true;
                 openDependencyGate(record.definition(), businessTime, now);
@@ -336,7 +354,7 @@ public final class SchedulerEngine {
             }
             ShardLease lease = leaseFor(record, leases);
             if (lease == null) continue;
-            ConditionStatus condition = repository.conditionStatus(gate.jobId(), gate.businessTime());
+            ConditionStatus condition = conditionStatus(record.definition(), gate.businessTime());
             DependencyStatus dependency = dependencyStatus(record.definition(), gate.businessTime(), gate.waitAttempts());
             if (condition == ConditionStatus.BLOCKED || dependency == DependencyStatus.BLOCKED) {
                 repository.updateDependencyGate(gate.withStatus(com.firefly.schedule.DependencyGateStatus.BLOCKED,
@@ -368,6 +386,18 @@ public final class SchedulerEngine {
             if (current == DependencyStatus.WAITING) result = current;
         }
         return result;
+    }
+
+    private ConditionStatus conditionStatus(JobDefinition definition, Instant businessTime) {
+        ConditionStatus persisted = repository.conditionStatus(definition.id(), businessTime);
+        ConditionStatus pluggable = conditionEvaluator.evaluate(definition, businessTime);
+        if (persisted == ConditionStatus.BLOCKED || pluggable == ConditionStatus.BLOCKED) {
+            return ConditionStatus.BLOCKED;
+        }
+        if (persisted == ConditionStatus.WAITING || pluggable == ConditionStatus.WAITING) {
+            return ConditionStatus.WAITING;
+        }
+        return ConditionStatus.ALLOWED;
     }
 
     private SchedulingDecision semantics(JobDefinition definition, Instant fireTime) {
