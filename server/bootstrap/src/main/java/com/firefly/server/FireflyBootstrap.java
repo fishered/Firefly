@@ -37,6 +37,9 @@ import com.firefly.store.jdbc.JdbcSchema;
 import com.firefly.store.jdbc.JdbcSchemaOptions;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.batch.BatchRepository;
+import com.firefly.schedule.DataReadyCondition;
+import com.firefly.schedule.DataReadyConditionEvaluator;
+import com.firefly.schedule.SchedulingConditionEvaluator;
 
 import javax.sql.DataSource;
 import java.time.Duration;
@@ -275,7 +278,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                     new SchedulerModule(
                             shardCount,
                             options.runtimeOptions().schedulerEngine(),
-                            options.runtimeOptions().localWorker()
+                            options.runtimeOptions().localWorker(),
+                            configuredConditionEvaluator()
                     ),
                     () -> { },
                     new com.firefly.security.InMemoryAdminUserRepository(),
@@ -320,13 +324,23 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new com.firefly.store.jdbc.JdbcJobHistoryRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource),
                 options.runtimeOptions().localWorker(),
-                new com.firefly.store.jdbc.JdbcBatchRepository(dataSource)
+                new com.firefly.store.jdbc.JdbcBatchRepository(dataSource),
+                configuredConditionEvaluator()
         );
         return new RuntimeAssembly(
                 module, clock,
                 new com.firefly.store.jdbc.JdbcAdminUserRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource)
         );
+    }
+
+    private static SchedulingConditionEvaluator configuredConditionEvaluator() {
+        List<DataReadyCondition> conditions = java.util.ServiceLoader
+                .load(DataReadyCondition.class, FireflyBootstrap.class.getClassLoader())
+                .stream()
+                .map(java.util.ServiceLoader.Provider::get)
+                .toList();
+        return new DataReadyConditionEvaluator(conditions);
     }
 
     private static void registerNode(

@@ -23,7 +23,7 @@ Python、Go 和通用 HTTP Agent 不在 v1.0.5 范围内。后续 Agent 应保�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.2</version>
+            <version>1.1.3</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -38,7 +38,7 @@ Python、Go 和通用 HTTP Agent 不在 v1.0.5 范围内。后续 Agent 应保�
 </dependencies>
 ```
 
-如果项目不使用 BOM，也可以继续直接在 `firefly-remote-adapter` 上声明 `<version>1.1.2</version>`。
+如果项目不使用 BOM，也可以继续直接在 `firefly-remote-adapter` 上声明 `<version>1.1.3</version>`。
 
 运行环境要求 Java 21。
 

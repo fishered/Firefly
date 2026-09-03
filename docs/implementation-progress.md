@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-07-30。
+最后更新：2026-09-03。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -27,6 +27,17 @@ examples/*                   Embedded 与 Netty executor 示例
 旧的 `plugins/admin-web` 和 `executors/netty` 方向已经被新边界替代：Admin HTTP API 移到 `apis/admin-http`，前端移到 `ui/admin`，Netty 协议移到 `transports/netty`。
 
 ## 2. 已落地能力
+
+### 1.1.3 业务时间与可恢复执行
+
+- 已新增 `DataReadyCondition` / `DataReadyConditionEvaluator`，支持多个业务数据就绪条件、`WAITING`、`BLOCKED` 和未知条件 fail-closed；Server 通过 classpath `ServiceLoader` 装配条件 SPI。
+- 已新增 `EventCoalescer` / `EventCoalescingService`，支持 aggregation key、debounce、max delay、latest payload、event count 和幂等事件 inbox；当前协调状态为内存实现。
+- 已新增 `BackfillCoordinator` 及 preview/progress/options 模型，支持有界展开、批次、暂停/继续/取消、金丝雀、失败时间筛选和限速；当前游标为进程内状态。
+- 已新增 `ExecutionReplayService` 及 replay plan/snapshot 模型，支持 dry-run、任务/日历/依赖/参数差异检查、失败目标筛选和 root execution 关联。
+- 已新增资源感知执行器选择和 `SlaBudget` / `SlaBudgetAssessment`，支持资源标签、CPU/内存、租户并发预算及排队/启动/完成 SLA 阶段评估。
+- 已新增 `BusinessResultSummary` 和 `SchedulingInputRevision`，统一业务结果计数、checkpoint、结果位置、SHA-256 摘要和调度输入版本说明。
+
+上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；事件聚合、补数状态、重放、资源快照尚未接入 JDBC 持久化和 Admin HTTP/UI，后续接线必须继续遵守 execution/Outbox、CAS 和 fencing 边界。
 
 ### 调度核心
 

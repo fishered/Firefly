@@ -61,7 +61,7 @@ public final class OpenTelemetryTracingPlugin implements FireflyPlugin {
     @Override
     public FireflyPluginRuntimeCompatibility runtimeCompatibility() {
         return new FireflyPluginRuntimeCompatibility(
-                compatibility(), "1.0.0", "1.1.2", 1, 2, 12, 12, true
+                compatibility(), "1.0.0", "1.1.3", 1, 2, 12, 12, true
         );
     }
 
