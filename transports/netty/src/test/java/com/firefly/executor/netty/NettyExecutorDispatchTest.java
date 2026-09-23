@@ -9,7 +9,9 @@ import com.firefly.executor.InMemoryExecutorRegistry;
 import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.catalog.InMemorySchedulerCatalog;
 import com.firefly.execution.InMemoryExecutionRepository;
+import com.firefly.execution.ExecutionReplayService;
 import com.firefly.execution.ExecutionStatus;
+import com.firefly.execution.ReplayTargetIds;
 import com.firefly.tracing.TraceCarrier;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -127,6 +130,36 @@ class NettyExecutorDispatchTest {
         assertEquals(1, retry.requestedTargets());
         assertEquals(1, retry.acceptedTargets());
         assertEquals(1, outboundCount(first) + outboundCount(second));
+    }
+
+    @Test
+    void replayDispatchesOnlyTheExplicitFailedSourceTarget() {
+        NettyExecutorConnectionRegistry connections = new NettyExecutorConnectionRegistry();
+        EmbeddedChannel first = new EmbeddedChannel();
+        EmbeddedChannel second = new EmbeddedChannel();
+        connections.register("orders", "orders-1", first);
+        connections.register("orders", "orders-2", second);
+        InMemoryExecutionRepository executions = new InMemoryExecutionRepository();
+        NettyExecutorGateway gateway = gateway(connections, executions);
+        Instant completedAt = Instant.parse("2026-07-14T10:00:01Z");
+
+        gateway.dispatch(request(ExecutorDispatchMode.BROADCAST, 1));
+        outboundCount(first);
+        outboundCount(second);
+        var sourceTargets = executions.listTargets("exec-1");
+        var succeeded = sourceTargets.get(0);
+        var failed = sourceTargets.get(1);
+        executions.completeResult(succeeded.targetExecutionId(), ExecutionStatus.SUCCEEDED, "", completedAt);
+        executions.completeResult(failed.targetExecutionId(), ExecutionStatus.FAILED, "boom", completedAt);
+
+        var replay = gateway.dispatch(replayRequest(failed.targetExecutionId()));
+
+        assertEquals(1, replay.requestedTargets());
+        assertEquals(1, replay.acceptedTargets());
+        assertEquals(1, outboundCount(first) + outboundCount(second));
+        var replayTargets = executions.listTargets("exec-replay");
+        assertEquals(1, replayTargets.size());
+        assertEquals(failed.instanceId(), replayTargets.get(0).instanceId());
     }
 
     @Test
@@ -290,6 +323,26 @@ class NettyExecutorDispatchTest {
                 ),
                 mode, ExecutorRoutingStrategy.ROUND_ROBIN, completionPolicy,
                 shardCount, "order-42", "local", 1L, "exec-1", 1, retryScope
+        );
+    }
+
+    private RemoteDispatchRequest replayRequest(String failedTargetId) {
+        Instant now = Instant.parse("2026-07-14T10:00:02Z");
+        Map<String, String> parameters = Map.of(
+                ExecutionReplayService.REPLAY_SOURCE_PARAMETER, "exec-1",
+                ExecutionReplayService.FAILED_TARGETS_ONLY_PARAMETER, "true",
+                ExecutionReplayService.FAILED_TARGET_IDS_PARAMETER,
+                ReplayTargetIds.encode(List.of(failedTargetId))
+        );
+        return new RemoteDispatchRequest(
+                "orders", "handleOrder",
+                new ExecutionContext(
+                        "exec-replay", "exec-replay", 0, "job-1",
+                        "remote:orders:handleOrder", now.minusSeconds(2), now, now, parameters
+                ),
+                ExecutorDispatchMode.BROADCAST, ExecutorRoutingStrategy.ROUND_ROBIN,
+                ExecutorCompletionPolicy.ALL_SUCCESS, 1, "order-42",
+                "local", 1L, "exec-replay", 0, ExecutorRetryScope.FAILED_TARGETS_ONLY
         );
     }
 

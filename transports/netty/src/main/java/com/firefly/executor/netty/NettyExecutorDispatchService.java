@@ -8,9 +8,12 @@ import com.firefly.executor.ExecutorInstanceLocation;
 import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.executor.RemoteDispatchResult;
 import com.firefly.execution.ExecutionRecord;
+import com.firefly.execution.ExecutionIds;
+import com.firefly.execution.ExecutionReplayService;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
 import com.firefly.execution.ExecutionTargetRecord;
+import com.firefly.execution.ReplayTargetIds;
 import com.firefly.tracing.FireflyTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
@@ -106,6 +109,32 @@ final class NettyExecutorDispatchService {
     }
 
     private RemoteDispatchResult dispatchUnicast(RemoteDispatchRequest request) {
+        Optional<List<ExecutionTargetRecord>> replayTargets = replaySourceTargets(request);
+        if (replayTargets.isPresent()) {
+            List<ExecutionTargetRecord> selected = replayTargets.get();
+            if (selected.size() > 1) {
+                throw new IllegalArgumentException("unicast replay requires at most one source target");
+            }
+            if (selected.isEmpty()) {
+                saveDispatch(request, 0, List.of());
+                return new RemoteDispatchResult(0, 0, List.of());
+            }
+            ExecutionTargetRecord source = selected.get(0);
+            Optional<ExecutorInstanceLocation> shared = findLocation(
+                    onlineLocations(request.executorName()), source.instanceId()
+            );
+            if (shared.isPresent()) {
+                return dispatchDirectoryPlans(request, 1, List.of(new DirectoryTargetPlan(
+                        shared.get(), request.context().executionId(), null, null
+                )), List.of());
+            }
+            List<TargetPlan> plans = connectionRegistry.find(request.executorName(), source.instanceId())
+                    .map(target -> List.of(new TargetPlan(
+                            target, request.context().executionId(), null, null
+                    )))
+                    .orElseGet(List::of);
+            return dispatchPlans(request, 1, plans);
+        }
         var sharedTarget = selectSharedLocation(
                 request.executorName(), request.routingStrategy(), request.routingKey()
         );
@@ -128,6 +157,36 @@ final class NettyExecutorDispatchService {
 
     private RemoteDispatchResult dispatchBroadcast(RemoteDispatchRequest request) {
         List<ExecutorInstanceLocation> sharedLocations = onlineLocations(request.executorName());
+        Optional<List<ExecutionTargetRecord>> replayTargets = replaySourceTargets(request);
+        if (replayTargets.isPresent()) {
+            List<ExecutionTargetRecord> selected = replayTargets.get();
+            if (!sharedLocations.isEmpty()) {
+                List<DirectoryTargetPlan> plans = selected.stream()
+                        .map(source -> findLocation(sharedLocations, source.instanceId())
+                                .map(location -> new DirectoryTargetPlan(
+                                        location,
+                                        ExecutionIds.child(request.context().executionId(),
+                                                "instance:" + source.instanceId()),
+                                        null,
+                                        null
+                                )))
+                        .flatMap(Optional::stream)
+                        .toList();
+                return dispatchDirectoryPlans(request, selected.size(), plans, List.of());
+            }
+            List<TargetPlan> plans = selected.stream()
+                    .map(source -> connectionRegistry.find(request.executorName(), source.instanceId())
+                            .map(target -> new TargetPlan(
+                                    target,
+                                    ExecutionIds.child(request.context().executionId(),
+                                            "instance:" + source.instanceId()),
+                                    null,
+                                    null
+                            )))
+                    .flatMap(Optional::stream)
+                    .toList();
+            return dispatchPlans(request, selected.size(), plans);
+        }
         if (!sharedLocations.isEmpty()) return dispatchBroadcastShared(request, sharedLocations);
         List<ExecutionTargetRecord> existingTargets =
                 executionRepository.listTargets(request.context().executionId());
@@ -153,7 +212,8 @@ final class NettyExecutorDispatchService {
                     .map(existing -> connectionRegistry.find(request.executorName(), existing.instanceId())
                             .map(target -> new TargetPlan(
                                     target,
-                                    request.context().executionId() + "@instance:" + existing.instanceId(),
+                                    ExecutionIds.child(request.context().executionId(),
+                                            "instance:" + existing.instanceId()),
                                     null,
                                     null
                             )))
@@ -171,7 +231,7 @@ final class NettyExecutorDispatchService {
         List<TargetPlan> plans = targets.stream()
                 .map(target -> new TargetPlan(
                         target,
-                        request.context().executionId() + "@instance:" + target.instanceId(),
+                        ExecutionIds.child(request.context().executionId(), "instance:" + target.instanceId()),
                         null,
                         null
                 ))
@@ -181,6 +241,36 @@ final class NettyExecutorDispatchService {
 
     private RemoteDispatchResult dispatchShards(RemoteDispatchRequest request) {
         List<ExecutorInstanceLocation> sharedLocations = onlineLocations(request.executorName());
+        Optional<List<ExecutionTargetRecord>> replayTargets = replaySourceTargets(request);
+        if (replayTargets.isPresent()) {
+            List<ExecutionTargetRecord> selected = validateReplayShards(request, replayTargets.get());
+            if (!sharedLocations.isEmpty()) {
+                List<DirectoryTargetPlan> plans = selected.stream()
+                        .map(source -> findLocation(sharedLocations, source.instanceId())
+                                .map(location -> new DirectoryTargetPlan(
+                                        location,
+                                        ExecutionIds.child(request.context().executionId(),
+                                                "shard:" + source.shardIndex()),
+                                        source.shardIndex(),
+                                        request.shardCount()
+                                )))
+                        .flatMap(Optional::stream)
+                        .toList();
+                return dispatchDirectoryPlans(request, selected.size(), plans, List.of());
+            }
+            List<TargetPlan> plans = selected.stream()
+                    .map(source -> connectionRegistry.find(request.executorName(), source.instanceId())
+                            .map(target -> new TargetPlan(
+                                    target,
+                                    ExecutionIds.child(request.context().executionId(),
+                                            "shard:" + source.shardIndex()),
+                                    source.shardIndex(),
+                                    request.shardCount()
+                            )))
+                    .flatMap(Optional::stream)
+                    .toList();
+            return dispatchPlans(request, selected.size(), plans);
+        }
         if (!sharedLocations.isEmpty()) return dispatchShardsShared(request, sharedLocations);
         List<ExecutionTargetRecord> sourceTargets = retrySourceTargets(request).orElse(List.of());
         Set<Integer> successfulShards = request.retryScope() == ExecutorRetryScope.ALL_TARGETS
@@ -197,7 +287,9 @@ final class NettyExecutorDispatchService {
             String shardKey = request.routingKey() + ":" + shard;
             connectionRegistry.select(request.executorName(), request.routingStrategy(), shardKey)
                     .ifPresent(target -> {
-                        String childExecutionId = request.context().executionId() + "@shard:" + shardIndex;
+                        String childExecutionId = ExecutionIds.child(
+                                request.context().executionId(), "shard:" + shardIndex
+                        );
                         plans.add(new TargetPlan(target, childExecutionId, shardIndex, request.shardCount()));
                     });
         }
@@ -213,6 +305,53 @@ final class NettyExecutorDispatchService {
     private Optional<List<ExecutionTargetRecord>> retrySourceTargets(RemoteDispatchRequest request) {
         return retrySourceExecution(request)
                 .map(source -> executionRepository.listTargets(source.executionId()));
+    }
+
+    private Optional<List<ExecutionTargetRecord>> replaySourceTargets(RemoteDispatchRequest request) {
+        Map<String, String> parameters = request.context().parameters();
+        String sourceExecutionId = parameters.get(ExecutionReplayService.REPLAY_SOURCE_PARAMETER);
+        if (sourceExecutionId == null || sourceExecutionId.isBlank()) return Optional.empty();
+        executionRepository.findExecution(sourceExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "replay source execution not found: " + sourceExecutionId
+                ));
+        List<ExecutionTargetRecord> sourceTargets = executionRepository.listTargets(sourceExecutionId);
+        String encodedTargetIds = parameters.get(ExecutionReplayService.FAILED_TARGET_IDS_PARAMETER);
+        if (encodedTargetIds != null && !encodedTargetIds.isBlank()) {
+            Set<String> requestedIds = Set.copyOf(ReplayTargetIds.decode(encodedTargetIds));
+            List<ExecutionTargetRecord> selected = sourceTargets.stream()
+                    .filter(target -> requestedIds.contains(target.targetExecutionId()))
+                    .toList();
+            Set<String> selectedIds = selected.stream()
+                    .map(ExecutionTargetRecord::targetExecutionId)
+                    .collect(Collectors.toUnmodifiableSet());
+            if (!selectedIds.equals(requestedIds)) {
+                throw new IllegalArgumentException("replay target ids do not match source execution targets");
+            }
+            return Optional.of(selected);
+        }
+        boolean failedTargetsOnly = Boolean.parseBoolean(
+                parameters.getOrDefault(ExecutionReplayService.FAILED_TARGETS_ONLY_PARAMETER, "false")
+        );
+        return Optional.of(failedTargetsOnly
+                ? sourceTargets.stream().filter(target -> target.status() != ExecutionStatus.SUCCEEDED).toList()
+                : sourceTargets);
+    }
+
+    private List<ExecutionTargetRecord> validateReplayShards(
+            RemoteDispatchRequest request, List<ExecutionTargetRecord> targets
+    ) {
+        for (ExecutionTargetRecord target : targets) {
+            if (target.shardIndex() == null
+                    || target.shardIndex() < 0
+                    || target.shardIndex() >= request.shardCount()) {
+                throw new IllegalArgumentException(
+                        "replay target is not a valid shard for the current definition: "
+                                + target.targetExecutionId()
+                );
+            }
+        }
+        return targets;
     }
 
     private Optional<ExecutionRecord> retrySourceExecution(RemoteDispatchRequest request) {
@@ -247,7 +386,8 @@ final class NettyExecutorDispatchService {
                     .map(existing -> findLocation(locations, existing.instanceId())
                             .map(location -> new DirectoryTargetPlan(
                                     location,
-                                    request.context().executionId() + "@instance:" + existing.instanceId(),
+                                    ExecutionIds.child(request.context().executionId(),
+                                            "instance:" + existing.instanceId()),
                                     existing.shardIndex(), null
                             )))
                     .flatMap(Optional::stream)
@@ -261,7 +401,8 @@ final class NettyExecutorDispatchService {
         }
         List<DirectoryTargetPlan> plans = locations.stream()
                 .map(location -> new DirectoryTargetPlan(
-                        location, request.context().executionId() + "@instance:" + location.instanceId(),
+                        location, ExecutionIds.child(request.context().executionId(),
+                                "instance:" + location.instanceId()),
                         null, null
                 ))
                 .toList();
@@ -285,7 +426,8 @@ final class NettyExecutorDispatchService {
             int shardIndex = shard;
             selectLocation(locations, request.routingStrategy(), request.routingKey() + ":" + shard)
                     .ifPresent(location -> plans.add(new DirectoryTargetPlan(
-                            location, request.context().executionId() + "@shard:" + shardIndex,
+                            location, ExecutionIds.child(request.context().executionId(),
+                                    "shard:" + shardIndex),
                             shardIndex, request.shardCount()
                     )));
         }
@@ -522,7 +664,7 @@ final class NettyExecutorDispatchService {
         String suffix = source.shardIndex() == null
                 ? "instance:" + source.instanceId()
                 : "shard:" + source.shardIndex();
-        return request.context().executionId() + "@carry:" + suffix;
+        return ExecutionIds.child(request.context().executionId(), "carry:" + suffix);
     }
 
     private void send(

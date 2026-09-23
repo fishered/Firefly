@@ -2,6 +2,7 @@ package com.firefly.trigger;
 
 import com.firefly.domain.JobDefinition;
 import com.firefly.engine.ExecutionCommand;
+import com.firefly.execution.ExecutionIds;
 import com.firefly.store.JobRepository;
 
 import java.time.Clock;
@@ -32,7 +33,11 @@ public final class BackfillCoordinator {
     public synchronized BackfillPreview preview(BackfillRequest request, BackfillOptions options) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(options, "options");
-        List<Instant> times = expand(request, options);
+        return preview(request, options, requireJob(request.jobId()));
+    }
+
+    private BackfillPreview preview(BackfillRequest request, BackfillOptions options, JobDefinition job) {
+        List<Instant> times = expand(request, options, job);
         int canary = canarySize(times.size(), options.canaryPercent());
         Duration estimated = options.rateLimitPerSecond() == 0
                 ? Duration.ZERO
@@ -42,8 +47,9 @@ public final class BackfillCoordinator {
 
     public synchronized BackfillProgress start(BackfillRequest request, BackfillOptions options) {
         if (runs.containsKey(request.requestId())) return progress(runs.get(request.requestId()));
-        BackfillPreview preview = preview(request, options);
-        Run run = new Run(request, options, preview.fireTimes(), preview.canaryExecutions());
+        JobDefinition snapshot = requireJob(request.jobId());
+        BackfillPreview preview = preview(request, options, snapshot);
+        Run run = new Run(request, options, snapshot, preview.fireTimes(), preview.canaryExecutions());
         runs.put(request.requestId(), run);
         return progress(run);
     }
@@ -89,12 +95,9 @@ public final class BackfillCoordinator {
         while (run.cursor < Math.min(run.fireTimes.size(), releaseLimit) && processed < limit) {
             if (run.options.rateLimitPerSecond() > 0 && now.isBefore(run.nextAllowedAt)) break;
             Instant fire = run.fireTimes.get(run.cursor++);
-            JobDefinition job = jobs.find(run.request.jobId())
-                    .orElseThrow(() -> new IllegalArgumentException("job not found: " + run.request.jobId()))
-                    .definition();
-            String executionId = run.request.rootExecutionId() + "@" + fire;
-            boolean queued = jobs.enqueueManual(new ExecutionCommand(executionId, run.request.rootExecutionId(), 0,
-                    job, fire, now, "backfill", 1L));
+            String rootExecutionId = ExecutionIds.child(run.request.rootExecutionId(), "fire:" + fire);
+            boolean queued = jobs.enqueueManual(new ExecutionCommand(rootExecutionId, rootExecutionId, 0,
+                    run.definition, fire, now, "backfill", 1L));
             if (queued) run.dispatched++; else run.failed++;
             processed++;
             run.nextAllowedAt = now.plus(run.options.minimumInterval());
@@ -111,10 +114,7 @@ public final class BackfillCoordinator {
         return progress(requireRun(requestId));
     }
 
-    private List<Instant> expand(BackfillRequest request, BackfillOptions options) {
-        JobDefinition job = jobs.find(request.jobId())
-                .orElseThrow(() -> new IllegalArgumentException("job not found: " + request.jobId()))
-                .definition();
+    private List<Instant> expand(BackfillRequest request, BackfillOptions options, JobDefinition job) {
         List<Instant> fireTimes = new ArrayList<>();
         Instant cursor = request.fromInclusive().minusNanos(1);
         while (fireTimes.size() < request.maxExecutions()) {
@@ -130,6 +130,12 @@ public final class BackfillCoordinator {
             throw new IllegalArgumentException("backfill exceeds maxExecutions=" + request.maxExecutions());
         }
         return fireTimes.stream().sorted(Comparator.naturalOrder()).toList();
+    }
+
+    private JobDefinition requireJob(String jobId) {
+        return jobs.find(jobId)
+                .orElseThrow(() -> new IllegalArgumentException("job not found: " + jobId))
+                .definition();
     }
 
     private static int canarySize(int size, int percent) {
@@ -152,6 +158,7 @@ public final class BackfillCoordinator {
     private static final class Run {
         private final BackfillRequest request;
         private final BackfillOptions options;
+        private final JobDefinition definition;
         private final List<Instant> fireTimes;
         private final int canaryExecutions;
         private BackfillProgress.BackfillStatus status = BackfillProgress.BackfillStatus.PENDING;
@@ -161,8 +168,9 @@ public final class BackfillCoordinator {
         private boolean canary = true;
         private Instant nextAllowedAt = Instant.MIN;
 
-        private Run(BackfillRequest request, BackfillOptions options, List<Instant> fireTimes, int canaryExecutions) {
-            this.request = request; this.options = options; this.fireTimes = fireTimes;
+        private Run(BackfillRequest request, BackfillOptions options, JobDefinition definition,
+                    List<Instant> fireTimes, int canaryExecutions) {
+            this.request = request; this.options = options; this.definition = definition; this.fireTimes = fireTimes;
             this.canaryExecutions = canaryExecutions;
             if (canaryExecutions == fireTimes.size()) canary = false;
         }
