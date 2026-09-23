@@ -38,7 +38,7 @@ import com.firefly.store.jdbc.JdbcSchemaOptions;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.batch.BatchRepository;
 import com.firefly.schedule.DataReadyCondition;
-import com.firefly.schedule.DataReadyConditionEvaluator;
+import com.firefly.schedule.AsyncDataReadyConditionEvaluator;
 import com.firefly.schedule.SchedulingConditionEvaluator;
 
 import javax.sql.DataSource;
@@ -273,15 +273,16 @@ public final class FireflyBootstrap implements AutoCloseable {
         ServerStoreOptions store = options.store();
         int shardCount = options.schedulerShards().shardCount();
         if (!store.jdbcEnabled()) {
+            ConditionRuntime conditions = configuredConditionEvaluator(options, java.time.Clock.systemUTC());
             log.info("Storage: memory");
             return new RuntimeAssembly(
                     new SchedulerModule(
                             shardCount,
                             options.runtimeOptions().schedulerEngine(),
                             options.runtimeOptions().localWorker(),
-                            configuredConditionEvaluator()
+                            conditions.evaluator()
                     ),
-                    () -> { },
+                    conditions,
                     new com.firefly.security.InMemoryAdminUserRepository(),
                     new com.firefly.security.InMemoryIntegrationKeyRepository()
             );
@@ -313,6 +314,7 @@ public final class FireflyBootstrap implements AutoCloseable {
         com.firefly.store.jdbc.JdbcDatabaseClock clock = new com.firefly.store.jdbc.JdbcDatabaseClock(
                 dataSource, options.runtimeOptions().jdbcClock(), metrics
         );
+        ConditionRuntime conditions = configuredConditionEvaluator(options, clock);
         SchedulerModule module = new SchedulerModule(
                 new JdbcJobRepository(dataSource, shardCount),
                 new JdbcNodeRegistry(dataSource),
@@ -325,22 +327,46 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new com.firefly.store.jdbc.JdbcExecutorInstanceDirectory(dataSource),
                 options.runtimeOptions().localWorker(),
                 new com.firefly.store.jdbc.JdbcBatchRepository(dataSource),
-                configuredConditionEvaluator()
+                conditions.evaluator()
         );
         return new RuntimeAssembly(
-                module, clock,
+                module, combinedCloseable(conditions, clock),
                 new com.firefly.store.jdbc.JdbcAdminUserRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource)
         );
     }
 
-    private static SchedulingConditionEvaluator configuredConditionEvaluator() {
+    private static ConditionRuntime configuredConditionEvaluator(ServerOptions options, java.time.Clock clock) {
         List<DataReadyCondition> conditions = java.util.ServiceLoader
                 .load(DataReadyCondition.class, FireflyBootstrap.class.getClassLoader())
                 .stream()
                 .map(java.util.ServiceLoader.Provider::get)
                 .toList();
-        return new DataReadyConditionEvaluator(conditions);
+        var configuration = options.pluginConfiguration();
+        Duration timeout = Duration.parse(configuration.property("firefly.data-ready.timeout", "PT5S"));
+        int concurrency = Integer.parseInt(configuration.property("firefly.data-ready.concurrency", "4"));
+        AsyncDataReadyConditionEvaluator evaluator = new AsyncDataReadyConditionEvaluator(
+                conditions, clock, timeout, concurrency
+        );
+        return new ConditionRuntime(evaluator);
+    }
+
+    private static AutoCloseable combinedCloseable(AutoCloseable first, AutoCloseable second) {
+        return () -> {
+            Exception failure = null;
+            try {
+                first.close();
+            } catch (Exception exception) {
+                failure = exception;
+            }
+            try {
+                second.close();
+            } catch (Exception exception) {
+                if (failure == null) failure = exception;
+                else failure.addSuppressed(exception);
+            }
+            if (failure != null) throw failure;
+        };
     }
 
     private static void registerNode(
@@ -600,5 +626,12 @@ public final class FireflyBootstrap implements AutoCloseable {
             com.firefly.security.AdminUserRepository adminUserRepository,
             com.firefly.security.IntegrationKeyRepository integrationKeyRepository
     ) {
+    }
+
+    private record ConditionRuntime(SchedulingConditionEvaluator evaluator) implements AutoCloseable {
+        @Override
+        public void close() throws Exception {
+            if (evaluator instanceof AutoCloseable closeable) closeable.close();
+        }
     }
 }
