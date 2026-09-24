@@ -15,6 +15,18 @@ class TriggerAndBackfillTest {
         assertTrue(service.accept("job","e2","order","k1","{}").duplicate());
         assertEquals(1, jobs.outboxCounts().values().stream().mapToLong(Long::longValue).sum());
     }
+    @Test void longEventKeysProduceDatabaseSafeExecutionIds() {
+        InMemoryJobRepository jobs = new InMemoryJobRepository();
+        Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
+        jobs.save(job(), clock.instant().plusSeconds(60));
+        EventTriggerService service = new EventTriggerService(new InMemoryTriggerInbox(), jobs, clock);
+
+        assertTrue(service.accept("job", "e1", "order", "k".repeat(256), "{}").accepted());
+
+        var command = jobs.claimDispatches("test", clock.instant(), 10, Duration.ofSeconds(1))
+                .get(0).command();
+        assertTrue(command.executionId().length() <= 256);
+    }
     @Test void backfillIsBoundedAndIdempotent() {
         InMemoryJobRepository jobs = new InMemoryJobRepository(); Clock clock = Clock.systemUTC(); jobs.save(job(), clock.instant().plusSeconds(60));
         BackfillService service = new BackfillService(jobs, clock); Instant from = Instant.parse("2026-01-01T00:00:00Z");

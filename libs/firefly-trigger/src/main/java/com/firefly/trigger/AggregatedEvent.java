@@ -6,6 +6,7 @@ import java.util.Objects;
 
 /** Immutable event group released as one execution. */
 public record AggregatedEvent(
+        String aggregateId,
         String jobId,
         String aggregationKey,
         String latestPayload,
@@ -15,9 +16,12 @@ public record AggregatedEvent(
         List<String> idempotencyKeys
 ) {
     public AggregatedEvent {
-        if (jobId == null || jobId.isBlank() || aggregationKey == null || aggregationKey.isBlank()) {
+        if (aggregateId == null || aggregateId.isBlank()
+                || jobId == null || jobId.isBlank()
+                || aggregationKey == null || aggregationKey.isBlank()) {
             throw new IllegalArgumentException("aggregate identity is required");
         }
+        if (aggregateId.length() > 256) throw new IllegalArgumentException("aggregateId is too long");
         latestPayload = Objects.requireNonNullElse(latestPayload, "");
         if (eventCount < 1) throw new IllegalArgumentException("eventCount must be positive");
         Objects.requireNonNull(firstReceivedAt, "firstReceivedAt");
