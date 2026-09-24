@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.3-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.1.4-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -56,6 +56,14 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 | 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
 | 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
 
+### 1.1.4 可恢复执行正确性加固
+
+- 数据就绪条件改为有界异步评估，慢条件不会阻塞 Scheduler tick；超时和异常明确转为 `BLOCKED`。
+- Backfill 每个 fire time 使用独立、有界的 execution root，并固定启动时任务定义快照；Replay 使用独立 root，并在 Gateway 精确消费失败目标列表。
+- 事件聚合新增租约领取、失败释放重试和 JDBC 行锁存储，多个节点共享 aggregation window；长事件 key、重放、分片和广播派生 ID 均限制在数据库长度内。
+- SLA 区分预测风险与已观测违约；资源选择按 executor 隔离并实现轮询、随机、一致性哈希及原子预留回退；业务结果只接受完整 SHA-256 摘要。
+- Maven Central 发布必须先通过 Java/插件、Admin UI/Playwright、真实数据库和全部 Spring Boot 兼容矩阵。
+
 ### 1.1.3 业务时间与可恢复执行
 
 - 数据就绪条件 SPI：在业务时间窗口内组合上游任务、批次、水位、对象文件或外部系统状态；未知条件默认阻断，避免提前执行。
@@ -65,7 +73,7 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 - 资源与 SLA 模型：按 CPU、内存、标签和租户并发预算筛选执行器，并评估排队、启动和完成阶段的 SLA 预算。
 - 业务结果协议：统一输入/成功/失败计数、checkpoint、结果位置和 SHA-256 校验摘要；`SchedulingInputRevision` 用于解释输入版本。
 
-以上新能力当前以 `libs` 公共 API、SPI 和内存协调器交付；数据就绪条件已接入 Server 的 classpath `ServiceLoader`。事件聚合、补数状态、重放接口和资源快照尚未接入 JDBC/Admin HTTP/UI，生产接线保留在后续版本。
+1.1.3 首次交付上述公共模型、SPI 和内存协调器；1.1.4 已为事件 aggregation window 增加 JDBC 存储。补数状态、重放管理接口和资源快照仍未接入 Admin HTTP/UI，生产接线保留在后续版本。
 
 ## 架构
 
@@ -192,8 +200,8 @@ Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任
 
 | 镜像 | 容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server:1.1.3` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui:1.1.3` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+| `firefly/firefly-server:1.1.4` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.1.4` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
 
 准备配置并启动：
 
@@ -242,7 +250,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.3</version>
+            <version>1.1.4</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -477,8 +485,8 @@ npm run check
 构建 Docker 镜像：
 
 ```powershell
-docker build -t firefly/firefly-server:1.1.3 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.1.3 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.1.4 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.1.4 -f ui/admin/Dockerfile ui/admin
 ```
 
 提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。

@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-09-03。
+最后更新：2026-09-24。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -28,6 +28,15 @@ examples/*                   Embedded 与 Netty executor 示例
 
 ## 2. 已落地能力
 
+### 1.1.4 可恢复执行正确性加固
+
+- 数据就绪条件通过有界线程池异步评估；Scheduler tick 只读取缓存状态，条件超时、异常和未知类型均 fail-closed，Server 提供超时与并发配置。
+- Backfill 固定启动时任务定义快照，并为每个 fire time 生成独立且长度受限的 root；Replay 使用独立 root、校验终态和失败目标，并由 Gateway 精确路由选中的实例或分片。
+- 所有派生 execution ID 统一走长度上限与 SHA-256 后缀，避免长 job、实例、aggregation key 或 idempotency key 超出 JDBC 列宽。
+- 事件聚合增加租约式 claim/release/complete 协议和 `JdbcEventAggregationStore`；v17 feature migration 为 H2、MySQL、PostgreSQL 增加聚合窗口、成员和行锁表，释放失败或节点退出后可重新领取。
+- SLA 评估区分预测超期风险和实际违约；资源选择器按 executor 隔离，支持轮询、随机、一致性哈希及原子预留回退；业务结果 SHA-256 校验要求完整 64 位摘要。
+- Maven Central 发布工作流复用完整 CI，发布前强制通过 Gradle/插件、Admin UI/Playwright、真实数据库和 Spring Boot 兼容矩阵。
+
 ### 1.1.3 业务时间与可恢复执行
 
 - 已新增 `DataReadyCondition` / `DataReadyConditionEvaluator`，支持多个业务数据就绪条件、`WAITING`、`BLOCKED` 和未知条件 fail-closed；Server 通过 classpath `ServiceLoader` 装配条件 SPI。
@@ -37,7 +46,7 @@ examples/*                   Embedded 与 Netty executor 示例
 - 已新增资源感知执行器选择和 `SlaBudget` / `SlaBudgetAssessment`，支持资源标签、CPU/内存、租户并发预算及排队/启动/完成 SLA 阶段评估。
 - 已新增 `BusinessResultSummary` 和 `SchedulingInputRevision`，统一业务结果计数、checkpoint、结果位置、SHA-256 摘要和调度输入版本说明。
 
-上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；事件聚合、补数状态、重放、资源快照尚未接入 JDBC 持久化和 Admin HTTP/UI，后续接线必须继续遵守 execution/Outbox、CAS 和 fencing 边界。
+上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；1.1.4 已补充事件 aggregation window 的 JDBC 存储。补数状态、重放管理接口、资源快照仍未接入 Admin HTTP/UI，后续接线必须继续遵守 execution/Outbox、CAS 和 fencing 边界。
 
 ### 调度核心
 

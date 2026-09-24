@@ -7,7 +7,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.1.3"
+    version = "1.1.4"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
@@ -463,6 +463,21 @@ tasks.register("verifyReleaseVersion") {
                 assert !text.contains("firefly-server:1.0.0") && !text.contains("firefly-admin-ui:1.0.0") :
                         "stale Docker image example in ${file}"
             }
+        }
+        def requiredReferences = [
+                ".env.example"                    : "FIREFLY_VERSION=${expected}",
+                "docker-compose.yml"              : "FIREFLY_VERSION:-${expected}",
+                "Dockerfile"                      : "ARG FIREFLY_VERSION=${expected}",
+                "ui/admin/Dockerfile"             : "ARG FIREFLY_VERSION=${expected}",
+                "README.md"                       : "<version>${expected}</version>",
+                "docs/deployment.md"              : "FIREFLY_VERSION=${expected}",
+                "docs/integration.md"             : "<version>${expected}</version>",
+                "docs/remote-adapter.md"          : "<version>${expected}</version>",
+                "docs/maven-central-publishing.md": "<version>${expected}</version>"
+        ]
+        requiredReferences.each { path, needle ->
+            assert rootProject.file(path).getText("UTF-8").contains(needle) :
+                    "release version ${expected} is missing from ${path}"
         }
     }
 }
