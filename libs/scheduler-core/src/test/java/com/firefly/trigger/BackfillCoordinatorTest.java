@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Set;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -45,6 +46,25 @@ class BackfillCoordinatorTest {
         BackfillPreview preview = coordinator.preview(
                 new BackfillRequest("retry", "job", NOW, NOW.plusSeconds(180), 10, "retry-root"), options);
         assertEquals(java.util.List.of(failed), preview.fireTimes());
+    }
+
+    @Test
+    void assignsEachFireTimeAnIndependentRootAndKeepsTheStartingDefinitionSnapshot() {
+        InMemoryJobRepository jobs = jobs();
+        BackfillCoordinator coordinator = new BackfillCoordinator(jobs, Clock.fixed(NOW, ZoneOffset.UTC));
+        BackfillRequest request = new BackfillRequest("run", "job", NOW, NOW.plusSeconds(60), 10, "operation");
+        coordinator.start(request, new BackfillOptions(10, 0, 100, Set.of()));
+        jobs.save(jobs.find("job").orElseThrow().definition().withParameters(Map.of("revision", "new")),
+                NOW.plusSeconds(60));
+
+        coordinator.run("run", 10);
+        var commands = jobs.claimDispatches("test", NOW, 10, Duration.ofSeconds(1)).stream()
+                .map(record -> record.command()).toList();
+        assertEquals(2, commands.size());
+        assertEquals(2, commands.stream().map(command -> command.rootExecutionId()).distinct().count());
+        assertEquals(true, commands.stream().allMatch(command -> command.executionId().equals(command.rootExecutionId())));
+        assertEquals(true, commands.stream().allMatch(command -> command.runAttempt() == 0));
+        assertEquals(true, commands.stream().allMatch(command -> !command.definition().parameters().containsKey("revision")));
     }
 
     private static InMemoryJobRepository jobs() {
