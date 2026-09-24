@@ -6,6 +6,8 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SlaBudgetTest {
@@ -23,13 +25,37 @@ class SlaBudgetTest {
     }
 
     @Test
-    void marksLateEstimatedCompletionAsBreachedWithoutEscalation() {
+    void marksLateEstimatedCompletionAsRiskWithoutClaimingAnObservedBreach() {
         SlaBudget budget = new SlaBudget(BASE, BASE.plusSeconds(10), BASE.plusSeconds(20),
                 BASE.plusSeconds(60), Duration.ofSeconds(5));
         SlaBudgetAssessment assessment = budget.assess(BASE.plusSeconds(25), BASE.plusSeconds(5),
                 BASE.plusSeconds(15), BASE.plusSeconds(70));
-        assertTrue(assessment.breached());
+        assertFalse(assessment.breached());
         assertTrue(assessment.atRisk());
-        assertTrue(!assessment.recommendPriorityEscalation());
+        assertTrue(assessment.recommendPriorityEscalation());
+    }
+
+    @Test
+    void usesObservedCompletionInsteadOfAssessmentTimeForCompletedWork() {
+        SlaBudget budget = new SlaBudget(BASE, BASE.plusSeconds(10), BASE.plusSeconds(20),
+                BASE.plusSeconds(60), Duration.ofSeconds(5));
+
+        SlaBudgetAssessment onTime = budget.assess(BASE.plusSeconds(120), BASE.plusSeconds(5),
+                BASE.plusSeconds(15), BASE.plusSeconds(55), null);
+        SlaBudgetAssessment late = budget.assess(BASE.plusSeconds(120), BASE.plusSeconds(5),
+                BASE.plusSeconds(15), BASE.plusSeconds(65), null);
+
+        assertFalse(onTime.breached());
+        assertFalse(onTime.atRisk());
+        assertFalse(onTime.recommendPriorityEscalation());
+        assertTrue(late.breached());
+    }
+
+    @Test
+    void rejectsImpossibleObservedPhaseOrdering() {
+        SlaBudget budget = new SlaBudget(BASE, BASE.plusSeconds(10), BASE.plusSeconds(20),
+                BASE.plusSeconds(60), Duration.ofSeconds(5));
+        assertThrows(IllegalArgumentException.class,
+                () -> budget.assess(BASE.plusSeconds(30), null, BASE.plusSeconds(15), null, null));
     }
 }
