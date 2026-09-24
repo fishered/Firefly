@@ -2,6 +2,7 @@ package com.firefly.trigger;
 
 import com.firefly.domain.JobDefinition;
 import com.firefly.engine.ExecutionCommand;
+import com.firefly.execution.ExecutionIds;
 import com.firefly.store.JobRepository;
 
 import java.time.Clock;
@@ -29,7 +30,7 @@ public final class EventTriggerService {
             inbox.markFailed(idempotencyKey, now);
             throw failure;
         }
-        String root = job.id() + "@event:" + idempotencyKey;
+        String root = ExecutionIds.child(job.id(), "event:" + idempotencyKey);
         boolean queued = jobs.enqueueManual(new ExecutionCommand(root, root, 0, job, now, now, "event", 1L));
         if (queued) inbox.markProcessed(idempotencyKey, now);
         else inbox.markFailed(idempotencyKey, now);

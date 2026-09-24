@@ -34,11 +34,37 @@ class EventCoalescingServiceTest {
         assertEquals(new EventCoalescingService.FlushResult(1, 1), service.flushDue());
         var command = jobs.claimDispatches("test", clock.instant(), 10, Duration.ofSeconds(1))
                 .stream().map(record -> record.command())
-                .filter(value -> value.executionId().equals("orders@event:customer-42:2026-09-02T00:00:00Z"))
+                .filter(value -> "customer-42".equals(value.definition().parameters()
+                        .get(EventCoalescingService.AGGREGATION_KEY_PARAMETER)))
                 .findFirst().orElseThrow();
+        assertTrue(command.executionId().length() <= 256);
         assertEquals("two", command.definition().parameters().get(EventCoalescingService.LATEST_PAYLOAD_PARAMETER));
         assertEquals("2", command.definition().parameters().get(EventCoalescingService.EVENT_COUNT_PARAMETER));
         assertEquals(EventTrigger.TriggerStatus.PROCESSED, inbox.findByIdempotencyKey("k1").orElseThrow().status());
+    }
+
+    @Test
+    void failedReleaseKeepsTheClaimRetryable() {
+        MutableClock clock = new MutableClock(NOW);
+        InMemoryJobRepository jobs = new InMemoryJobRepository(clock);
+        InMemoryTriggerInbox inbox = new InMemoryTriggerInbox();
+        EventCoalescingService service = new EventCoalescingService(
+                inbox, jobs, clock, new EventCoalescer(), "worker-1", Duration.ofSeconds(30), 10
+        );
+        EventAggregationPolicy immediate = new EventAggregationPolicy(
+                "customer-42", Duration.ZERO, Duration.ZERO
+        );
+
+        var accepted = service.accept("orders", "e1", "order", "k1", "one", immediate);
+        assertEquals("retry_pending", accepted.status());
+        assertEquals(EventTrigger.TriggerStatus.RECEIVED,
+                inbox.findByIdempotencyKey("k1").orElseThrow().status());
+
+        jobs.save(JobDefinition.builder().id("orders").name("orders").handlerName("orders-handler")
+                .schedule(new CronSchedule("0 * * * * *")).build(), NOW.plusSeconds(60));
+        assertEquals(new EventCoalescingService.FlushResult(1, 1), service.flushDue());
+        assertEquals(EventTrigger.TriggerStatus.PROCESSED,
+                inbox.findByIdempotencyKey("k1").orElseThrow().status());
     }
 
     private static final class MutableClock extends Clock {
