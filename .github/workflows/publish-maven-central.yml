@@ -16,7 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality-gates:
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: v${{ inputs.version }}
+
   publish:
+    needs: quality-gates
     runs-on: ubuntu-latest
     environment: maven-central
     env:
@@ -29,7 +35,7 @@ jobs:
       ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_SIGNING_KEY }}
       ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: v${{ inputs.version }}
           fetch-depth: 0
@@ -40,7 +46,7 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
