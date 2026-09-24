@@ -27,6 +27,7 @@ Firefly focuses on three goals:
 - Admin HTTP API plus independent Node Admin UI for separated management APIs and operational pages
 - Prometheus Metrics plugin for an independent `/metrics` text endpoint
 - v1.1.3 business-time features: data-readiness conditions, event coalescing, resumable backfill, replay plans, resource admission, SLA budgets, and business result summaries
+- v1.1.4 correctness hardening: bounded asynchronous readiness checks, isolated replay/backfill identities, leased JDBC event aggregation, corrected SLA/resource semantics, and full release gates
 - in-memory job repository
 - job-level IANA time zone support
 - 6-field cron: second minute hour day month weekday
