@@ -15,6 +15,8 @@ import com.firefly.batch.BatchRepository;
 import com.firefly.batch.InMemoryBatchRepository;
 import com.firefly.trigger.TriggerInbox;
 import com.firefly.trigger.InMemoryTriggerInbox;
+import com.firefly.trigger.BackfillOperationStore;
+import com.firefly.trigger.InMemoryBackfillOperationStore;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -45,6 +47,7 @@ public final class FireflyPluginContext {
     private final FireflyPluginConfiguration configuration;
     private final BatchRepository batchRepository;
     private final TriggerInbox triggerInbox;
+    private final BackfillOperationStore backfillOperationStore;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -68,6 +71,7 @@ public final class FireflyPluginContext {
         this.configuration = builder.configuration;
         this.batchRepository = builder.batchRepository;
         this.triggerInbox = builder.triggerInbox;
+        this.backfillOperationStore = builder.backfillOperationStore;
     }
 
     public static Builder builder() {
@@ -152,6 +156,9 @@ public final class FireflyPluginContext {
 
     public java.util.Optional<BatchRepository> batchRepository() { return java.util.Optional.ofNullable(batchRepository); }
     public java.util.Optional<TriggerInbox> triggerInbox() { return java.util.Optional.ofNullable(triggerInbox); }
+    public java.util.Optional<BackfillOperationStore> backfillOperationStore() {
+        return java.util.Optional.ofNullable(backfillOperationStore);
+    }
 
     public static final class Builder {
         private Clock clock = Clock.systemUTC();
@@ -175,6 +182,7 @@ public final class FireflyPluginContext {
         private FireflyPluginConfiguration configuration = FireflyPluginConfiguration.empty();
         private BatchRepository batchRepository = new InMemoryBatchRepository();
         private TriggerInbox triggerInbox = new InMemoryTriggerInbox();
+        private BackfillOperationStore backfillOperationStore = new InMemoryBackfillOperationStore();
 
         private Builder() {
         }
@@ -281,6 +289,10 @@ public final class FireflyPluginContext {
 
         public Builder batchRepository(BatchRepository repository) { this.batchRepository = Objects.requireNonNull(repository, "batchRepository"); return this; }
         public Builder triggerInbox(TriggerInbox inbox) { this.triggerInbox = Objects.requireNonNull(inbox, "triggerInbox"); return this; }
+        public Builder backfillOperationStore(BackfillOperationStore store) {
+            this.backfillOperationStore = Objects.requireNonNull(store, "backfillOperationStore");
+            return this;
+        }
 
         public FireflyPluginContext build() {
             return new FireflyPluginContext(this);

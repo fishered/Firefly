@@ -993,7 +993,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         return dispatchType(definition).name();
     }
 
-    private static String encodeJobSnapshot(JobDefinition definition) {
+    static String encodeJobSnapshot(JobDefinition definition) {
         return encodeJobSnapshot(definition, TraceCarrier.empty());
     }
 
@@ -1065,7 +1065,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         }
     }
 
-    private static JobDefinition decodeJobSnapshot(String payload) {
+    static JobDefinition decodeJobSnapshot(String payload) {
         java.util.Map<String, String> snapshot = DispatchSnapshotCodec.decode(payload);
         if (snapshot.isEmpty()) {
             throw new JdbcException("dispatch outbox is missing its immutable job snapshot");

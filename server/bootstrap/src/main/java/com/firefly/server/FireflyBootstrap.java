@@ -180,6 +180,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                     .jobHistoryRepository(injector.getInstance(com.firefly.store.JobHistoryRepository.class))
                     .adminUserRepository(assembly.adminUserRepository())
                     .integrationKeyRepository(assembly.integrationKeyRepository())
+                    .backfillOperationStore(assembly.backfillOperationStore())
                     .pluginStatusProvider(plugins::descriptors)
                     .nodeDrainStatusProvider(nodeDrainMonitor)
                     .configuration(options.pluginConfiguration());
@@ -284,7 +285,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                     ),
                     conditions,
                     new com.firefly.security.InMemoryAdminUserRepository(),
-                    new com.firefly.security.InMemoryIntegrationKeyRepository()
+                    new com.firefly.security.InMemoryIntegrationKeyRepository(),
+                    new com.firefly.trigger.InMemoryBackfillOperationStore()
             );
         }
         DataSource dataSource = new DriverManagerDataSource(store.jdbcUrl(), store.jdbcUsername(), store.jdbcPassword());
@@ -332,7 +334,8 @@ public final class FireflyBootstrap implements AutoCloseable {
         return new RuntimeAssembly(
                 module, combinedCloseable(conditions, clock),
                 new com.firefly.store.jdbc.JdbcAdminUserRepository(dataSource),
-                new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource)
+                new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource),
+                new com.firefly.store.jdbc.JdbcBackfillOperationStore(dataSource)
         );
     }
 
@@ -624,7 +627,8 @@ public final class FireflyBootstrap implements AutoCloseable {
             SchedulerModule module,
             AutoCloseable closeable,
             com.firefly.security.AdminUserRepository adminUserRepository,
-            com.firefly.security.IntegrationKeyRepository integrationKeyRepository
+            com.firefly.security.IntegrationKeyRepository integrationKeyRepository,
+            com.firefly.trigger.BackfillOperationStore backfillOperationStore
     ) {
     }
 
