@@ -836,6 +836,25 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     }
 
     @Override
+    public Optional<DispatchOutboxRecord> findDispatch(String executionId) {
+        Objects.requireNonNull(executionId, "executionId");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select outbox_id, execution_id, root_execution_id, run_attempt, scheduled_fire_time,
+                            dispatch_time, owner_node_id, fencing_token, dispatch_type, status, attempt,
+                            available_at, claim_owner, claim_until, ack_deadline, snapshot_payload, last_error
+                     from firefly_dispatch_outbox where execution_id=?
+                     """)) {
+            statement.setString(1, executionId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? Optional.of(mapDispatchRecord(resultSet)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to find dispatch snapshot", e);
+        }
+    }
+
+    @Override
     public boolean scheduleExecutionRetry(String sourceExecutionId, Instant requestedAt, boolean timeout) {
         record Source(String rootId, int attempt, String status, String snapshot, Instant fireTime,
                       String owner, long token, DispatchType dispatchType) {}
@@ -1271,35 +1290,33 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
             try (ResultSet resultSet = statement.executeQuery()) {
                 List<DispatchOutboxRecord> records = new ArrayList<>();
                 while (resultSet.next()) {
-                    JobDefinition definition = decodeJobSnapshot(resultSet.getString("snapshot_payload"));
-                    records.add(new DispatchOutboxRecord(
-                            resultSet.getString("outbox_id"),
-                            new ExecutionCommand(
-                                    resultSet.getString("execution_id"),
-                                    resultSet.getString("root_execution_id"),
-                                    resultSet.getInt("run_attempt"),
-                                    definition,
-                                    resultSet.getTimestamp("scheduled_fire_time").toInstant(),
-                                    resultSet.getTimestamp("dispatch_time").toInstant(),
-                                    resultSet.getString("owner_node_id"),
-                                    resultSet.getLong("fencing_token"),
-                                    decodeTraceCarrier(resultSet.getString("snapshot_payload"))
-                            ),
-                            DispatchType.valueOf(resultSet.getString("dispatch_type")),
-                            DispatchOutboxStatus.valueOf(resultSet.getString("status")),
-                            resultSet.getInt("attempt"),
-                            resultSet.getTimestamp("available_at").toInstant(),
-                            resultSet.getString("claim_owner"),
-                            timestampOrNull(resultSet, "claim_until"),
-                            timestampOrNull(resultSet, "ack_deadline"),
-                            resultSet.getString("last_error")
-                    ));
+                    records.add(mapDispatchRecord(resultSet));
                 }
                 return List.copyOf(records);
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to list dead dispatch outbox records", e);
         }
+    }
+
+    private static DispatchOutboxRecord mapDispatchRecord(ResultSet resultSet) throws SQLException {
+        JobDefinition definition = decodeJobSnapshot(resultSet.getString("snapshot_payload"));
+        return new DispatchOutboxRecord(
+                resultSet.getString("outbox_id"),
+                new ExecutionCommand(
+                        resultSet.getString("execution_id"), resultSet.getString("root_execution_id"),
+                        resultSet.getInt("run_attempt"), definition,
+                        resultSet.getTimestamp("scheduled_fire_time").toInstant(),
+                        resultSet.getTimestamp("dispatch_time").toInstant(),
+                        resultSet.getString("owner_node_id"), resultSet.getLong("fencing_token"),
+                        decodeTraceCarrier(resultSet.getString("snapshot_payload"))
+                ),
+                DispatchType.valueOf(resultSet.getString("dispatch_type")),
+                DispatchOutboxStatus.valueOf(resultSet.getString("status")),
+                resultSet.getInt("attempt"), resultSet.getTimestamp("available_at").toInstant(),
+                resultSet.getString("claim_owner"), timestampOrNull(resultSet, "claim_until"),
+                timestampOrNull(resultSet, "ack_deadline"), resultSet.getString("last_error")
+        );
     }
 
     @Override

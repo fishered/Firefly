@@ -1,6 +1,10 @@
 package com.firefly.api.admin.http;
 
 import com.firefly.execution.ExecutionRecord;
+import com.firefly.execution.ExecutionReplayPlan;
+import com.firefly.execution.ExecutionReplayRequest;
+import com.firefly.execution.ExecutionReplayService;
+import com.firefly.execution.ReplayDefinitionSnapshot;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.operations.ExecutionTimelineService;
 import com.firefly.store.ScheduledJobRecord;
@@ -77,6 +81,16 @@ final class AdminExecutionController {
             }
             respond(exchange, 200,
                     AdminHttpJson.executionTimeline(new ExecutionTimelineService(repository).timeline(executionId)));
+            return;
+        }
+        if (path.startsWith("/api/executions/") && path.endsWith("/replay/preview")
+                && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            replay(exchange, path, true);
+            return;
+        }
+        if (path.startsWith("/api/executions/") && path.endsWith("/replay")
+                && "POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            replay(exchange, path, false);
             return;
         }
         if (path.startsWith("/api/executions/") && path.length() > "/api/executions/".length()) {
@@ -238,6 +252,94 @@ final class AdminExecutionController {
     private BackfillCoordinator requireBackfills() {
         if (backfills == null) throw new IllegalStateException("backfill coordinator is required");
         return backfills;
+    }
+
+    private void replay(HttpExchange exchange, String path, boolean preview) throws IOException {
+        String suffix = preview ? "/replay/preview" : "/replay";
+        String executionId = URLDecoder.decode(
+                path.substring("/api/executions/".length(), path.length() - suffix.length()),
+                StandardCharsets.UTF_8
+        );
+        var executionRepository = executionRepository();
+        ExecutionRecord source = executionRepository.findExecution(executionId).orElse(null);
+        if (source == null) {
+            respond(exchange, 404, "{\"error\":\"execution_not_found\"}");
+            return;
+        }
+        var jobs = context.jobRepository()
+                .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
+        var current = jobs.find(source.jobId()).orElse(null);
+        if (current == null) {
+            respond(exchange, 409, "{\"error\":\"current_job_definition_not_found\"}");
+            return;
+        }
+        Map<String, String> request = requests.optionalObject(exchange);
+        boolean failedTargetsOnly = strictBoolean(request, "failedTargetsOnly", true);
+        boolean confirmed = strictBoolean(request, "confirmed", false);
+        List<String> targetIds = request.getOrDefault("failedTargetIds", "").isBlank()
+                ? List.of()
+                : java.util.Arrays.stream(request.get("failedTargetIds").split(","))
+                .map(String::trim).filter(value -> !value.isBlank()).distinct().toList();
+        var originalDefinition = jobs.findDispatch(executionId)
+                .map(record -> record.command().definition()).orElse(current.definition());
+        ReplayDefinitionSnapshot original = replaySnapshot(originalDefinition, originalDefinition, jobs);
+        ReplayDefinitionSnapshot latest = replaySnapshot(originalDefinition, current.definition(), jobs);
+        ExecutionReplayRequest replayRequest = new ExecutionReplayRequest(
+                executionId, current.definition(), original, latest, preview, false,
+                failedTargetsOnly, targetIds
+        );
+        ExecutionReplayService service = new ExecutionReplayService(executionRepository, context.clock());
+        ExecutionReplayPlan plan = service.plan(replayRequest);
+        if (preview) {
+            respond(exchange, 200, replayPlanJson(plan));
+            return;
+        }
+        if (plan.requiresConfirmation() && !confirmed) {
+            respond(exchange, 409, "{\"error\":\"replay_confirmation_required\",\"plan\":"
+                    + replayPlanJson(plan) + "}");
+            return;
+        }
+        if (!service.submitIfAccepted(plan, confirmed, jobs::enqueueManual)) {
+            respond(exchange, 409, "{\"error\":\"replay_not_accepted\"}");
+            return;
+        }
+        respond(exchange, 202, replayPlanJson(plan));
+    }
+
+    private ReplayDefinitionSnapshot replaySnapshot(
+            com.firefly.domain.JobDefinition original,
+            com.firefly.domain.JobDefinition value,
+            com.firefly.store.JobRepository jobs
+    ) {
+        long definitionRevision = original.equals(value) ? 1 : 2;
+        long calendarRevision = original.calendarId().equals(value.calendarId())
+                ? jobs.findCalendar(value.calendarId()).map(CalendarDefinition::version).orElse(0L)
+                : 1L;
+        long dependencyRevision = original.dependencies().equals(value.dependencies()) ? 0 : 1;
+        return new ReplayDefinitionSnapshot(
+                definitionRevision, calendarRevision, dependencyRevision, value.parameters()
+        );
+    }
+
+    private String replayPlanJson(ExecutionReplayPlan plan) {
+        String differences = plan.differences().stream()
+                .map(value -> "\"" + responses.escape(value) + "\"")
+                .collect(java.util.stream.Collectors.joining(","));
+        return "{\"sourceExecutionId\":\"" + responses.escape(plan.sourceExecutionId())
+                + "\",\"sourceRootExecutionId\":\"" + responses.escape(plan.sourceRootExecutionId())
+                + "\",\"replayExecutionId\":\"" + responses.escape(plan.replayExecutionId())
+                + "\",\"dryRun\":" + plan.dryRun()
+                + ",\"requiresConfirmation\":" + plan.requiresConfirmation()
+                + ",\"failedTargetsOnly\":" + plan.failedTargetsOnly()
+                + ",\"differences\":[" + differences + "]}";
+    }
+
+    private boolean strictBoolean(Map<String, String> request, String field, boolean defaultValue) {
+        String value = request.get(field);
+        if (value == null || value.isBlank()) return defaultValue;
+        if ("true".equalsIgnoreCase(value)) return true;
+        if ("false".equalsIgnoreCase(value)) return false;
+        throw new IllegalArgumentException(field + " must be true or false");
     }
 
     void batches(HttpExchange exchange) throws IOException {

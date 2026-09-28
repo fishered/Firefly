@@ -184,6 +184,11 @@ public interface JobRepository {
         throw unsupported("enqueueManual");
     }
 
+    /** Immutable dispatch snapshot used for operator replay previews. */
+    default Optional<DispatchOutboxRecord> findDispatch(String executionId) {
+        return Optional.empty();
+    }
+
     default boolean scheduleExecutionRetry(String sourceExecutionId, Instant requestedAt, boolean timeout) {
         throw unsupported("scheduleExecutionRetry");
     }

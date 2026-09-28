@@ -62,6 +62,23 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await page.locator('#cancel-dialog [name="reason"]').fill('e2e cancellation');
     await page.locator('#cancel-dialog button[type="submit"]').click();
     await expect(page.locator('[data-cancel-execution="exec-billing-refresh"]')).toHaveCount(0);
+
+    await page.locator('[data-view="backfills"]').click();
+    await expect(page.locator('#page-title')).toContainText('Backfills');
+    await page.locator('#page-actions .primary').click();
+    await expect(page.locator('#backfill-dialog')).toBeVisible();
+    await page.locator('#backfill-dialog [data-backfill-preview-button]').click();
+    await expect(page.locator('#backfill-dialog button[type="submit"]')).toBeEnabled();
+    await page.locator('#backfill-dialog button[type="submit"]').click();
+    await expect(page.locator('[data-backfill-action="pause"]')).toBeVisible();
+
+    await page.locator('[data-view="executions"]').click();
+    await page.locator('[data-execution-detail="exec-failed-sample-job"]').click();
+    await page.locator('[data-replay-execution="exec-failed-sample-job"]').click();
+    await expect(page.locator('#replay-dialog')).toBeVisible();
+    await expect(page.locator('#replay-dialog button[type="submit"]')).toContainText('Confirm changes and replay');
+    await page.locator('#replay-dialog button[type="submit"]').click();
+    await expect(page.locator('#replay-dialog')).toHaveCount(0);
   } finally {
     await app.close();
   }
@@ -218,6 +235,34 @@ async function routeMockRequest(state, method, url, body, response) {
     json(response, 200, { executions: state.executions });
     return;
   }
+  const replayPreviewMatch = url.pathname.match(/^\/api\/executions\/([^/]+)\/replay\/preview$/);
+  if (method === 'POST' && replayPreviewMatch) {
+    const executionId = decodeURIComponent(replayPreviewMatch[1]);
+    json(response, 200, {
+      sourceExecutionId: executionId,
+      sourceRootExecutionId: executionId,
+      replayExecutionId: `replay-${executionId}`,
+      dryRun: true,
+      requiresConfirmation: true,
+      failedTargetsOnly: body.failedTargetsOnly !== false,
+      differences: ['parameters.mode: old -> new']
+    });
+    return;
+  }
+  const replayMatch = url.pathname.match(/^\/api\/executions\/([^/]+)\/replay$/);
+  if (method === 'POST' && replayMatch) {
+    const executionId = decodeURIComponent(replayMatch[1]);
+    json(response, 202, {
+      sourceExecutionId: executionId,
+      sourceRootExecutionId: executionId,
+      replayExecutionId: `replay-${executionId}`,
+      dryRun: false,
+      requiresConfirmation: true,
+      failedTargetsOnly: body.failedTargetsOnly !== false,
+      differences: ['parameters.mode: old -> new']
+    });
+    return;
+  }
   const executionDetailMatch = url.pathname.match(/^\/api\/executions\/([^/]+)$/);
   if (method === 'GET' && executionDetailMatch) {
     const executionId = decodeURIComponent(executionDetailMatch[1]);
@@ -235,6 +280,51 @@ async function routeMockRequest(state, method, url, body, response) {
   }
   if (method === 'GET' && url.pathname === '/api/outbox/dead') {
     json(response, 200, { deadDispatches: [] });
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/api/backfills') {
+    json(response, 200, { backfills: state.backfills });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/api/backfills/preview') {
+    json(response, 200, {
+      requestId: body.requestId,
+      expanded: 3,
+      estimatedDuration: 'PT3S',
+      canaryExecutions: body.canaryPercent < 100 ? 1 : 3,
+      fireTimes: [1, 2, 3].map(offset => new Date(Date.now() - offset * 60_000).toISOString())
+    });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/api/backfills') {
+    state.backfills.unshift({
+      ...body,
+      rootExecutionId: body.requestId,
+      status: 'RUNNING',
+      expanded: 3,
+      dispatched: 0,
+      failed: 0,
+      cursor: 0,
+      remaining: 3,
+      canary: body.canaryPercent < 100,
+      canaryExecutions: body.canaryPercent < 100 ? 1 : 3,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    json(response, 202, state.backfills[0]);
+    return;
+  }
+  const backfillActionMatch = url.pathname.match(/^\/api\/backfills\/([^/]+)\/(pause|resume|cancel|promote)$/);
+  if (method === 'POST' && backfillActionMatch) {
+    const requestId = decodeURIComponent(backfillActionMatch[1]);
+    const action = backfillActionMatch[2];
+    state.backfills = state.backfills.map(item => item.requestId === requestId ? {
+      ...item,
+      status: action === 'pause' ? 'PAUSED' : action === 'cancel' ? 'CANCELLED' : 'RUNNING',
+      canary: action === 'promote' ? false : item.canary,
+      updatedAt: new Date().toISOString()
+    } : item);
+    json(response, 202, state.backfills.find(item => item.requestId === requestId));
     return;
   }
   if (method === 'GET' && url.pathname === '/api/nodes') {
@@ -305,7 +395,18 @@ function createMockState() {
       dispatchTime: new Date(now.getTime() - 19_500).toISOString(),
       startTime: new Date(now.getTime() - 19_000).toISOString(),
       endTime: new Date(now.getTime() - 18_000).toISOString()
+    }, {
+      executionId: 'exec-failed-sample-job',
+      rootExecutionId: 'exec-failed-sample-job',
+      jobId: 'billing-refresh',
+      status: 'FAILED',
+      scheduledFireTime: new Date(now.getTime() - 40_000).toISOString(),
+      dispatchTime: new Date(now.getTime() - 39_500).toISOString(),
+      startTime: new Date(now.getTime() - 39_000).toISOString(),
+      endTime: new Date(now.getTime() - 38_000).toISOString(),
+      targets: [{ targetExecutionId: 'failed-target-1', status: 'FAILED', errorMessage: 'boom' }]
     }],
+    backfills: [],
     nodes: [{
       nodeId: 'scheduler-1',
       roles: ['SCHEDULER', 'GATEWAY'],
