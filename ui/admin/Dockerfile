@@ -1,6 +1,6 @@
 FROM node:22-alpine
 
-ARG FIREFLY_VERSION=1.1.4
+ARG FIREFLY_VERSION=1.1.5
 LABEL org.opencontainers.image.title="Firefly Admin UI" \
       org.opencontainers.image.description="Web console and API proxy for Firefly" \
       org.opencontainers.image.version="${FIREFLY_VERSION}"
