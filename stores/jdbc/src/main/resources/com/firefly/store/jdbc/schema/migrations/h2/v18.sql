@@ -3,7 +3,7 @@ create table if not exists firefly_backfill_operation (
  from_inclusive timestamp with time zone not null, to_inclusive timestamp with time zone not null,
  max_executions integer not null, batch_size integer not null, rate_limit_per_second integer not null,
  canary_percent integer not null, canary_executions integer not null, status varchar(16) not null,
- canary_active boolean not null, cursor integer not null, expanded integer not null,
+ canary_active boolean not null, cursor_position integer not null, expanded integer not null,
  dispatched integer not null, failed integer not null, definition_snapshot clob not null,
  next_allowed_at timestamp with time zone not null, claim_owner varchar(128),
  claim_until timestamp with time zone, version bigint not null,

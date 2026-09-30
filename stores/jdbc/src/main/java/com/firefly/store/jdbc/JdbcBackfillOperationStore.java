@@ -151,7 +151,7 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
                      select item.ordinal, item.fire_time, item.execution_id, item.status, item.error_message
                      from firefly_backfill_operation operation
                      join firefly_backfill_item item
-                       on item.request_id=operation.request_id and item.ordinal=operation.cursor
+                       on item.request_id=operation.request_id and item.ordinal=operation.cursor_position
                      where operation.request_id=? and operation.claim_owner=?
                      """)) {
             statement.setString(1, requestId);
@@ -332,7 +332,7 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
                 insert into firefly_backfill_operation
                 (request_id, job_id, root_execution_id, from_inclusive, to_inclusive, max_executions,
                  batch_size, rate_limit_per_second, canary_percent, canary_executions, status,
-                 canary_active, cursor, expanded, dispatched, failed, definition_snapshot,
+                 canary_active, cursor_position, expanded, dispatched, failed, definition_snapshot,
                  next_allowed_at, claim_owner, claim_until, version, created_at, updated_at)
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
@@ -417,7 +417,7 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
     ) throws SQLException {
         String sql = """
                 update firefly_backfill_operation
-                set status=?, canary_active=?, cursor=?, dispatched=?, failed=?, next_allowed_at=?,
+                set status=?, canary_active=?, cursor_position=?, dispatched=?, failed=?, next_allowed_at=?,
                     claim_owner=?, claim_until=?, version=?, updated_at=?
                 where request_id=? and version=?
                 """ + (expectedOwner == null ? "" : " and claim_owner=?");
@@ -456,7 +456,7 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
                 JdbcJobRepository.decodeJobSnapshot(resultSet.getString("definition_snapshot")),
                 BackfillProgress.BackfillStatus.valueOf(resultSet.getString("status")),
                 resultSet.getInt("expanded"), resultSet.getInt("dispatched"),
-                resultSet.getInt("failed"), resultSet.getInt("cursor"),
+                resultSet.getInt("failed"), resultSet.getInt("cursor_position"),
                 resultSet.getInt("canary_executions"), resultSet.getBoolean("canary_active"),
                 resultSet.getTimestamp("next_allowed_at").toInstant(),
                 Optional.ofNullable(resultSet.getString("claim_owner")).orElse(""),
