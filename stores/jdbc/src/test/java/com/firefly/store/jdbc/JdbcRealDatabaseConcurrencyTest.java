@@ -5,6 +5,11 @@ import com.firefly.domain.CronSchedule;
 import com.firefly.engine.ExecutionCommand;
 import com.firefly.store.DispatchOutboxRecord;
 import com.firefly.store.DispatchType;
+import com.firefly.trigger.BackfillItem;
+import com.firefly.trigger.BackfillOperation;
+import com.firefly.trigger.BackfillOptions;
+import com.firefly.trigger.BackfillProgress;
+import com.firefly.trigger.BackfillRequest;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -150,6 +155,42 @@ class JdbcRealDatabaseConcurrencyTest {
     @Test
     void mysqlInitializesEmptySchemaConcurrently() throws Exception {
         assertConcurrentSchemaInitialization(isolatedDataSource(mysql, "mysql"), "mysql");
+    }
+
+    @Test
+    void postgresFencesBackfillOperationClaims() throws Exception {
+        assertBackfillLeaseFencing(isolatedDataSource(postgres, "postgresql"), "postgresql");
+    }
+
+    @Test
+    void mysqlFencesBackfillOperationClaims() throws Exception {
+        assertBackfillLeaseFencing(isolatedDataSource(mysql, "mysql"), "mysql");
+    }
+
+    private void assertBackfillLeaseFencing(DataSource dataSource, String dialect) {
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
+        Instant now = Instant.parse("2026-09-28T00:00:00Z");
+        JobDefinition definition = JobDefinition.builder().id("job").name("job").handlerName("handler")
+                .schedule(new CronSchedule("0 * * * * *")).build();
+        BackfillOperation operation = new BackfillOperation(
+                new BackfillRequest("run", "job", now, now, 1, "root"),
+                new BackfillOptions(1, 0, 100, Set.of()), definition,
+                BackfillProgress.BackfillStatus.PENDING, 1, 0, 0, 0, 1, false,
+                now, "", null, 0, now, now
+        );
+        JdbcBackfillOperationStore first = new JdbcBackfillOperationStore(dataSource);
+        JdbcBackfillOperationStore second = new JdbcBackfillOperationStore(dataSource);
+        assertTrue(first.create(operation, List.of(new BackfillItem(
+                0, now, "root@0", BackfillItem.BackfillItemStatus.PENDING, ""))));
+        BackfillOperation claimed = first.claim("run", now, "node-a", Duration.ofSeconds(10)).orElseThrow();
+        assertTrue(second.claim("run", now.plusSeconds(5), "node-b", Duration.ofSeconds(10)).isEmpty());
+        BackfillOperation reclaimed = second.claim(
+                "run", now.plusSeconds(11), "node-b", Duration.ofSeconds(10)).orElseThrow();
+        assertTrue(first.recordItem("run", "node-a", claimed.version(),
+                BackfillItem.BackfillItemStatus.DISPATCHED, "", now, now).isEmpty());
+        assertEquals(BackfillProgress.BackfillStatus.COMPLETED,
+                second.recordItem("run", "node-b", reclaimed.version(),
+                        BackfillItem.BackfillItemStatus.DISPATCHED, "", now, now).orElseThrow().status());
     }
 
     private void assertNoDuplicateClaims(DataSource dataSource, String dialect) throws Exception {

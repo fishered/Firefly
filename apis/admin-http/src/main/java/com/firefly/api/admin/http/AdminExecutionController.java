@@ -15,7 +15,10 @@ import java.util.Map;
 import com.firefly.trigger.TriggerInbox;
 import com.firefly.trigger.EventTriggerService;
 import com.firefly.trigger.BackfillRequest;
-import com.firefly.trigger.BackfillService;
+import com.firefly.trigger.BackfillCoordinator;
+import com.firefly.trigger.BackfillOperation;
+import com.firefly.trigger.BackfillOptions;
+import com.firefly.trigger.BackfillPreview;
 import com.firefly.schedule.CalendarDefinition;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -23,22 +26,26 @@ import java.time.ZoneId;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 
 final class AdminExecutionController {
     private final FireflyPluginContext context;
     private final AdminRequestReader requests;
     private final AdminHttpResponder responses;
     private final TriggerInbox triggerInbox;
+    private final BackfillCoordinator backfills;
 
     AdminExecutionController(
             FireflyPluginContext context,
             AdminRequestReader requests,
-            AdminHttpResponder responses
+            AdminHttpResponder responses,
+            BackfillCoordinator backfills
     ) {
         this.context = java.util.Objects.requireNonNull(context, "context");
         this.requests = java.util.Objects.requireNonNull(requests, "requests");
         this.responses = java.util.Objects.requireNonNull(responses, "responses");
         this.triggerInbox = context.triggerInbox().orElseThrow(() -> new IllegalStateException("trigger inbox is required"));
+        this.backfills = backfills;
     }
 
     void executions(HttpExchange exchange) throws IOException {
@@ -112,13 +119,125 @@ final class AdminExecutionController {
     }
 
     void backfills(HttpExchange exchange) throws IOException {
-        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
-        Map<String, String> request = requests.object(exchange);
-        BackfillRequest backfill = new BackfillRequest(required(request, "requestId"), required(request, "jobId"),
+        BackfillCoordinator coordinator = requireBackfills();
+        String path = exchange.getRequestURI().getPath();
+        String method = exchange.getRequestMethod();
+        if ("/api/backfills/preview".equals(path) && "POST".equalsIgnoreCase(method)) {
+            Map<String, String> request = requests.object(exchange);
+            BackfillRequest backfill = backfillRequest(request, "preview-" + UUID.randomUUID());
+            BackfillPreview preview = coordinator.preview(backfill, backfillOptions(request));
+            respond(exchange, 200, backfillPreviewJson(preview));
+            return;
+        }
+        if ("/api/backfills".equals(path)) {
+            if ("GET".equalsIgnoreCase(method)) {
+                respond(exchange, 200, backfillListJson(coordinator.list(100)));
+                return;
+            }
+            if ("POST".equalsIgnoreCase(method)) {
+                Map<String, String> request = requests.object(exchange);
+                String requestId = request.getOrDefault("requestId", UUID.randomUUID().toString());
+                BackfillRequest backfill = backfillRequest(request, requestId);
+                var progress = coordinator.start(backfill, backfillOptions(request));
+                respond(exchange, 202, backfillProgressJson(coordinator.operation(progress.requestId())));
+                return;
+            }
+            respond(exchange, 405, "{\"error\":\"method_not_allowed\"}");
+            return;
+        }
+        String prefix = "/api/backfills/";
+        if (!path.startsWith(prefix)) {
+            respond(exchange, 400, "{\"error\":\"backfill_id_required\"}");
+            return;
+        }
+        String suffix = path.substring(prefix.length());
+        int actionSeparator = suffix.lastIndexOf('/');
+        String requestId = URLDecoder.decode(
+                actionSeparator < 0 ? suffix : suffix.substring(0, actionSeparator), StandardCharsets.UTF_8
+        );
+        if (actionSeparator < 0 && "GET".equalsIgnoreCase(method)) {
+            respond(exchange, 200, backfillProgressJson(coordinator.operation(requestId)));
+            return;
+        }
+        if (actionSeparator >= 0 && "POST".equalsIgnoreCase(method)) {
+            String action = suffix.substring(actionSeparator + 1);
+            switch (action) {
+                case "pause" -> coordinator.pause(requestId);
+                case "resume" -> coordinator.resume(requestId);
+                case "cancel" -> coordinator.cancel(requestId);
+                case "promote" -> coordinator.promote(requestId);
+                default -> {
+                    respond(exchange, 404, "{\"error\":\"backfill_action_not_found\"}");
+                    return;
+                }
+            }
+            respond(exchange, 202, backfillProgressJson(coordinator.operation(requestId)));
+            return;
+        }
+        respond(exchange, 405, "{\"error\":\"method_not_allowed\"}");
+    }
+
+    private BackfillRequest backfillRequest(Map<String, String> request, String defaultRequestId) {
+        String requestId = request.getOrDefault("requestId", defaultRequestId);
+        return new BackfillRequest(requestId, required(request, "jobId"),
                 Instant.parse(required(request, "fromInclusive")), Instant.parse(required(request, "toInclusive")),
-                Integer.parseInt(request.getOrDefault("maxExecutions", "10000")), request.getOrDefault("rootExecutionId", ""));
-        var result = new BackfillService(context.jobRepository().orElseThrow(() -> new IllegalStateException("jobRepository is required")), context.clock()).submit(backfill);
-        respond(exchange, 202, "{\"requestId\":\"" + responses.escape(result.requestId()) + "\",\"expanded\":" + result.expanded() + ",\"queued\":" + result.queued() + "}");
+                Integer.parseInt(request.getOrDefault("maxExecutions", "10000")),
+                request.getOrDefault("rootExecutionId", requestId));
+    }
+
+    private BackfillOptions backfillOptions(Map<String, String> request) {
+        Set<Instant> retryOnly = new HashSet<>();
+        String encoded = request.getOrDefault("retryOnlyTimes", "");
+        if (!encoded.isBlank()) {
+            for (String item : encoded.split(",")) retryOnly.add(Instant.parse(item.trim()));
+        }
+        return new BackfillOptions(
+                Integer.parseInt(request.getOrDefault("batchSize", "100")),
+                Integer.parseInt(request.getOrDefault("rateLimitPerSecond", "0")),
+                Integer.parseInt(request.getOrDefault("canaryPercent", "100")), retryOnly
+        );
+    }
+
+    private String backfillPreviewJson(BackfillPreview preview) {
+        String fireTimes = preview.fireTimes().stream()
+                .map(time -> "\"" + responses.escape(time.toString()) + "\"")
+                .collect(java.util.stream.Collectors.joining(","));
+        return "{\"requestId\":\"" + responses.escape(preview.requestId())
+                + "\",\"expanded\":" + preview.expanded()
+                + ",\"estimatedDuration\":\"" + responses.escape(preview.estimatedDuration().toString())
+                + "\",\"canaryExecutions\":" + preview.canaryExecutions()
+                + ",\"fireTimes\":[" + fireTimes + "]}";
+    }
+
+    private String backfillListJson(List<BackfillOperation> operations) {
+        return "{\"backfills\":[" + operations.stream().map(this::backfillProgressJson)
+                .collect(java.util.stream.Collectors.joining(",")) + "]}";
+    }
+
+    private String backfillProgressJson(BackfillOperation operation) {
+        var progress = operation.progress();
+        return "{\"requestId\":\"" + responses.escape(progress.requestId())
+                + "\",\"jobId\":\"" + responses.escape(operation.request().jobId())
+                + "\",\"rootExecutionId\":\"" + responses.escape(operation.request().rootExecutionId())
+                + "\",\"fromInclusive\":\"" + operation.request().fromInclusive()
+                + "\",\"toInclusive\":\"" + operation.request().toInclusive()
+                + "\",\"status\":\"" + progress.status().name()
+                + "\",\"expanded\":" + progress.expanded()
+                + ",\"dispatched\":" + progress.dispatched()
+                + ",\"failed\":" + progress.failed()
+                + ",\"cursor\":" + progress.cursor()
+                + ",\"remaining\":" + progress.remaining()
+                + ",\"canary\":" + progress.canary()
+                + ",\"canaryExecutions\":" + operation.canaryExecutions()
+                + ",\"batchSize\":" + operation.options().batchSize()
+                + ",\"rateLimitPerSecond\":" + operation.options().rateLimitPerSecond()
+                + ",\"createdAt\":\"" + operation.createdAt()
+                + "\",\"updatedAt\":\"" + operation.updatedAt() + "\"}";
+    }
+
+    private BackfillCoordinator requireBackfills() {
+        if (backfills == null) throw new IllegalStateException("backfill coordinator is required");
+        return backfills;
     }
 
     void batches(HttpExchange exchange) throws IOException {
