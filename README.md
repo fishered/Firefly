@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.4-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.1.5-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -56,6 +56,13 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 | 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
 | 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
 
+### 1.1.5 补数与重放生产化
+
+- Backfill 操作、触发点和游标持久化到 JDBC，通过租约与 fencing token 确保多 API 节点只有一个 worker 推进。
+- 补数支持预览、批次、限速、Canary、暂停/继续/取消/全量放开，节点异常后可从持久化游标恢复。
+- Admin API/UI 新增补数管理，执行详情支持失败目标重放、定义差异预览和显式确认。
+- 重放从原 Outbox 读取不可变任务快照，再与当前定义比较；提交仍复用 execution + Outbox 的幂等边界。
+
 ### 1.1.4 可恢复执行正确性加固
 
 - 数据就绪条件改为有界异步评估，慢条件不会阻塞 Scheduler tick；超时和异常明确转为 `BLOCKED`。
@@ -73,7 +80,7 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 - 资源与 SLA 模型：按 CPU、内存、标签和租户并发预算筛选执行器，并评估排队、启动和完成阶段的 SLA 预算。
 - 业务结果协议：统一输入/成功/失败计数、checkpoint、结果位置和 SHA-256 校验摘要；`SchedulingInputRevision` 用于解释输入版本。
 
-1.1.3 首次交付上述公共模型、SPI 和内存协调器；1.1.4 已为事件 aggregation window 增加 JDBC 存储。补数状态、重放管理接口和资源快照仍未接入 Admin HTTP/UI，生产接线保留在后续版本。
+1.1.3 首次交付上述公共模型、SPI 和内存协调器；1.1.4 补全事件 aggregation window 的 JDBC 存储；1.1.5 完成补数持久化与重放管理闭环。资源快照的运行时采集仍保留在后续版本。
 
 ## 架构
 
@@ -200,8 +207,8 @@ Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任
 
 | 镜像 | 容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server:1.1.4` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui:1.1.4` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+| `firefly/firefly-server:1.1.5` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.1.5` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
 
 准备配置并启动：
 
@@ -250,7 +257,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.4</version>
+            <version>1.1.5</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -485,8 +492,8 @@ npm run check
 构建 Docker 镜像：
 
 ```powershell
-docker build -t firefly/firefly-server:1.1.4 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.1.4 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.1.5 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.1.5 -f ui/admin/Dockerfile ui/admin
 ```
 
 提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。

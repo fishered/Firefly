@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-09-24。
+最后更新：2026-09-28。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -28,6 +28,14 @@ examples/*                   Embedded 与 Netty executor 示例
 
 ## 2. 已落地能力
 
+### 1.1.5 补数与重放生产化
+
+- 新增 `BackfillOperationStore` 和 H2/MySQL/PostgreSQL v18 feature migration，持久化请求快照、触发点、游标、Canary 和下次可派发时间。
+- `BackfillCoordinator` 使用租约与 fencing token 推进批次，重启后从持久化游标恢复；已存在的 execution 会被识别为已派发，避免重复计数。
+- Admin HTTP 新增补数预览、列表、详情、暂停、继续、取消和 Canary promote；API 节点内 worker 持续处理可运行操作。
+- 执行重放从 Outbox 中读取原始不可变 `JobDefinition` 快照，与当前定义生成差异预览；变更后必须显式确认，并可仅重放失败目标。
+- Admin UI 新增补数管理页和失败执行重放对话框；Java 全量测试、JDBC 快照测试和 Playwright E2E 覆盖新路径。
+
 ### 1.1.4 可恢复执行正确性加固
 
 - 数据就绪条件通过有界线程池异步评估；Scheduler tick 只读取缓存状态，条件超时、异常和未知类型均 fail-closed，Server 提供超时与并发配置。
@@ -46,7 +54,7 @@ examples/*                   Embedded 与 Netty executor 示例
 - 已新增资源感知执行器选择和 `SlaBudget` / `SlaBudgetAssessment`，支持资源标签、CPU/内存、租户并发预算及排队/启动/完成 SLA 阶段评估。
 - 已新增 `BusinessResultSummary` 和 `SchedulingInputRevision`，统一业务结果计数、checkpoint、结果位置、SHA-256 摘要和调度输入版本说明。
 
-上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；1.1.4 已补充事件 aggregation window 的 JDBC 存储。补数状态、重放管理接口、资源快照仍未接入 Admin HTTP/UI，后续接线必须继续遵守 execution/Outbox、CAS 和 fencing 边界。
+上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；1.1.4 补充事件 aggregation window 的 JDBC 存储；1.1.5 完成补数状态与重放管理的 Admin HTTP/UI 生产接线。资源快照的运行时采集仍是后续增量。
 
 ### 调度核心
 
