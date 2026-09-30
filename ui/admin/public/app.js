@@ -4,6 +4,7 @@ const views = {
   calendars: { title: '业务日历', action: 'new-calendar' },
   executors: { title: '执行器', action: 'new-executor' },
   executions: { title: '执行记录', action: 'refresh' },
+  backfills: { title: '补数管理', action: 'new-backfill' },
   nodes: { title: '节点与集群', badge: 'Cluster Mode', action: 'refresh' },
   plugins: { title: '插件' },
   settings: { title: '账号与安全', action: 'new-user' }
@@ -18,6 +19,7 @@ const state = {
   calendars: [],
   executions: [],
   deadDispatches: [],
+  backfills: [],
   executors: [],
   executorDefinitions: [],
   executorHeartbeatTimeoutSeconds: 30,
@@ -332,6 +334,12 @@ function renderActions(view) {
     actions.querySelector('button').addEventListener('click', openExecutorDialog);
     return;
   }
+  if (views[view].action === 'new-backfill') {
+    actions.innerHTML = `<button class="btn primary" type="button"><span>+</span>新建补数</button><button id="refresh-page" class="btn" type="button"><span>⟳</span>刷新</button>`;
+    actions.querySelector('.primary').addEventListener('click', openBackfillDialog);
+    document.getElementById('refresh-page').addEventListener('click', () => refreshView(true));
+    return;
+  }
   if (views[view].action === 'refresh') {
     actions.innerHTML = `<button id="refresh-page" class="btn" type="button"><span>⟳</span>刷新</button>`;
     document.getElementById('refresh-page').addEventListener('click', () => refreshView(true));
@@ -354,6 +362,7 @@ async function loadViewData(view, force) {
     calendars: [loadCalendars],
     executors: [loadExecutors],
     executions: [loadExecutions, loadDeadDispatches],
+    backfills: [loadBackfills, loadJobs],
     nodes: [loadNodes],
     plugins: [loadPlugins],
     settings: [loadUsers, loadIntegrationKey]
@@ -428,6 +437,15 @@ async function loadDeadDispatches() {
   }
 }
 
+async function loadBackfills() {
+  try {
+    const data = await api('/api/backfills');
+    state.backfills = normalizeList(data, 'backfills');
+  } catch {
+    state.backfills = [];
+  }
+}
+
 async function loadNodes() {
   try {
     const data = await api('/api/nodes');
@@ -471,6 +489,7 @@ function renderView(view) {
   if (view === 'calendars') root.innerHTML = calendarsPage();
   if (view === 'executors') root.innerHTML = executorsPage();
   if (view === 'executions') root.innerHTML = executionsPage();
+  if (view === 'backfills') root.innerHTML = backfillsPage();
   if (view === 'nodes') root.innerHTML = nodesPage();
   if (view === 'plugins') root.innerHTML = pluginsPage();
   if (view === 'settings') root.innerHTML = usersPage();
@@ -1148,6 +1167,126 @@ function executionsPage() {
   `;
 }
 
+function backfillsPage() {
+  const rows = state.backfills.map(item => {
+    const expanded = Number(item.expanded ?? 0);
+    const cursor = Number(item.cursor ?? 0);
+    const percent = expanded ? Math.min(100, Math.round(cursor * 100 / expanded)) : 0;
+    return tableRow([
+      code(item.requestId),
+      code(item.jobId),
+      text(`${formatDate(item.fromInclusive)} ~ ${formatDate(item.toInclusive)}`),
+      executionTag(item.status ?? 'PENDING'),
+      text(`${cursor} / ${expanded} (${percent}%)`),
+      text(item.dispatched ?? 0),
+      text(item.failed ?? 0),
+      text(item.canary ? `Canary ${item.canaryExecutions ?? 0}` : '-'),
+      backfillActions(item)
+    ]);
+  }).join('');
+  const running = state.backfills.filter(item => ['PENDING', 'RUNNING', 'PAUSED'].includes(item.status)).length;
+  const failures = state.backfills.reduce((sum, item) => sum + Number(item.failed ?? 0), 0);
+  return `
+    <section class="stats-grid">
+      ${statCard('补数操作', state.backfills.length, '', '', '↺', 'primary')}
+      ${statCard('执行中', running, '', '', '◌', 'gray')}
+      ${statCard('已派发', state.backfills.reduce((sum, item) => sum + Number(item.dispatched ?? 0), 0), '', '', '▶', 'primary')}
+      ${statCard('失败数', failures, '', '', '×', 'red', failures ? 'danger' : 'success')}
+    </section>
+    <section class="table-card">
+      <div class="table-title">可恢复补数 <span class="count-badge">${state.backfills.length}</span></div>
+      <div class="table-scroll"><table>
+        <thead><tr>${headers(['请求 ID','任务 ID','时间范围','状态','进度','已派发','失败数','Canary','操作'])}</tr></thead>
+        <tbody>${rows || emptyRow(9, '暂无补数操作')}</tbody>
+      </table></div>
+    </section>`;
+}
+
+function backfillActions(item) {
+  const id = escapeHtml(item.requestId);
+  const actions = [];
+  if (['PENDING', 'RUNNING'].includes(item.status)) actions.push(`<button class="link-button" type="button" data-backfill-action="pause" data-backfill-id="${id}">暂停</button>`);
+  if (item.status === 'PAUSED') actions.push(`<button class="link-button" type="button" data-backfill-action="resume" data-backfill-id="${id}">继续</button>`);
+  if (item.canary && ['PENDING', 'RUNNING', 'PAUSED'].includes(item.status)) actions.push(`<button class="link-button" type="button" data-backfill-action="promote" data-backfill-id="${id}">全量执行</button>`);
+  if (!['COMPLETED', 'CANCELLED'].includes(item.status)) actions.push(`<button class="link-button danger" type="button" data-backfill-action="cancel" data-backfill-id="${id}">取消</button>`);
+  return actions.join(' ') || '-';
+}
+
+function openBackfillDialog() {
+  const now = new Date();
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+  const requestId = `backfill-${Date.now()}`;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="backfill-dialog-title">
+      <form id="backfill-dialog" class="modal">
+        <div class="modal-header"><div><h2 id="backfill-dialog-title">新建补数</h2><div class="modal-subtitle">预览触发点后再提交，任务定义会在提交时固定。</div></div><button class="btn icon" type="button" data-close>×</button></div>
+        <div class="modal-body">
+          <input type="hidden" name="requestId" value="${requestId}">
+          <label class="field">任务 ID<select name="jobId" required>${state.jobs.map(job => `<option value="${escapeHtml(job.id)}">${escapeHtml(job.name ?? job.id)} (${escapeHtml(job.id)})</option>`).join('')}</select></label>
+          <div class="form-grid">
+            <label class="field">开始时间<input type="datetime-local" name="fromInclusive" value="${dateTimeLocalValue(oneHourAgo)}" required></label>
+            <label class="field">结束时间<input type="datetime-local" name="toInclusive" value="${dateTimeLocalValue(now)}" required></label>
+            <label class="field">最大执行数<input type="number" name="maxExecutions" value="10000" min="1" required></label>
+            <label class="field">批次大小<input type="number" name="batchSize" value="100" min="1" required></label>
+            <label class="field">每秒限速<input type="number" name="rateLimitPerSecond" value="0" min="0" required></label>
+            <label class="field">Canary 比例 (%)<input type="number" name="canaryPercent" value="100" min="1" max="100" required></label>
+          </div>
+          <section class="operation-warning" data-backfill-preview>请先预览本次补数。</section>
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn" type="button" data-backfill-preview-button>预览</button><button class="btn primary" type="submit" disabled>开始补数</button></div>
+      </form>
+    </div>`;
+  const form = root.querySelector('#backfill-dialog');
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  form.querySelector('[data-backfill-preview-button]').addEventListener('click', () => previewBackfill(form));
+  form.addEventListener('input', () => { form.querySelector('button[type="submit"]').disabled = true; });
+  form.addEventListener('submit', startBackfill);
+}
+
+function backfillRequestBody(form) {
+  const body = Object.fromEntries(new FormData(form).entries());
+  body.fromInclusive = new Date(body.fromInclusive).toISOString();
+  body.toInclusive = new Date(body.toInclusive).toISOString();
+  for (const field of ['maxExecutions', 'batchSize', 'rateLimitPerSecond', 'canaryPercent']) body[field] = Number(body[field]);
+  return body;
+}
+
+async function previewBackfill(form) {
+  if (!form.reportValidity()) return;
+  try {
+    const preview = await api('/api/backfills/preview', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(backfillRequestBody(form)) });
+    form.querySelector('[data-backfill-preview]').innerHTML = `<strong>${preview.expanded} 个触发点</strong><br>预计时长 ${escapeHtml(preview.estimatedDuration)} · Canary ${preview.canaryExecutions}<br><span class="muted">${preview.fireTimes.slice(0, 3).map(formatDate).join(' · ') || '无可执行触发点'}</span>`;
+    form.querySelector('button[type="submit"]').disabled = preview.expanded === 0;
+  } catch (error) { toast(error.message); }
+}
+
+async function startBackfill(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    await api('/api/backfills', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(backfillRequestBody(form)) });
+    closeDialog();
+    await refreshView(false);
+    toast('补数操作已创建');
+  } catch (error) { toast(error.message); submit.disabled = false; }
+}
+
+async function operateBackfill(requestId, action) {
+  try {
+    await api(`/api/backfills/${encodeURIComponent(requestId)}/${action}`, { method: 'POST' });
+    await refreshView(false);
+    toast('补数操作已更新');
+  } catch (error) { toast(error.message); }
+}
+
+function dateTimeLocalValue(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 async function openExecutionDetail(executionId) {
   try {
     const detail = await api(`/api/executions/${encodeURIComponent(executionId)}`);
@@ -1197,15 +1336,80 @@ async function openExecutionDetail(executionId) {
           </div>
           <div class="modal-footer">
             <button class="btn" type="button" data-close>关闭</button>
+            ${isReplayableExecution(execution.status) ? `<button class="btn primary" type="button" data-replay-execution="${escapeHtml(execution.executionId)}">重放执行</button>` : ''}
             ${isActiveExecution(execution.status) ? `<button class="btn danger-button" type="button" data-cancel-execution="${escapeHtml(execution.executionId)}">终止执行</button>` : ''}
           </div>
         </section>
       </div>`;
     root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
     root.querySelector('[data-cancel-execution]')?.addEventListener('click', () => openCancelDialog(execution.executionId));
+    root.querySelector('[data-replay-execution]')?.addEventListener('click', () => openReplayDialog(execution.executionId));
   } catch (error) {
     toast(error.message);
   }
+}
+
+function isReplayableExecution(status) {
+  return ['FAILED', 'TIMEOUT', 'MISFIRED', 'CANCELLED'].includes(status);
+}
+
+async function openReplayDialog(executionId) {
+  const root = document.getElementById('modal-root');
+  try {
+    const plan = await replayPreview(executionId, true);
+    root.innerHTML = `
+      <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="replay-dialog-title">
+        <form id="replay-dialog" class="modal compact-modal">
+          <div class="modal-header"><div><h2 id="replay-dialog-title">重放执行</h2><div class="modal-subtitle code">${escapeHtml(executionId)}</div></div><button class="btn icon" type="button" data-close>×</button></div>
+          <div class="modal-body">
+            <label class="checkbox-field"><input type="checkbox" name="failedTargetsOnly" checked> 仅重放失败目标</label>
+            <section class="operation-warning" data-replay-plan>${replayPlanMarkup(plan)}</section>
+          </div>
+          <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">${plan.requiresConfirmation ? '确认变更并重放' : '开始重放'}</button></div>
+        </form>
+      </div>`;
+    const form = root.querySelector('#replay-dialog');
+    root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+    form.elements.failedTargetsOnly.addEventListener('change', async () => {
+      try {
+        const next = await replayPreview(executionId, form.elements.failedTargetsOnly.checked);
+        form.querySelector('[data-replay-plan]').innerHTML = replayPlanMarkup(next);
+        form.querySelector('button[type="submit"]').textContent = next.requiresConfirmation ? '确认变更并重放' : '开始重放';
+      } catch (error) { toast(error.message); }
+    });
+    form.addEventListener('submit', event => submitReplay(event, executionId));
+  } catch (error) { toast(error.message); }
+}
+
+async function replayPreview(executionId, failedTargetsOnly) {
+  return api(`/api/executions/${encodeURIComponent(executionId)}/replay/preview`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ failedTargetsOnly })
+  });
+}
+
+function replayPlanMarkup(plan) {
+  const differences = normalizeList(plan, 'differences');
+  return `<strong>${plan.failedTargetsOnly ? '只重放失败目标' : '重放所有目标'}</strong><br>
+    ${plan.requiresConfirmation ? '任务定义已变更，提交前必须确认。' : '任务定义未变更。'}
+    ${differences.length ? `<ul>${differences.map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul>` : ''}`;
+}
+
+async function submitReplay(event, executionId) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const plan = await api(`/api/executions/${encodeURIComponent(executionId)}/replay`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ failedTargetsOnly: form.elements.failedTargetsOnly.checked, confirmed: true })
+    });
+    closeDialog();
+    viewLoadedAt.delete('executions');
+    await loadExecutions();
+    renderView('executions');
+    toast(`重放已提交：${plan.replayExecutionId}`);
+  } catch (error) { toast(error.message); submit.disabled = false; }
 }
 
 function openCancelDialog(executionId) {
@@ -2370,6 +2574,11 @@ function bindViewActions(view) {
     });
     document.querySelectorAll('[data-outbox-requeue]').forEach(button => {
       button.addEventListener('click', () => requeueOutbox(button.dataset.outboxRequeue));
+    });
+  }
+  if (view === 'backfills') {
+    document.querySelectorAll('[data-backfill-action]').forEach(button => {
+      button.addEventListener('click', () => operateBackfill(button.dataset.backfillId, button.dataset.backfillAction));
     });
   }
   if (view === 'executors') {

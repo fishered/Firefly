@@ -259,6 +259,8 @@ class JdbcDispatchOutboxTest {
         databaseNow.set(fireTime);
         assertTrue(jobs.advanceAndEnqueue(job.id(), fireTime, fireTime.plusSeconds(60), List.of(command)));
         assertTrue(jobs.delete(job.id()));
+        assertEquals("remote:orders:original", jobs.findDispatch(command.executionId()).orElseThrow()
+                .command().definition().handlerName());
         assertTrue(jobs.claimDispatches(
                 "scheduler-a", now, 10, Duration.ofSeconds(15), Set.of(DispatchType.LOCAL)
         ).isEmpty());

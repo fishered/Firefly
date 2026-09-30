@@ -446,6 +446,13 @@ public final class InMemoryJobRepository implements JobRepository {
     }
 
     @Override
+    public Optional<DispatchOutboxRecord> findDispatch(String executionId) {
+        synchronized (lock) {
+            return Optional.ofNullable(outbox.get(executionId));
+        }
+    }
+
+    @Override
     public boolean scheduleExecutionRetry(String sourceExecutionId, Instant requestedAt, boolean timeout) {
         synchronized (lock) {
             DispatchOutboxRecord source = outbox.get(sourceExecutionId);
