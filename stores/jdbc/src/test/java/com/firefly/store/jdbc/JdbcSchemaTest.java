@@ -506,7 +506,7 @@ final class JdbcSchemaTest {
     @Test
     void loadsDialectScripts() {
         assertEquals(41, JdbcSchemaScript.load(JdbcDialect.H2).size());
-        assertEquals(41, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
+        assertEquals(79, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
         assertEquals(30, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 12).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 12).size());

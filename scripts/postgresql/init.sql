@@ -276,3 +276,231 @@ where not exists (select 1 from firefly_schema_version where version = 11);
 insert into firefly_schema_version (version, installed_at)
 select 12, current_timestamp
 where not exists (select 1 from firefly_schema_version where version = 12);
+
+-- Additive feature schema (v13-v19). These tables intentionally retain the
+-- v12 core compatibility marker while making a fresh database service-ready.
+create table if not exists firefly_calendar (
+    calendar_id varchar(128) not null,
+    calendar_version bigint not null,
+    zone_id varchar(128) not null,
+    working_days varchar(128) not null,
+    holidays text not null,
+    extra_working_days text not null,
+    primary key (calendar_id, calendar_version)
+);
+
+create table if not exists firefly_trigger_inbox (
+    event_id varchar(256) not null,
+    event_type varchar(128) not null,
+    idempotency_key varchar(256) primary key,
+    job_id varchar(128) not null default '',
+    payload text not null,
+    status varchar(32) not null,
+    failure_reason varchar(4096) not null default '',
+    received_at timestamp not null,
+    processed_at timestamp null
+);
+
+create table if not exists firefly_trigger_nonce (
+    nonce varchar(256) primary key,
+    expires_at timestamp not null,
+    created_at timestamp not null
+);
+
+create table if not exists firefly_batch_execution (
+    root_execution_id varchar(256) primary key,
+    job_id varchar(128) not null,
+    total_shards integer not null,
+    completed_shards integer not null,
+    failed_shards integer not null,
+    retried_shards integer not null,
+    input_records bigint not null,
+    output_records bigint not null,
+    progress_percent integer not null,
+    sla_status varchar(32) not null,
+    started_at timestamp not null,
+    deadline timestamp not null,
+    updated_at timestamp not null,
+    fencing_token bigint not null default 0
+);
+
+create table if not exists firefly_batch_shard (
+    root_execution_id varchar(256) not null,
+    shard_index integer not null,
+    attempt integer not null,
+    status varchar(32) not null,
+    input_records bigint not null,
+    output_records bigint not null,
+    checkpoint_id varchar(256) not null,
+    checksum varchar(256) not null,
+    error_message varchar(4096) not null,
+    completed_at timestamp not null,
+    primary key (root_execution_id, shard_index, attempt)
+);
+
+create table if not exists firefly_batch_checkpoint (
+    checkpoint_id varchar(256) primary key,
+    root_execution_id varchar(256) not null,
+    shard_index integer not null,
+    attempt integer not null,
+    location varchar(1024) not null,
+    checksum varchar(256) not null,
+    created_at timestamp not null
+);
+
+create table if not exists firefly_calendar_metadata (
+    calendar_id varchar(128) not null,
+    calendar_version bigint not null,
+    jurisdiction varchar(64) not null default 'CUSTOM',
+    published_at timestamp with time zone null,
+    published_by varchar(128) null,
+    primary key (calendar_id, calendar_version)
+);
+
+create table if not exists firefly_calendar_date_rule (
+    calendar_id varchar(128) not null,
+    calendar_version bigint not null,
+    rule_date date not null,
+    rule_kind varchar(16) not null,
+    rule_name varchar(256) not null,
+    source varchar(16) not null,
+    locked boolean not null default false,
+    import_id varchar(128) null,
+    reason varchar(1024) not null,
+    primary key (calendar_id, calendar_version, rule_date),
+    foreign key (calendar_id, calendar_version) references firefly_calendar(calendar_id, calendar_version)
+);
+
+create table if not exists firefly_calendar_import (
+    import_id varchar(128) primary key,
+    calendar_id varchar(128) not null,
+    target_version bigint not null,
+    provider_id varchar(128) not null,
+    provider_version varchar(128) not null,
+    jurisdiction varchar(64) not null,
+    zone_id varchar(128) not null,
+    range_start date not null,
+    range_end date not null,
+    source_uri varchar(1024) not null,
+    source_checksum varchar(128) not null,
+    status varchar(32) not null,
+    conflict_count integer not null default 0,
+    imported_at timestamp with time zone not null,
+    imported_by varchar(128) not null,
+    published_at timestamp with time zone null
+);
+
+create table if not exists firefly_dependency_wait (
+    job_id varchar(128) not null,
+    business_time timestamp with time zone not null,
+    wait_attempts integer not null,
+    next_check_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    primary key (job_id, business_time)
+);
+
+create table if not exists firefly_condition_state (
+    job_id varchar(128) not null,
+    business_time timestamp with time zone not null,
+    status varchar(16) not null,
+    reason varchar(1024) not null,
+    updated_at timestamp with time zone not null,
+    primary key (job_id, business_time)
+);
+
+create table if not exists firefly_dependency_gate (
+    gate_id varchar(256) primary key,
+    job_id varchar(128) not null,
+    business_time timestamp with time zone not null,
+    next_check_at timestamp with time zone not null,
+    deadline_at timestamp with time zone not null,
+    wait_attempts integer not null,
+    status varchar(16) not null,
+    reason varchar(1024) not null,
+    updated_at timestamp with time zone not null
+);
+
+create table if not exists firefly_event_aggregation_lock (
+    job_id varchar(128) not null,
+    aggregation_key varchar(256) not null,
+    primary key (job_id, aggregation_key)
+);
+
+create table if not exists firefly_event_aggregate (
+    aggregate_id varchar(64) primary key,
+    job_id varchar(128) not null,
+    aggregation_key varchar(256) not null,
+    latest_payload text not null,
+    event_count integer not null,
+    first_received_at timestamp with time zone not null,
+    ready_at timestamp with time zone not null,
+    deadline_at timestamp with time zone not null,
+    status varchar(16) not null,
+    claim_owner varchar(128),
+    claim_until timestamp with time zone,
+    updated_at timestamp with time zone not null
+);
+
+create table if not exists firefly_event_aggregate_member (
+    idempotency_key varchar(256) primary key,
+    aggregate_id varchar(64) not null
+);
+
+create table if not exists firefly_backfill_operation (
+    request_id varchar(128) primary key,
+    job_id varchar(128) not null,
+    root_execution_id varchar(256) not null,
+    from_inclusive timestamp with time zone not null,
+    to_inclusive timestamp with time zone not null,
+    max_executions integer not null,
+    batch_size integer not null,
+    rate_limit_per_second integer not null,
+    canary_percent integer not null,
+    canary_executions integer not null,
+    status varchar(16) not null,
+    canary_active boolean not null,
+    cursor_position integer not null,
+    expanded integer not null,
+    dispatched integer not null,
+    failed integer not null,
+    definition_snapshot text not null,
+    next_allowed_at timestamp with time zone not null,
+    claim_owner varchar(128),
+    claim_until timestamp with time zone,
+    version bigint not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
+);
+
+create table if not exists firefly_backfill_item (
+    request_id varchar(128) not null references firefly_backfill_operation(request_id) on delete cascade,
+    ordinal integer not null,
+    fire_time timestamp with time zone not null,
+    execution_id varchar(256) not null,
+    status varchar(16) not null,
+    error_message text not null,
+    updated_at timestamp with time zone not null,
+    primary key (request_id, ordinal)
+);
+
+create index if not exists idx_firefly_calendar_rule_date on firefly_calendar_date_rule(calendar_id, calendar_version, rule_date);
+create index if not exists idx_firefly_calendar_import_status on firefly_calendar_import(calendar_id, status, imported_at);
+create index if not exists idx_firefly_dependency_wait_next on firefly_dependency_wait(next_check_at, job_id);
+create index if not exists idx_firefly_dependency_gate_due on firefly_dependency_gate(status, next_check_at, job_id);
+create index if not exists idx_firefly_event_aggregate_due on firefly_event_aggregate(status, ready_at, deadline_at, claim_until, aggregate_id);
+create index if not exists idx_firefly_event_aggregate_member on firefly_event_aggregate_member(aggregate_id, idempotency_key);
+create index if not exists idx_firefly_backfill_runnable on firefly_backfill_operation(status, next_allowed_at, claim_until, created_at);
+create index if not exists idx_firefly_backfill_item_execution on firefly_backfill_item(execution_id);
+create index if not exists idx_firefly_trigger_failed on firefly_trigger_inbox(status, received_at, idempotency_key);
+create index if not exists idx_firefly_trigger_nonce_expiry on firefly_trigger_nonce(expires_at, nonce);
+create index if not exists idx_firefly_execution_job_page on firefly_execution(job_id, created_at desc, execution_id desc);
+create index if not exists idx_firefly_execution_status_page on firefly_execution(status, created_at desc, execution_id desc);
+create index if not exists idx_firefly_audit_filter_page on firefly_audit_log(resource_type, outcome, occurred_at desc, audit_id desc);
+create index if not exists idx_firefly_audit_actor_page on firefly_audit_log(actor, occurred_at desc, audit_id desc);
+create index if not exists idx_firefly_audit_action_page on firefly_audit_log(action_name, occurred_at desc, audit_id desc);
+create index if not exists idx_firefly_audit_outcome_page on firefly_audit_log(outcome, occurred_at desc, audit_id desc);
+create index if not exists idx_firefly_job_history_filter_page on firefly_job_history(job_id, action_name, occurred_at desc, history_id desc);
+create index if not exists idx_firefly_backfill_page on firefly_backfill_operation(job_id, status, created_at desc, request_id desc);
+create index if not exists idx_firefly_backfill_status_page on firefly_backfill_operation(status, created_at desc, request_id desc);
+create index if not exists idx_firefly_outbox_dead_page on firefly_dispatch_outbox(status, job_id, available_at desc, outbox_id desc);
+create index if not exists idx_firefly_outbox_dead_type_page on firefly_dispatch_outbox(status, dispatch_type, available_at desc, outbox_id desc);

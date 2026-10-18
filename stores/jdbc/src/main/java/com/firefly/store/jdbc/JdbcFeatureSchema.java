@@ -79,6 +79,8 @@ public final class JdbcFeatureSchema {
         Objects.requireNonNull(options, "options");
         try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
             JdbcDialect dialect = JdbcDialect.resolve(connection, options);
+            JdbcSchema.acquireMigrationLock(statement, dialect);
+            try {
             for (String sql : JdbcSchemaScript.loadMigration(dialect, 13)) statement.execute(sql);
             for (String sql : JdbcSchemaScript.loadMigration(dialect, 14)) statement.execute(sql);
             for (String sql : JdbcSchemaScript.loadMigration(dialect, 15)) statement.execute(sql);
@@ -136,6 +138,9 @@ public final class JdbcFeatureSchema {
                     "status, job_id, available_at, outbox_id");
             JdbcSchema.ensureIndex(connection, "firefly_dispatch_outbox", "idx_firefly_outbox_dead_type_page",
                     "status, dispatch_type, available_at, outbox_id");
+            } finally {
+                JdbcSchema.releaseMigrationLock(statement, dialect);
+            }
         } catch (SQLException e) {
             throw new JdbcException("failed to initialize feature schema", e);
         }

@@ -35,7 +35,24 @@ final class PostgreSqlInitScriptTest {
             "firefly_audit_log",
             "firefly_job_history",
             "firefly_user",
-            "firefly_integration_key"
+            "firefly_integration_key",
+            "firefly_calendar",
+            "firefly_calendar_metadata",
+            "firefly_calendar_date_rule",
+            "firefly_calendar_import",
+            "firefly_trigger_inbox",
+            "firefly_trigger_nonce",
+            "firefly_batch_execution",
+            "firefly_batch_shard",
+            "firefly_batch_checkpoint",
+            "firefly_dependency_wait",
+            "firefly_condition_state",
+            "firefly_dependency_gate",
+            "firefly_event_aggregation_lock",
+            "firefly_event_aggregate",
+            "firefly_event_aggregate_member",
+            "firefly_backfill_operation",
+            "firefly_backfill_item"
     );
     private static final Set<String> ALLOWED_INSERT_TARGETS = Set.of(
             "firefly_schema_version",
