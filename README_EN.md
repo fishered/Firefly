@@ -29,6 +29,8 @@ Firefly focuses on three goals:
 - v1.1.3 business-time features: data-readiness conditions, event coalescing, resumable backfill, replay plans, resource admission, SLA budgets, and business result summaries
 - v1.1.4 correctness hardening: bounded asynchronous readiness checks, isolated replay/backfill identities, leased JDBC event aggregation, corrected SLA/resource semantics, and full release gates
 - v1.1.5 production backfill and replay: durable leased backfill cursors, preview/canary/rate controls, restart recovery, and Admin API/UI replay confirmation for changed job definitions
+- v1.1.6 resource-aware dispatch and release gates: live executor capacity heartbeats, atomic shared-directory admission, scheduler-owned backfill workers, operational metrics, and HA/restart/10k-directory/real-database verification
+- v1.1.7 production operations loop: indexed cursor pagination, authenticated durable event ingress, failed-event replay, and reproducible network/TLS/fencing/backup-restore release gates
 - in-memory job repository
 - job-level IANA time zone support
 - 6-field cron: second minute hour day month weekday

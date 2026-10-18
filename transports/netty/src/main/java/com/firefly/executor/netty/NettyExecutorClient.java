@@ -53,6 +53,7 @@ public final class NettyExecutorClient implements AutoCloseable {
     private final ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy;
     private final JobHandlerRegistry handlerRegistry;
     private final NettyExecutorWorkScheduler workScheduler;
+    private final NettyExecutorResourceReporter resourceReporter;
     private final Clock clock;
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
     private final NettyExecutorExecutionRegistry executionRegistry;
@@ -85,6 +86,10 @@ public final class NettyExecutorClient implements AutoCloseable {
             JobHandlerRegistry handlerRegistry,
             ExecutorService workerPool,
             NettyExecutorResourceOptions resourceOptions,
+            NettyExecutorResourceReporter resourceReporter,
+            long resourceCpuCapacityMillis,
+            long resourceMemoryCapacityBytes,
+            Set<String> resourceTags,
             com.firefly.metrics.SchedulerMetrics metrics,
             Clock clock
     ) {
@@ -114,6 +119,11 @@ public final class NettyExecutorClient implements AutoCloseable {
         this.workScheduler = workerPool == null
                 ? NettyExecutorWorkScheduler.owned(resourceOptions, actualMetrics)
                 : NettyExecutorWorkScheduler.borrowed(workerPool, resourceOptions, actualMetrics);
+        this.resourceReporter = resourceReporter == null
+                ? new DefaultNettyExecutorResourceReporter(
+                        this.workScheduler, resourceCpuCapacityMillis, resourceMemoryCapacityBytes, resourceTags
+                )
+                : resourceReporter;
         this.clock = Objects.requireNonNull(clock, "clock");
         if (schedulerPort < 1 || schedulerPort > 65535) {
             throw new IllegalArgumentException("schedulerPort must be between 1 and 65535");
@@ -144,6 +154,10 @@ public final class NettyExecutorClient implements AutoCloseable {
                 .handlerRegistry(new InMemoryJobHandlerRegistry())
                 .workerPool(null)
                 .resourceOptions(NettyExecutorResourceOptions.defaults())
+                .resourceReporter(null)
+                .resourceCpuCapacityMillis(0)
+                .resourceMemoryCapacityBytes(0)
+                .resourceTags(Set.of())
                 .metrics(new com.firefly.metrics.SchedulerMetrics())
                 .clock(Clock.systemUTC());
     }
@@ -202,6 +216,7 @@ public final class NettyExecutorClient implements AutoCloseable {
                                         heartbeatInterval,
                                         handlerRegistry,
                                         workScheduler,
+                                        resourceReporter,
                                         codec,
                                         clock,
                                         executionRegistry,

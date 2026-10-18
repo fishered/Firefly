@@ -5,6 +5,10 @@ import com.firefly.domain.ExecutionContext;
 import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.executor.ExecutorInstanceDirectory;
 import com.firefly.executor.ExecutorInstanceLocation;
+import com.firefly.executor.ExecutorResourceMetadata;
+import com.firefly.executor.ExecutorResourceRequirement;
+import com.firefly.executor.ExecutorResourceSnapshot;
+import com.firefly.executor.ResourceAwareExecutorSelector;
 import com.firefly.executor.RemoteDispatchRequest;
 import com.firefly.executor.RemoteDispatchResult;
 import com.firefly.execution.ExecutionRecord;
@@ -46,6 +50,8 @@ final class NettyExecutorDispatchService {
     private final String gatewayNodeId;
     private final NettyGatewayForwardingTransport forwardingTransport;
     private final NettyExecutorJsonCodec codec;
+    private final com.firefly.metrics.SchedulerMetrics metrics;
+    private final ResourceAwareExecutorSelector resourceSelector = new ResourceAwareExecutorSelector();
     private final ConcurrentHashMap<String, AtomicInteger> routingCursors = new ConcurrentHashMap<>();
 
     NettyExecutorDispatchService(
@@ -56,7 +62,8 @@ final class NettyExecutorDispatchService {
             ExecutionRepository executionRepository,
             String gatewayNodeId,
             NettyGatewayForwardingTransport forwardingTransport,
-            NettyExecutorJsonCodec codec
+            NettyExecutorJsonCodec codec,
+            com.firefly.metrics.SchedulerMetrics metrics
     ) {
         this.schedulerCatalog = schedulerCatalog;
         this.connectionRegistry = connectionRegistry;
@@ -66,6 +73,7 @@ final class NettyExecutorDispatchService {
         this.gatewayNodeId = gatewayNodeId;
         this.forwardingTransport = forwardingTransport;
         this.codec = codec;
+        this.metrics = java.util.Objects.requireNonNull(metrics, "metrics");
     }
 
     RemoteDispatchResult dispatch(RemoteDispatchRequest request) {
@@ -452,6 +460,7 @@ final class NettyExecutorDispatchService {
             List<ExecutionTargetRecord> carriedTargets,
             int requestedTargets
     ) {
+        plans = reserveDirectoryPlans(request, plans);
         saveDirectoryDispatch(request, expectedTargets, plans, carriedTargets);
         int accepted = 0;
         ArrayList<String> instances = new ArrayList<>();
@@ -511,7 +520,77 @@ final class NettyExecutorDispatchService {
     }
 
     private List<ExecutorInstanceLocation> onlineLocations(String executorName) {
-        return instanceDirectory.listOnline(executorName, clock.instant());
+        List<ExecutorInstanceLocation> locations = instanceDirectory.listOnline(executorName, clock.instant());
+        List<com.firefly.executor.ExecutorResourceReport> reports = locations.stream()
+                .map(ExecutorInstanceLocation::metadata)
+                .map(ExecutorResourceMetadata::report)
+                .flatMap(Optional::stream)
+                .toList();
+        metrics.executorResourceCapacity(
+                executorName,
+                reports.size(),
+                reports.stream().mapToLong(com.firefly.executor.ExecutorResourceReport::availableCpuMillis).sum(),
+                reports.stream().mapToLong(com.firefly.executor.ExecutorResourceReport::availableMemoryBytes).sum(),
+                reports.stream().mapToInt(com.firefly.executor.ExecutorResourceReport::activeExecutions).sum()
+        );
+        return locations;
+    }
+
+    private List<DirectoryTargetPlan> reserveDirectoryPlans(
+            RemoteDispatchRequest request, List<DirectoryTargetPlan> plans
+    ) {
+        ExecutorResourceRequirement requirement = ExecutorResourceRequirement.fromParameters(
+                request.context().parameters()
+        );
+        if (!ExecutorResourceMetadata.constrained(requirement)) return plans;
+        List<ExecutorInstanceLocation> online = onlineLocations(request.executorName());
+        ArrayList<DirectoryTargetPlan> reserved = new ArrayList<>();
+        for (DirectoryTargetPlan plan : plans) {
+            if (instanceDirectory.tryReserve(plan.location(), requirement, clock.instant())) {
+                reserved.add(plan);
+                continue;
+            }
+            if (request.dispatchMode() == com.firefly.domain.ExecutorDispatchMode.BROADCAST) {
+                metrics.recordExecutorResourceReservationRejection();
+                continue;
+            }
+            String routingKey = plan.shardIndex() == null
+                    ? request.routingKey() : request.routingKey() + ":" + plan.shardIndex();
+            Optional<ExecutorInstanceLocation> replacement = selectAndReserve(
+                    request, online, requirement, routingKey
+            );
+            if (replacement.isPresent()) {
+                reserved.add(new DirectoryTargetPlan(
+                        replacement.get(), plan.targetExecutionId(), plan.shardIndex(), plan.shardTotal()
+                ));
+            } else {
+                metrics.recordExecutorResourceReservationRejection();
+            }
+        }
+        return List.copyOf(reserved);
+    }
+
+    private Optional<ExecutorInstanceLocation> selectAndReserve(
+            RemoteDispatchRequest request,
+            List<ExecutorInstanceLocation> locations,
+            ExecutorResourceRequirement requirement,
+            String routingKey
+    ) {
+        Map<String, ExecutorInstanceLocation> byInstance = locations.stream()
+                .collect(Collectors.toMap(ExecutorInstanceLocation::instanceId, value -> value, (left, right) -> left));
+        List<ExecutorResourceSnapshot> snapshots = byInstance.values().stream()
+                .map(location -> ExecutorResourceMetadata.snapshot(
+                        location.executorName(), location.instanceId(), location.metadata(), requirement.tenantId()
+                ))
+                .flatMap(Optional::stream)
+                .toList();
+        return resourceSelector.selectAndReserve(
+                request.executorName(), snapshots, requirement, request.routingStrategy(), routingKey,
+                (snapshot, ignored) -> {
+                    ExecutorInstanceLocation location = byInstance.get(snapshot.instanceId());
+                    return location != null && instanceDirectory.tryReserve(location, requirement, clock.instant());
+                }
+        ).map(snapshot -> byInstance.get(snapshot.instanceId()));
     }
 
     private Optional<ExecutorInstanceLocation> selectSharedLocation(

@@ -3,6 +3,8 @@ build/
 out/
 target/
 node_modules/
+ui/admin/test-results/
+ui/admin/playwright-report/
 
 .idea/
 *.iml

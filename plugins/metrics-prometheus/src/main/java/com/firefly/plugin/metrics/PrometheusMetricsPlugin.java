@@ -132,6 +132,7 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
         java.util.Map<Integer, Long> dueByShard = context.jobRepository()
                 .map(repository -> repository.dueCountsByShard(now, context.schedulerShardCount()))
                 .orElse(java.util.Map.of());
+        long failedTriggers = context.triggerInbox().map(com.firefly.trigger.TriggerInbox::countFailed).orElse(0L);
 
         /**
          * Metrics are derived from plugin context snapshots. The scheduler core does
@@ -174,6 +175,9 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                         dueJobs, Double.toString(maxJobOverdueSeconds),
                         outboxPending, outboxDead, executionsRunning, executionsFailed,
                         Double.toString(oldestOutboxAgeSeconds)));
+        body.append("# HELP firefly_trigger_failed_events Unresolved failed external trigger events.\n")
+                .append("# TYPE firefly_trigger_failed_events gauge\n")
+                .append("firefly_trigger_failed_events ").append(failedTriggers).append('\n');
         context.schedulerMetrics().ifPresent(metrics -> appendRuntimeMetrics(body, metrics.snapshot()));
         body.append("# HELP firefly_scheduler_shard_due_jobs Due jobs grouped by scheduler shard.\n")
                 .append("# TYPE firefly_scheduler_shard_due_jobs gauge\n");
@@ -269,6 +273,43 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .append("# HELP firefly_batch_shard_failures_total Failed or timed-out batch shard results.\n")
                 .append("# TYPE firefly_batch_shard_failures_total counter\n")
                 .append("firefly_batch_shard_failures_total ").append(snapshot.batchShardFailures()).append('\n');
+        body.append("# HELP firefly_executor_resource_instances Executor instances reporting live capacity.\n")
+                .append("# TYPE firefly_executor_resource_instances gauge\n")
+                .append("firefly_executor_resource_instances ").append(snapshot.executorResourceInstances()).append('\n')
+                .append("# TYPE firefly_executor_available_cpu_millis gauge\n")
+                .append("firefly_executor_available_cpu_millis ").append(snapshot.executorAvailableCpuMillis()).append('\n')
+                .append("# TYPE firefly_executor_available_memory_bytes gauge\n")
+                .append("firefly_executor_available_memory_bytes ").append(snapshot.executorAvailableMemoryBytes()).append('\n')
+                .append("# TYPE firefly_executor_resource_active_executions gauge\n")
+                .append("firefly_executor_resource_active_executions ").append(snapshot.executorResourceActiveExecutions()).append('\n')
+                .append("# HELP firefly_executor_resource_reservation_rejections_total Atomic capacity reservations rejected by a newer snapshot.\n")
+                .append("# TYPE firefly_executor_resource_reservation_rejections_total counter\n")
+                .append("firefly_executor_resource_reservation_rejections_total ")
+                .append(snapshot.executorResourceReservationRejections()).append('\n');
+        body.append("# HELP firefly_backfill_active_operations Pending or running durable backfills.\n")
+                .append("# TYPE firefly_backfill_active_operations gauge\n")
+                .append("firefly_backfill_active_operations ").append(snapshot.backfillActiveOperations()).append('\n')
+                .append("# TYPE firefly_backfill_paused_operations gauge\n")
+                .append("firefly_backfill_paused_operations ").append(snapshot.backfillPausedOperations()).append('\n')
+                .append("# TYPE firefly_backfill_failed_items gauge\n")
+                .append("firefly_backfill_failed_items ").append(snapshot.backfillFailedItems()).append('\n')
+                .append("# TYPE firefly_backfill_oldest_active_age_seconds gauge\n")
+                .append("firefly_backfill_oldest_active_age_seconds ").append(snapshot.backfillOldestActiveAgeSeconds()).append('\n')
+                .append("# TYPE firefly_backfill_operations_processed_total counter\n")
+                .append("firefly_backfill_operations_processed_total ").append(snapshot.backfillOperationsProcessed()).append('\n')
+                .append("# TYPE firefly_backfill_worker_failures_total counter\n")
+                .append("firefly_backfill_worker_failures_total ").append(snapshot.backfillWorkerFailures()).append('\n');
+        body.append("# TYPE firefly_trigger_accepted_total counter\n")
+                .append("firefly_trigger_accepted_total ").append(snapshot.triggerAccepted()).append('\n')
+                .append("# TYPE firefly_trigger_duplicates_total counter\n")
+                .append("firefly_trigger_duplicates_total ").append(snapshot.triggerDuplicates()).append('\n')
+                .append("# TYPE firefly_trigger_failures_total counter\n")
+                .append("firefly_trigger_failures_total ").append(snapshot.triggerFailures()).append('\n')
+                .append("# TYPE firefly_trigger_replays_total counter\n")
+                .append("firefly_trigger_replays_total ").append(snapshot.triggerReplays()).append('\n')
+                .append("# TYPE firefly_trigger_security_rejections_total counter\n")
+                .append("firefly_trigger_security_rejections_total ")
+                .append(snapshot.triggerSecurityRejections()).append('\n');
     }
 
     private void appendHistogram(

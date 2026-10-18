@@ -1,0 +1,15 @@
+alter table firefly_trigger_inbox add column job_id varchar(128) not null default '';
+alter table firefly_trigger_inbox add column failure_reason varchar(4096) not null default '';
+create table if not exists firefly_trigger_nonce (nonce varchar(256) primary key, expires_at timestamp(6) not null, created_at timestamp(6) not null, index idx_firefly_trigger_nonce_expiry(expires_at, nonce));
+create index idx_firefly_trigger_failed on firefly_trigger_inbox(status, received_at, idempotency_key);
+create index idx_firefly_execution_job_page on firefly_execution(job_id, created_at, execution_id);
+create index idx_firefly_execution_status_page on firefly_execution(status, created_at, execution_id);
+create index idx_firefly_audit_filter_page on firefly_audit_log(resource_type, outcome, occurred_at, audit_id);
+create index idx_firefly_audit_actor_page on firefly_audit_log(actor, occurred_at, audit_id);
+create index idx_firefly_audit_action_page on firefly_audit_log(action_name, occurred_at, audit_id);
+create index idx_firefly_audit_outcome_page on firefly_audit_log(outcome, occurred_at, audit_id);
+create index idx_firefly_job_history_filter_page on firefly_job_history(job_id, action_name, occurred_at, history_id);
+create index idx_firefly_backfill_page on firefly_backfill_operation(job_id, status, created_at, request_id);
+create index idx_firefly_backfill_status_page on firefly_backfill_operation(status, created_at, request_id);
+create index idx_firefly_outbox_dead_page on firefly_dispatch_outbox(status, job_id, available_at, outbox_id);
+create index idx_firefly_outbox_dead_type_page on firefly_dispatch_outbox(status, dispatch_type, available_at, outbox_id);

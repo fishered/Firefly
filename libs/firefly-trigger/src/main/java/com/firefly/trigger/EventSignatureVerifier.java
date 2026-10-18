@@ -26,10 +26,19 @@ public final class EventSignatureVerifier {
 
     public boolean verify(String eventId, String eventType, String idempotencyKey, String payload,
                           Instant signedAt, String signature) {
+        return verify("", eventId, eventType, idempotencyKey, payload, signedAt, "", signature);
+    }
+
+    public boolean verify(String jobId, String eventId, String eventType, String idempotencyKey,
+                          String payload, Instant signedAt, String nonce, String signature) {
         if (signedAt == null || signature == null || signature.isBlank()) return false;
         if (Math.abs(Duration.between(clock.instant(), signedAt).toMillis()) > maxSkew.toMillis()) return false;
-        String canonical = eventId + "\n" + eventType + "\n" + idempotencyKey + "\n"
-                + signedAt.toString() + "\n" + Objects.requireNonNullElse(payload, "");
+        String canonical = (jobId == null || jobId.isBlank())
+                ? eventId + "\n" + eventType + "\n" + idempotencyKey + "\n"
+                        + signedAt.toString() + "\n" + Objects.requireNonNullElse(payload, "")
+                : signedAt + "\n" + Objects.requireNonNullElse(nonce, "") + "\n" + jobId + "\n"
+                        + eventId + "\n" + eventType + "\n" + idempotencyKey + "\n"
+                        + Objects.requireNonNullElse(payload, "");
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret, "HmacSHA256"));

@@ -219,6 +219,22 @@ public interface JobRepository {
         throw unsupported("listDeadDispatches");
     }
 
+    default com.firefly.query.CursorPage<DispatchOutboxRecord> queryDeadDispatches(DispatchOutboxQuery query) {
+        List<DispatchOutboxRecord> values = listDeadDispatches(Integer.MAX_VALUE).stream()
+                .filter(value -> query.jobId().isBlank() || value.command().definition().id().equals(query.jobId()))
+                .filter(value -> query.dispatchType() == null || value.dispatchType() == query.dispatchType())
+                .filter(value -> query.fromInclusive() == null || !value.availableAt().isBefore(query.fromInclusive()))
+                .filter(value -> query.toExclusive() == null || value.availableAt().isBefore(query.toExclusive()))
+                .filter(value -> query.after() == null || value.availableAt().isBefore(query.after().timestamp())
+                        || (value.availableAt().equals(query.after().timestamp())
+                        && value.outboxId().compareTo(query.after().id()) < 0))
+                .sorted(java.util.Comparator.comparing(DispatchOutboxRecord::availableAt).reversed()
+                        .thenComparing(DispatchOutboxRecord::outboxId, java.util.Comparator.reverseOrder()))
+                .limit((long) query.limit() + 1).toList();
+        return com.firefly.query.CursorPage.of(values, query.limit(),
+                value -> new com.firefly.query.PageCursor(value.availableAt(), value.outboxId()));
+    }
+
     default boolean requeueDeadDispatch(String outboxId, Instant now) {
         throw unsupported("requeueDeadDispatch");
     }

@@ -46,16 +46,26 @@ final class AdminRequestReader {
     }
 
     String body(HttpExchange exchange) throws IOException {
+        return body(exchange, limits.maxRequestBodyBytes());
+    }
+
+    String body(HttpExchange exchange, int maxBytes) throws IOException {
         validate(exchange);
-        byte[] bytes = exchange.getRequestBody().readNBytes(limits.maxRequestBodyBytes() + 1);
-        if (bytes.length > limits.maxRequestBodyBytes()) {
-            throw payloadTooLarge();
+        int effectiveLimit = Math.min(limits.maxRequestBodyBytes(), maxBytes);
+        byte[] bytes = exchange.getRequestBody().readNBytes(effectiveLimit + 1);
+        if (bytes.length > effectiveLimit) {
+            throw new AdminHttpException(413, "request_too_large",
+                    "request body exceeds " + effectiveLimit + " bytes");
         }
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
     Map<String, String> object(HttpExchange exchange) throws IOException {
         return parseObject(body(exchange));
+    }
+
+    Map<String, String> object(HttpExchange exchange, int maxBytes) throws IOException {
+        return parseObject(body(exchange, maxBytes));
     }
 
     Map<String, String> optionalObject(HttpExchange exchange) throws IOException {

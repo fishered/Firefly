@@ -19,12 +19,12 @@ services:
 #      retries: 20
 
   firefly-server:
-    image: firefly/firefly-server:${FIREFLY_VERSION:-1.1.5}
+    image: firefly/firefly-server:${FIREFLY_VERSION:-1.1.7}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.1.5}
+        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.1.7}
     init: true
     restart: unless-stopped
     stop_grace_period: 30s
@@ -32,7 +32,7 @@ services:
 #      postgres:
 #        condition: service_healthy
     environment:
-      - FIREFLY_VERSION=${FIREFLY_VERSION:-1.1.5}
+      - FIREFLY_VERSION=${FIREFLY_VERSION:-1.1.7}
       # Container bind addresses. Host exposure is controlled by the ports section.
       - FIREFLY_CONFIG_PROFILE=${FIREFLY_CONFIG_PROFILE:-pg}
       - FIREFLY_NODE_MODE=${FIREFLY_NODE_MODE:-standalone}
@@ -56,6 +56,10 @@ services:
       - FIREFLY_SECURITY_JWT_ENABLED
       - FIREFLY_SECURITY_JWT_SECRET
       - FIREFLY_SECURITY_JWT_ISSUER=${FIREFLY_SECURITY_JWT_ISSUER:-firefly}
+      - FIREFLY_TRIGGER_HMAC_SECRET
+      - FIREFLY_TRIGGER_SIGNATURE_MAX_SKEW=${FIREFLY_TRIGGER_SIGNATURE_MAX_SKEW:-PT5M}
+      - FIREFLY_TRIGGER_NONCE_TTL=${FIREFLY_TRIGGER_NONCE_TTL:-PT10M}
+      - FIREFLY_TRIGGER_MAX_REQUEST_BODY_BYTES=${FIREFLY_TRIGGER_MAX_REQUEST_BODY_BYTES:-65536}
       - FIREFLY_EXECUTOR_REGISTRATION_AUTO_CREATE_DEFINITION=${FIREFLY_EXECUTOR_REGISTRATION_AUTO_CREATE_DEFINITION:-true}
       - JAVA_OPTS=${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError}
     ports:
@@ -70,12 +74,12 @@ services:
       retries: 6
 
   firefly-admin-ui:
-    image: firefly/firefly-admin-ui:${FIREFLY_VERSION:-1.1.5}
+    image: firefly/firefly-admin-ui:${FIREFLY_VERSION:-1.1.7}
     build:
       context: ./ui/admin
       dockerfile: Dockerfile
       args:
-        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.1.5}
+        FIREFLY_VERSION: ${FIREFLY_VERSION:-1.1.7}
     init: true
     restart: unless-stopped
 #    depends_on:

@@ -6,6 +6,8 @@ import com.firefly.cluster.ShardHasher;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.store.InMemoryJobRepository;
+import com.firefly.trigger.EventTrigger;
+import com.firefly.trigger.InMemoryTriggerInbox;
 import org.junit.jupiter.api.Test;
 
 import java.net.ServerSocket;
@@ -50,7 +52,23 @@ class PrometheusMetricsPluginTest {
         metrics.recordBatchProgressUpdate();
         metrics.recordBatchProgressDropped();
         metrics.recordBatchShardFailure();
+        metrics.executorResourceCapacity(2, 3_000, 8_192, 4);
+        metrics.recordExecutorResourceReservationRejection();
+        metrics.backfillState(3, 1, 2, 120);
+        metrics.recordBackfillOperationsProcessed(5);
+        metrics.recordBackfillWorkerFailure();
+        metrics.recordTriggerAccepted();
+        metrics.recordTriggerDuplicate();
+        metrics.recordTriggerFailure();
+        metrics.recordTriggerReplay();
+        metrics.recordTriggerSecurityRejection();
         Instant now = Instant.parse("2026-07-16T10:00:00Z");
+        InMemoryTriggerInbox triggerInbox = new InMemoryTriggerInbox();
+        triggerInbox.receive("due-job", new EventTrigger(
+                "event-1", "invoice.created", "event-key-1", "{}", now,
+                EventTrigger.TriggerStatus.RECEIVED, null
+        ));
+        triggerInbox.markFailed("event-key-1", now, "gateway unavailable");
         InMemoryJobRepository jobs = new InMemoryJobRepository();
         jobs.save(JobDefinition.builder().id("due-job").name("Due").handlerName("handler")
                 .schedule(new CronSchedule("0 * * * * *")).build(), now.minusSeconds(12));
@@ -64,6 +82,7 @@ class PrometheusMetricsPluginTest {
                 .jobRepository(jobs)
                 .schedulerShardCount(4)
                 .schedulerMetrics(metrics)
+                .triggerInbox(triggerInbox)
                 .build());
         try {
             String body = HttpClient.newHttpClient().send(
@@ -99,6 +118,23 @@ class PrometheusMetricsPluginTest {
             assertTrue(body.contains("firefly_batch_progress_updates_total 1"));
             assertTrue(body.contains("firefly_batch_progress_dropped_total 1"));
             assertTrue(body.contains("firefly_batch_shard_failures_total 1"));
+            assertTrue(body.contains("firefly_executor_resource_instances 2"));
+            assertTrue(body.contains("firefly_executor_available_cpu_millis 3000"));
+            assertTrue(body.contains("firefly_executor_available_memory_bytes 8192"));
+            assertTrue(body.contains("firefly_executor_resource_active_executions 4"));
+            assertTrue(body.contains("firefly_executor_resource_reservation_rejections_total 1"));
+            assertTrue(body.contains("firefly_backfill_active_operations 3"));
+            assertTrue(body.contains("firefly_backfill_paused_operations 1"));
+            assertTrue(body.contains("firefly_backfill_failed_items 2"));
+            assertTrue(body.contains("firefly_backfill_oldest_active_age_seconds 120"));
+            assertTrue(body.contains("firefly_backfill_operations_processed_total 5"));
+            assertTrue(body.contains("firefly_backfill_worker_failures_total 1"));
+            assertTrue(body.contains("firefly_trigger_failed_events 1"));
+            assertTrue(body.contains("firefly_trigger_accepted_total 1"));
+            assertTrue(body.contains("firefly_trigger_duplicates_total 1"));
+            assertTrue(body.contains("firefly_trigger_failures_total 1"));
+            assertTrue(body.contains("firefly_trigger_replays_total 1"));
+            assertTrue(body.contains("firefly_trigger_security_rejections_total 1"));
         } finally {
             plugin.close();
         }

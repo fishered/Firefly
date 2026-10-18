@@ -5,7 +5,7 @@ import java.util.Objects;
 
 public record EventTrigger(String eventId, String eventType, String idempotencyKey, String payload,
                            Instant receivedAt, TriggerStatus status, Instant processedAt) {
-    public enum TriggerStatus { RECEIVED, PROCESSED, FAILED }
+    public enum TriggerStatus { RECEIVED, PROCESSED, FAILED, ACKNOWLEDGED }
     public EventTrigger {
         if (eventId == null || eventId.isBlank() || eventType == null || eventType.isBlank()
                 || idempotencyKey == null || idempotencyKey.isBlank()) throw new IllegalArgumentException("event identifiers must not be blank");

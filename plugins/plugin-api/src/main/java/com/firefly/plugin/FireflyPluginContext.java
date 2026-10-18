@@ -17,6 +17,7 @@ import com.firefly.trigger.TriggerInbox;
 import com.firefly.trigger.InMemoryTriggerInbox;
 import com.firefly.trigger.BackfillOperationStore;
 import com.firefly.trigger.InMemoryBackfillOperationStore;
+import com.firefly.trigger.BackfillCoordinator;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -48,6 +49,7 @@ public final class FireflyPluginContext {
     private final BatchRepository batchRepository;
     private final TriggerInbox triggerInbox;
     private final BackfillOperationStore backfillOperationStore;
+    private final BackfillCoordinator backfillCoordinator;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -72,6 +74,7 @@ public final class FireflyPluginContext {
         this.batchRepository = builder.batchRepository;
         this.triggerInbox = builder.triggerInbox;
         this.backfillOperationStore = builder.backfillOperationStore;
+        this.backfillCoordinator = builder.backfillCoordinator;
     }
 
     public static Builder builder() {
@@ -159,6 +162,9 @@ public final class FireflyPluginContext {
     public java.util.Optional<BackfillOperationStore> backfillOperationStore() {
         return java.util.Optional.ofNullable(backfillOperationStore);
     }
+    public java.util.Optional<BackfillCoordinator> backfillCoordinator() {
+        return java.util.Optional.ofNullable(backfillCoordinator);
+    }
 
     public static final class Builder {
         private Clock clock = Clock.systemUTC();
@@ -183,6 +189,7 @@ public final class FireflyPluginContext {
         private BatchRepository batchRepository = new InMemoryBatchRepository();
         private TriggerInbox triggerInbox = new InMemoryTriggerInbox();
         private BackfillOperationStore backfillOperationStore = new InMemoryBackfillOperationStore();
+        private BackfillCoordinator backfillCoordinator;
 
         private Builder() {
         }
@@ -291,6 +298,10 @@ public final class FireflyPluginContext {
         public Builder triggerInbox(TriggerInbox inbox) { this.triggerInbox = Objects.requireNonNull(inbox, "triggerInbox"); return this; }
         public Builder backfillOperationStore(BackfillOperationStore store) {
             this.backfillOperationStore = Objects.requireNonNull(store, "backfillOperationStore");
+            return this;
+        }
+        public Builder backfillCoordinator(BackfillCoordinator coordinator) {
+            this.backfillCoordinator = Objects.requireNonNull(coordinator, "backfillCoordinator");
             return this;
         }
 

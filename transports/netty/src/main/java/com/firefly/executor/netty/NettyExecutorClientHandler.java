@@ -10,6 +10,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -38,6 +39,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     private final Duration heartbeatInterval;
     private final JobHandlerRegistry handlerRegistry;
     private final NettyExecutorWorkScheduler workScheduler;
+    private final NettyExecutorResourceReporter resourceReporter;
     private final NettyExecutorJsonCodec codec;
     private final Clock clock;
     private final NettyExecutorExecutionRegistry executionRegistry;
@@ -87,8 +89,10 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
         this(
                 executorName, instanceId, sessionId, authToken,
                 ExecutorDefinitionRegistrationPolicy.ALLOW_AUTO_CREATE,
-                serviceName, heartbeatInterval, handlerRegistry, workScheduler, codec, clock,
-                executionRegistry, disconnectListener, registrationListener, registrationRejectionListener
+                serviceName, heartbeatInterval, handlerRegistry, workScheduler,
+                new DefaultNettyExecutorResourceReporter(workScheduler, 0, 0, java.util.Set.of()),
+                codec, clock, executionRegistry, disconnectListener, registrationListener,
+                registrationRejectionListener
         );
     }
 
@@ -136,6 +140,33 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             Consumer<io.netty.channel.Channel> registrationListener,
             BiConsumer<io.netty.channel.Channel, String> registrationRejectionListener
     ) {
+        this(
+                executorName, instanceId, sessionId, authToken, definitionRegistrationPolicy,
+                serviceName, heartbeatInterval, handlerRegistry, workScheduler,
+                new DefaultNettyExecutorResourceReporter(workScheduler, 0, 0, java.util.Set.of()),
+                codec, clock, executionRegistry, disconnectListener, registrationListener,
+                registrationRejectionListener
+        );
+    }
+
+    NettyExecutorClientHandler(
+            String executorName,
+            String instanceId,
+            String sessionId,
+            String authToken,
+            ExecutorDefinitionRegistrationPolicy definitionRegistrationPolicy,
+            String serviceName,
+            Duration heartbeatInterval,
+            JobHandlerRegistry handlerRegistry,
+            NettyExecutorWorkScheduler workScheduler,
+            NettyExecutorResourceReporter resourceReporter,
+            NettyExecutorJsonCodec codec,
+            Clock clock,
+            NettyExecutorExecutionRegistry executionRegistry,
+            Consumer<io.netty.channel.Channel> disconnectListener,
+            Consumer<io.netty.channel.Channel> registrationListener,
+            BiConsumer<io.netty.channel.Channel, String> registrationRejectionListener
+    ) {
         this.executorName = executorName;
         this.instanceId = instanceId;
         this.sessionId = sessionId;
@@ -147,6 +178,7 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
         this.heartbeatInterval = heartbeatInterval;
         this.handlerRegistry = handlerRegistry;
         this.workScheduler = workScheduler;
+        this.resourceReporter = java.util.Objects.requireNonNull(resourceReporter, "resourceReporter");
         this.codec = codec;
         this.clock = clock;
         this.executionRegistry = executionRegistry;
@@ -170,6 +202,9 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
                 "capabilities", NettyExecutorProtocol.encodeCapabilities(
                         NettyExecutorProtocol.CLIENT_CAPABILITIES
                 )
+        ));
+        payload.putAll(com.firefly.executor.ExecutorResourceMetadata.merge(
+                Map.of(), resourceReporter.report()
         ));
         if (definitionRegistrationPolicy == ExecutorDefinitionRegistrationPolicy.REQUIRE_EXISTING) {
             payload.put("definitionRegistrationPolicy", definitionRegistrationPolicy.name());
@@ -238,35 +273,40 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
             return;
         }
         try {
-            Future<?> task = workScheduler.submit(() -> {
-                Span span = FireflyTelemetry.tracer().spanBuilder("firefly.executor.execute")
-                        .setParent(FireflyTelemetry.extract(message.payload()))
-                        .setSpanKind(SpanKind.CONSUMER)
-                        .setAttribute("firefly.phase", "executor")
-                        .setAttribute("firefly.execution.id", executionId)
-                        .setAttribute("firefly.job.id", message.payload().getOrDefault("jobId", ""))
-                        .setAttribute("firefly.executor.name", executorName)
-                        .setAttribute("firefly.executor.instance.id", instanceId)
-                        .setAttribute("firefly.run.attempt", Integer.parseInt(
-                                message.payload().getOrDefault("runAttempt", "0")))
-                        .startSpan();
-                try (Scope ignored = span.makeCurrent()) {
-                    ExecutorExecutionResult result = execute(message);
-                    executionRegistry.complete(executionId, claim.execution(), result);
-                    span.setAttribute("firefly.executor.status", result.status());
-                    if (!"SUCCEEDED".equals(result.status())) {
-                        span.setStatus(StatusCode.ERROR, result.errorMessage());
+            Future<?> task = workScheduler.submit(
+                    message.payload().getOrDefault("param.firefly.resource.tenantId", "default"),
+                    resourceAmount(message, "cpuMillis"),
+                    resourceAmount(message, "memoryBytes"),
+                    () -> {
+                        Span span = FireflyTelemetry.tracer().spanBuilder("firefly.executor.execute")
+                                .setParent(FireflyTelemetry.extract(message.payload()))
+                                .setSpanKind(SpanKind.CONSUMER)
+                                .setAttribute("firefly.phase", "executor")
+                                .setAttribute("firefly.execution.id", executionId)
+                                .setAttribute("firefly.job.id", message.payload().getOrDefault("jobId", ""))
+                                .setAttribute("firefly.executor.name", executorName)
+                                .setAttribute("firefly.executor.instance.id", instanceId)
+                                .setAttribute("firefly.run.attempt", Integer.parseInt(
+                                        message.payload().getOrDefault("runAttempt", "0")))
+                                .startSpan();
+                        try (Scope ignored = span.makeCurrent()) {
+                            ExecutorExecutionResult result = execute(message);
+                            executionRegistry.complete(executionId, claim.execution(), result);
+                            span.setAttribute("firefly.executor.status", result.status());
+                            if (!"SUCCEEDED".equals(result.status())) {
+                                span.setStatus(StatusCode.ERROR, result.errorMessage());
+                            }
+                            write(context, resultMessage(message, result.status(), result.errorMessage()));
+                            scheduleExecutionRemoval(context, executionId, claim);
+                        } catch (RuntimeException failure) {
+                            span.recordException(failure);
+                            span.setStatus(StatusCode.ERROR);
+                            throw failure;
+                        } finally {
+                            span.end();
+                        }
                     }
-                    write(context, resultMessage(message, result.status(), result.errorMessage()));
-                    scheduleExecutionRemoval(context, executionId, claim);
-                } catch (RuntimeException failure) {
-                    span.recordException(failure);
-                    span.setStatus(StatusCode.ERROR);
-                    throw failure;
-                } finally {
-                    span.end();
-                }
-            });
+            );
             write(context, ackMessage(message));
             executionRegistry.attachTask(executionId, task);
         } catch (RejectedExecutionException overloaded) {
@@ -347,11 +387,26 @@ final class NettyExecutorClientHandler extends SimpleChannelInboundHandler<Strin
     }
 
     private NettyExecutorMessage heartbeatMessage() {
+        LinkedHashMap<String, String> payload = new LinkedHashMap<>(Map.of(
+                "executorName", executorName, "instanceId", instanceId, "sessionId", sessionId
+        ));
+        payload.putAll(com.firefly.executor.ExecutorResourceMetadata.merge(
+                Map.of(), resourceReporter.report()
+        ));
         return new NettyExecutorMessage(
                 UUID.randomUUID().toString(),
                 NettyExecutorMessageType.HEARTBEAT,
-                Map.of("executorName", executorName, "instanceId", instanceId, "sessionId", sessionId)
+                payload
         );
+    }
+
+    private long resourceAmount(NettyExecutorMessage message, String name) {
+        String key = "param.firefly.resource." + name;
+        String value = message.payload().get(key);
+        if (value == null || value.isBlank()) return 0;
+        long amount = Long.parseLong(value);
+        if (amount < 0) throw new IllegalArgumentException(key + " must not be negative");
+        return amount;
     }
 
     private NettyExecutorMessage ackMessage(NettyExecutorMessage trigger) {

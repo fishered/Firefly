@@ -45,7 +45,7 @@ jobs:
       - run: npm run test:e2e
         working-directory: ui/admin
 
-  real-database:
+  production-readiness:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -59,7 +59,8 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v6
       - run: chmod +x gradlew
-      - run: ./gradlew --no-parallel :stores:jdbc:realDatabaseTest
+      - run: bash -n scripts/production/verify-postgresql-backup-restore.sh
+      - run: ./gradlew --no-parallel verifyProductionReadiness
 
   spring-boot-compatibility:
     runs-on: ubuntu-latest

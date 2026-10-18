@@ -50,6 +50,24 @@ public final class SchedulerMetrics {
     private final LongAdder batchProgressUpdates = new LongAdder();
     private final LongAdder batchProgressDropped = new LongAdder();
     private final LongAdder batchShardFailures = new LongAdder();
+    private final AtomicInteger executorResourceInstances = new AtomicInteger();
+    private final AtomicLong executorAvailableCpuMillis = new AtomicLong();
+    private final AtomicLong executorAvailableMemoryBytes = new AtomicLong();
+    private final AtomicInteger executorResourceActiveExecutions = new AtomicInteger();
+    private final LongAdder executorResourceReservationRejections = new LongAdder();
+    private final java.util.concurrent.ConcurrentHashMap<String, ExecutorResourceCapacity>
+            executorResourceCapacityByExecutor = new java.util.concurrent.ConcurrentHashMap<>();
+    private final AtomicInteger backfillActiveOperations = new AtomicInteger();
+    private final AtomicInteger backfillPausedOperations = new AtomicInteger();
+    private final AtomicInteger backfillFailedItems = new AtomicInteger();
+    private final AtomicLong backfillOldestActiveAgeSeconds = new AtomicLong();
+    private final LongAdder backfillOperationsProcessed = new LongAdder();
+    private final LongAdder backfillWorkerFailures = new LongAdder();
+    private final LongAdder triggerAccepted = new LongAdder();
+    private final LongAdder triggerDuplicates = new LongAdder();
+    private final LongAdder triggerFailures = new LongAdder();
+    private final LongAdder triggerReplays = new LongAdder();
+    private final LongAdder triggerSecurityRejections = new LongAdder();
 
     public void observeScheduleDelay(Duration value) {
         scheduleDelay.observe(value);
@@ -144,6 +162,59 @@ public final class SchedulerMetrics {
     public void recordBatchProgressDropped() { batchProgressDropped.increment(); }
     public void recordBatchShardFailure() { batchShardFailures.increment(); }
 
+    public void executorResourceCapacity(
+            int instances, long availableCpuMillis, long availableMemoryBytes, int activeExecutions
+    ) {
+        executorResourceCapacity("default", instances, availableCpuMillis,
+                availableMemoryBytes, activeExecutions);
+    }
+
+    public void executorResourceCapacity(
+            String executorName, int instances, long availableCpuMillis,
+            long availableMemoryBytes, int activeExecutions
+    ) {
+        if (executorName == null || executorName.isBlank()) {
+            throw new IllegalArgumentException("executorName must not be blank");
+        }
+        executorResourceCapacityByExecutor.put(executorName, new ExecutorResourceCapacity(
+                Math.max(0, instances), Math.max(0, availableCpuMillis),
+                Math.max(0, availableMemoryBytes), Math.max(0, activeExecutions)
+        ));
+        executorResourceInstances.set(executorResourceCapacityByExecutor.values().stream()
+                .mapToInt(ExecutorResourceCapacity::instances).sum());
+        executorAvailableCpuMillis.set(executorResourceCapacityByExecutor.values().stream()
+                .mapToLong(ExecutorResourceCapacity::availableCpuMillis).sum());
+        executorAvailableMemoryBytes.set(executorResourceCapacityByExecutor.values().stream()
+                .mapToLong(ExecutorResourceCapacity::availableMemoryBytes).sum());
+        executorResourceActiveExecutions.set(executorResourceCapacityByExecutor.values().stream()
+                .mapToInt(ExecutorResourceCapacity::activeExecutions).sum());
+    }
+
+    public void recordExecutorResourceReservationRejection() {
+        executorResourceReservationRejections.increment();
+    }
+
+    public void backfillState(int active, int paused, int failedItems, long oldestActiveAgeSeconds) {
+        backfillActiveOperations.set(Math.max(0, active));
+        backfillPausedOperations.set(Math.max(0, paused));
+        backfillFailedItems.set(Math.max(0, failedItems));
+        backfillOldestActiveAgeSeconds.set(Math.max(0, oldestActiveAgeSeconds));
+    }
+
+    public void recordBackfillOperationsProcessed(int count) {
+        if (count > 0) backfillOperationsProcessed.add(count);
+    }
+
+    public void recordBackfillWorkerFailure() {
+        backfillWorkerFailures.increment();
+    }
+
+    public void recordTriggerAccepted() { triggerAccepted.increment(); }
+    public void recordTriggerDuplicate() { triggerDuplicates.increment(); }
+    public void recordTriggerFailure() { triggerFailures.increment(); }
+    public void recordTriggerReplay() { triggerReplays.increment(); }
+    public void recordTriggerSecurityRejection() { triggerSecurityRejections.increment(); }
+
     public Snapshot snapshot() {
         return new Snapshot(
                 scheduleDelay.snapshot(), outboxAge.snapshot(), acknowledgementDelay.snapshot(),
@@ -158,7 +229,14 @@ public final class SchedulerMetrics {
                 ownedShards.get(), clockOffsetMillis.get(),
                 clockDriftWarnings.sum(), clockSyncFailures.sum(),
                 localWorkerActive.get(), localWorkerMaxConcurrency.get(), localWorkerRejections.sum(),
-                batchProgressUpdates.sum(), batchProgressDropped.sum(), batchShardFailures.sum()
+                batchProgressUpdates.sum(), batchProgressDropped.sum(), batchShardFailures.sum(),
+                executorResourceInstances.get(), executorAvailableCpuMillis.get(),
+                executorAvailableMemoryBytes.get(), executorResourceActiveExecutions.get(),
+                executorResourceReservationRejections.sum(), backfillActiveOperations.get(),
+                backfillPausedOperations.get(), backfillFailedItems.get(),
+                backfillOldestActiveAgeSeconds.get(), backfillOperationsProcessed.sum(),
+                backfillWorkerFailures.sum(), triggerAccepted.sum(), triggerDuplicates.sum(),
+                triggerFailures.sum(), triggerReplays.sum(), triggerSecurityRejections.sum()
         );
     }
 
@@ -191,8 +269,70 @@ public final class SchedulerMetrics {
             long localWorkerRejections,
             long batchProgressUpdates,
             long batchProgressDropped,
-            long batchShardFailures
+            long batchShardFailures,
+            int executorResourceInstances,
+            long executorAvailableCpuMillis,
+            long executorAvailableMemoryBytes,
+            int executorResourceActiveExecutions,
+            long executorResourceReservationRejections,
+            int backfillActiveOperations,
+            int backfillPausedOperations,
+            int backfillFailedItems,
+            long backfillOldestActiveAgeSeconds,
+            long backfillOperationsProcessed,
+            long backfillWorkerFailures,
+            long triggerAccepted,
+            long triggerDuplicates,
+            long triggerFailures,
+            long triggerReplays,
+            long triggerSecurityRejections
     ) {
+        /** Preserves the 1.1.5 constructor for plugins that build synthetic metric snapshots. */
+        public Snapshot(
+                DurationHistogramSnapshot scheduleDelay,
+                DurationHistogramSnapshot outboxAge,
+                DurationHistogramSnapshot acknowledgementDelay,
+                DurationHistogramSnapshot executionDuration,
+                DurationHistogramSnapshot gatewayForwardDuration,
+                long leaseRenewalFailures,
+                long dueBacklogEvents,
+                long outboxDeliveryExhaustions,
+                int executorConnections,
+                long executorRegistrationRejections,
+                long executorDisconnects,
+                long executorOverloadAcks,
+                int executorClientActiveExecutions,
+                int executorClientQueuedExecutions,
+                int executorClientMaxConcurrentExecutions,
+                int executorClientQueueCapacity,
+                long gatewayForwardAttempts,
+                long gatewayForwardSuccesses,
+                long gatewayForwardFailures,
+                int ownedShards,
+                long clockOffsetMillis,
+                long clockDriftWarnings,
+                long clockSyncFailures,
+                int localWorkerActive,
+                int localWorkerMaxConcurrency,
+                long localWorkerRejections,
+                long batchProgressUpdates,
+                long batchProgressDropped,
+                long batchShardFailures
+        ) {
+            this(
+                    scheduleDelay, outboxAge, acknowledgementDelay, executionDuration,
+                    gatewayForwardDuration, leaseRenewalFailures, dueBacklogEvents,
+                    outboxDeliveryExhaustions, executorConnections, executorRegistrationRejections,
+                    executorDisconnects, executorOverloadAcks, executorClientActiveExecutions,
+                    executorClientQueuedExecutions, executorClientMaxConcurrentExecutions,
+                    executorClientQueueCapacity, gatewayForwardAttempts, gatewayForwardSuccesses,
+                    gatewayForwardFailures, ownedShards, clockOffsetMillis, clockDriftWarnings,
+                    clockSyncFailures, localWorkerActive, localWorkerMaxConcurrency,
+                    localWorkerRejections, batchProgressUpdates, batchProgressDropped,
+                    batchShardFailures, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0
+            );
+        }
     }
 
     public record DurationHistogramSnapshot(
@@ -207,6 +347,11 @@ public final class SchedulerMetrics {
     }
 
     public record Bucket(String upperBound, long cumulativeCount) {
+    }
+
+    private record ExecutorResourceCapacity(
+            int instances, long availableCpuMillis, long availableMemoryBytes, int activeExecutions
+    ) {
     }
 
     private static final class DurationHistogram {

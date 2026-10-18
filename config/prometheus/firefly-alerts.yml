@@ -61,3 +61,43 @@ groups:
           severity: critical
         annotations:
           summary: Firefly Gateway internal forwarding is failing
+      - alert: FireflyExecutorResourceReservationsRejected
+        expr: increase(firefly_executor_resource_reservation_rejections_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly cannot reserve the requested executor capacity
+      - alert: FireflyBackfillStalled
+        expr: firefly_backfill_active_operations > 0 and firefly_backfill_oldest_active_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A Firefly backfill has not progressed for more than five minutes
+      - alert: FireflyBackfillWorkerFailure
+        expr: increase(firefly_backfill_worker_failures_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: The Firefly backfill worker failed
+      - alert: FireflyBackfillItemsFailed
+        expr: firefly_backfill_failed_items > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: A Firefly backfill contains failed fire times
+      - alert: FireflyTriggerEventsFailed
+        expr: firefly_trigger_failed_events > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly has unresolved failed external trigger events
+      - alert: FireflyTriggerSecurityRejected
+        expr: increase(firefly_trigger_security_rejections_total[5m]) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly is rejecting signed trigger requests

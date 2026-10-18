@@ -182,7 +182,7 @@ Maven 依赖：
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.5</version>
+            <version>1.1.7</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -404,6 +404,31 @@ Starter 会发送 `UNREGISTER_EXECUTOR`，等待 Netty Channel 关闭，再释�
 运行中的 execution 可通过 `POST /api/executions/{executionId}/cancel` 协作式终止，请求体可携带 `reason`。调度侧会终止未完成 target 和 Outbox，Gateway 向在线 Executor 发送 `CANCEL_JOB`；业务 Handler 应响应线程中断，并且不能把该能力理解为进程级强杀。
 
 Outbox 达到最大重投次数后会进入 `DEAD`。运维侧可以用 `GET /api/outbox/dead` 查看死信，并用 `POST /api/outbox/{outboxId}/requeue` 手动重放；重放需要 `OPERATOR` 或 `ADMIN` Token，只会把仍处于 `DEAD` 的记录改回 `RETRY`。
+
+1.1.7 起，execution、Backfill、审计、任务历史和 Dead Outbox 查询使用服务端游标分页。首屏传 `limit=50`，后续请求原样回传响应中的 `nextCursor`；`hasMore=false` 表示结束。游标由服务端编码，基于时间和唯一 ID 的稳定降序，不应由客户端解析。各端点支持以下过滤参数：
+
+Admin UI 已对这五类查询接入相同的真实游标翻页：审计位于“运营审计”，任务历史从任务列表的“变更历史”入口打开。
+
+- `/api/executions`：`jobId`、`status`、`from`、`to`。
+- `/api/backfills`：`jobId`、`status`、`from`、`to`。
+- `/api/outbox/dead`：`jobId`、`dispatchType`、`from`、`to`。
+- `/api/audit`：`actor`、`action`、`resourceType`、`outcome`、`from`、`to`。
+- `/api/jobs/{jobId}/history`：`action`、`from`、`to`。
+
+时间过滤使用 RFC 3339 `Instant`；`from` 包含边界，`to` 不包含边界。
+
+## 外部事件签名与失败恢复
+
+`POST /api/triggers/{jobId}` 必须携带 `X-Firefly-Timestamp`、`X-Firefly-Nonce` 和 `X-Firefly-Signature`。时间戳使用 RFC 3339 `Instant`，nonce 对每次 HTTP 尝试唯一。签名是下面规范字符串的 HMAC-SHA256，结果可使用 Base64 或十六进制：
+
+```text
+timestamp + "\n" + nonce + "\n" + jobId + "\n" + eventId + "\n" +
+eventType + "\n" + idempotencyKey + "\n" + payload
+```
+
+同一业务事件重试时保持 `idempotencyKey` 不变、使用新的 timestamp/nonce/signature。这样 HTTP 防重放不会阻止合法重试，而 inbox 唯一键仍保证只创建一个 root execution。默认允许 5 分钟时钟偏差，nonce 保留 10 分钟，请求体上限 64 KiB；均可通过 `firefly.trigger.*` 配置调整。
+
+失败事件通过 `GET /api/triggers/failed` 查询，结果包含 `jobId`、幂等 key 和失败原因。`POST /api/triggers/failed/{idempotencyKey}/replay` 原子认领并复用确定性 root，`POST .../acknowledge` 确认不再处理；重复操作返回冲突且不会产生额外 execution。两类变更均进入 Admin 审计日志。
 
 `firefly.dispatch.outbox.max-attempts` 是真实投递次数上限，既覆盖 Gateway 无法接受发送，也覆盖已经发送但 Executor 未在 deadline 前 ACK。达到上限后不会再下发；下一次认领只执行 fenced `CLAIMED -> DEAD`。`firefly_dispatch_outbox_delivery_exhausted_total` 会累计这类事件，即使随后人工重放也不会回退。
 

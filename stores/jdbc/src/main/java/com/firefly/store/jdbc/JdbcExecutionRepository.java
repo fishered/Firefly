@@ -5,7 +5,10 @@ import com.firefly.domain.ExecutorDispatchMode;
 import com.firefly.execution.ExecutionRecord;
 import com.firefly.execution.ExecutionRepository;
 import com.firefly.execution.ExecutionStatus;
+import com.firefly.execution.ExecutionQuery;
 import com.firefly.execution.ExecutionTargetRecord;
+import com.firefly.query.CursorPage;
+import com.firefly.query.PageCursor;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -207,7 +210,7 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
     public List<ExecutionRecord> listRecent(int limit) {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
-                     select * from firefly_execution order by created_at desc
+                     select * from firefly_execution order by created_at desc, execution_id desc
                      """)) {
             statement.setMaxRows(Math.max(0, limit));
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -217,6 +220,56 @@ public final class JdbcExecutionRepository implements ExecutionRepository {
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to list executions", e);
+        }
+    }
+
+    @Override
+    public CursorPage<ExecutionRecord> query(ExecutionQuery query) {
+        StringBuilder sql = new StringBuilder("select * from firefly_execution where 1=1");
+        List<Object> parameters = new ArrayList<>();
+        if (!query.jobId().isBlank()) {
+            sql.append(" and job_id=?");
+            parameters.add(query.jobId());
+        }
+        if (query.status() != null) {
+            sql.append(" and status=?");
+            parameters.add(query.status().name());
+        }
+        if (query.fromInclusive() != null) {
+            sql.append(" and created_at>=?");
+            parameters.add(query.fromInclusive());
+        }
+        if (query.toExclusive() != null) {
+            sql.append(" and created_at<?");
+            parameters.add(query.toExclusive());
+        }
+        if (query.after() != null) {
+            sql.append(" and (created_at<? or (created_at=? and execution_id<?))");
+            parameters.add(query.after().timestamp());
+            parameters.add(query.after().timestamp());
+            parameters.add(query.after().id());
+        }
+        sql.append(" order by created_at desc, execution_id desc limit ?");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            bindParameters(statement, parameters);
+            statement.setInt(parameters.size() + 1, query.limit() + 1);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<ExecutionRecord> records = new ArrayList<>();
+                while (resultSet.next()) records.add(mapExecution(resultSet));
+                return CursorPage.of(records, query.limit(),
+                        value -> new PageCursor(value.createdAt(), value.executionId()));
+            }
+        } catch (SQLException failure) {
+            throw new JdbcException("failed to query executions", failure);
+        }
+    }
+
+    private static void bindParameters(PreparedStatement statement, List<Object> parameters) throws SQLException {
+        for (int index = 0; index < parameters.size(); index++) {
+            Object value = parameters.get(index);
+            if (value instanceof Instant instant) statement.setTimestamp(index + 1, Timestamp.from(instant));
+            else statement.setString(index + 1, value.toString());
         }
     }
 

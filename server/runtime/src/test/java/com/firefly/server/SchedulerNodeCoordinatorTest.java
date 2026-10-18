@@ -5,6 +5,7 @@ import com.firefly.cluster.InMemoryNodeRegistry;
 import com.firefly.cluster.InMemoryShardManager;
 import com.firefly.cluster.NodeRole;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -17,6 +18,54 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchedulerNodeCoordinatorTest {
+    @Tag("production-readiness")
+    @Test
+    void threeNodeClusterReassignsEveryShardAfterOneNodeExpires() {
+        Instant now = Instant.parse("2026-07-14T10:00:00Z");
+        MutableClock clock = new MutableClock(now);
+        InMemoryNodeRegistry nodes = new InMemoryNodeRegistry();
+        InMemoryShardManager shards = new InMemoryShardManager();
+        for (String nodeId : java.util.List.of("node-a", "node-b", "node-c")) {
+            nodes.register(FireflyNode.builder().nodeId(nodeId).roles(Set.of(NodeRole.SCHEDULER))
+                    .registeredAt(now).lastHeartbeatAt(now).build());
+        }
+        var options = new com.firefly.cluster.SchedulerCoordinationOptions(
+                java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(5),
+                java.time.Duration.ofSeconds(10)
+        );
+        SchedulerNodeCoordinator first = new SchedulerNodeCoordinator(
+                "node-a", true, nodes, shards, clock, 64, options
+        );
+        SchedulerNodeCoordinator second = new SchedulerNodeCoordinator(
+                "node-b", true, nodes, shards, clock, 64, options
+        );
+        SchedulerNodeCoordinator third = new SchedulerNodeCoordinator(
+                "node-c", true, nodes, shards, clock, 64, options
+        );
+        try {
+            first.reconcile();
+            second.reconcile();
+            third.reconcile();
+
+            clock.set(now.plusSeconds(11));
+            nodes.heartbeat("node-b", clock.instant());
+            nodes.heartbeat("node-c", clock.instant());
+            second.reconcile();
+            third.reconcile();
+            second.reconcile();
+            third.reconcile();
+
+            Set<Integer> reassigned = new HashSet<>(second.ownedShards().keySet());
+            assertTrue(java.util.Collections.disjoint(reassigned, third.ownedShards().keySet()));
+            reassigned.addAll(third.ownedShards().keySet());
+            assertEquals(64, reassigned.size());
+        } finally {
+            first.close();
+            second.close();
+            third.close();
+        }
+    }
+
     @Test
     void assignsEveryShardToExactlyOneOnlineScheduler() {
         Instant now = Instant.parse("2026-07-14T10:00:00Z");

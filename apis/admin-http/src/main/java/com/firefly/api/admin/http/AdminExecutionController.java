@@ -38,18 +38,21 @@ final class AdminExecutionController {
     private final AdminHttpResponder responses;
     private final TriggerInbox triggerInbox;
     private final BackfillCoordinator backfills;
+    private final EventIngressSecurity eventSecurity;
 
     AdminExecutionController(
             FireflyPluginContext context,
             AdminRequestReader requests,
             AdminHttpResponder responses,
-            BackfillCoordinator backfills
+            BackfillCoordinator backfills,
+            EventIngressSecurity eventSecurity
     ) {
         this.context = java.util.Objects.requireNonNull(context, "context");
         this.requests = java.util.Objects.requireNonNull(requests, "requests");
         this.responses = java.util.Objects.requireNonNull(responses, "responses");
         this.triggerInbox = context.triggerInbox().orElseThrow(() -> new IllegalStateException("trigger inbox is required"));
         this.backfills = backfills;
+        this.eventSecurity = java.util.Objects.requireNonNull(eventSecurity, "eventSecurity");
     }
 
     void executions(HttpExchange exchange) throws IOException {
@@ -111,25 +114,164 @@ final class AdminExecutionController {
                     AdminHttpJson.executionDetail(execution, repository.listTargets(executionId)));
             return;
         }
-        List<ExecutionRecord> executions = context.executionRepository()
-                .map(repository -> repository.listRecent(100))
-                .orElse(List.of());
-        String json = executions.isEmpty()
-                ? AdminHttpJson.executions(jobs(), context.clock().instant())
-                : AdminHttpJson.executionHistory(executions);
+        var repository = context.executionRepository().orElse(null);
+        String json;
+        if (repository == null) {
+            json = AdminHttpJson.executions(jobs(), context.clock().instant());
+        } else {
+            String statusValue = AdminPageSupport.text(requests, exchange, "status");
+            com.firefly.execution.ExecutionStatus status = statusValue.isBlank() ? null
+                    : com.firefly.execution.ExecutionStatus.valueOf(statusValue.toUpperCase(java.util.Locale.ROOT));
+            String jobIdFilter = AdminPageSupport.text(requests, exchange, "jobId");
+            Instant fromFilter = AdminPageSupport.instant(requests, exchange, "from");
+            Instant toFilter = AdminPageSupport.instant(requests, exchange, "to");
+            var cursor = AdminPageSupport.cursor(requests, exchange);
+            var page = repository.query(new com.firefly.execution.ExecutionQuery(
+                    jobIdFilter, status, fromFilter, toFilter, cursor,
+                    AdminPageSupport.limit(requests, exchange, 50)
+            ));
+            String itemsJson = page.items().isEmpty() && cursor == null && jobIdFilter.isBlank()
+                    && status == null && fromFilter == null && toFilter == null
+                    ? AdminHttpJson.executions(jobs(), context.clock().instant())
+                    : AdminHttpJson.executionHistory(page.items());
+            json = AdminPageSupport.json(itemsJson, page);
+        }
         respond(exchange, 200, json);
     }
 
     void triggers(HttpExchange exchange) throws IOException {
-        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        String path = exchange.getRequestURI().getPath();
+        String rawPath = exchange.getRequestURI().getRawPath();
+        String method = exchange.getRequestMethod();
+        if ("/api/triggers/failed".equals(path) && "GET".equalsIgnoreCase(method)) {
+            respond(exchange, 200, failedTriggersJson(triggerInbox.listFailed(queryLimit(exchange, 100))));
+            return;
+        }
+        String failedPrefix = "/api/triggers/failed/";
+        if (rawPath.startsWith(failedPrefix) && "POST".equalsIgnoreCase(method)) {
+            String suffix = rawPath.substring(failedPrefix.length());
+            int separator = suffix.lastIndexOf('/');
+            if (separator <= 0) {
+                respond(exchange, 404, "{\"error\":\"trigger_operation_not_found\"}");
+                return;
+            }
+            String key = URLDecoder.decode(suffix.substring(0, separator), StandardCharsets.UTF_8);
+            String action = suffix.substring(separator + 1);
+            if ("replay".equals(action)) {
+                var jobs = context.jobRepository().orElseThrow(
+                        () -> new IllegalStateException("jobRepository is required"));
+                var result = new EventTriggerService(triggerInbox, jobs, context.clock()).replay(key);
+                context.schedulerMetrics().ifPresent(metrics -> {
+                    if (result.accepted()) metrics.recordTriggerReplay();
+                    else metrics.recordTriggerDuplicate();
+                });
+                respond(exchange, result.accepted() ? 202 : 409, triggerResultJson(result));
+                return;
+            }
+            if ("acknowledge".equals(action)) {
+                boolean acknowledged = triggerInbox.acknowledgeFailed(key, context.clock().instant());
+                respond(exchange, acknowledged ? 202 : 409,
+                        "{\"acknowledged\":" + acknowledged + "}");
+                return;
+            }
+            respond(exchange, 404, "{\"error\":\"trigger_operation_not_found\"}");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(method)) { respond(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
         String prefix = "/api/triggers/";
-        if (!exchange.getRequestURI().getPath().startsWith(prefix)) { respond(exchange, 400, "{\"error\":\"job_id_required\"}"); return; }
-        String jobId = URLDecoder.decode(exchange.getRequestURI().getPath().substring(prefix.length()), StandardCharsets.UTF_8);
-        Map<String, String> request = requests.object(exchange);
+        if (!path.startsWith(prefix)) { respond(exchange, 400, "{\"error\":\"job_id_required\"}"); return; }
+        String jobId = URLDecoder.decode(path.substring(prefix.length()), StandardCharsets.UTF_8);
+        Map<String, String> request = requests.object(exchange, eventSecurity.maxRequestBodyBytes());
+        String eventId = required(request, "eventId");
+        String eventType = required(request, "eventType");
+        String idempotencyKey = required(request, "idempotencyKey");
+        String payload = request.getOrDefault("payload", "");
+        authenticateTrigger(exchange, jobId, eventId, eventType, idempotencyKey, payload);
         var jobs = context.jobRepository().orElseThrow(() -> new IllegalStateException("jobRepository is required"));
-        var result = new EventTriggerService(triggerInbox, jobs, context.clock()).accept(jobId,
-                required(request, "eventId"), required(request, "eventType"), required(request, "idempotencyKey"), request.getOrDefault("payload", ""));
-        respond(exchange, result.duplicate() ? 200 : 202, "{\"accepted\":" + result.accepted() + ",\"duplicate\":" + result.duplicate() + ",\"status\":\"" + responses.escape(result.status()) + "\"}");
+        EventTriggerService.TriggerResult result;
+        try {
+            result = new EventTriggerService(triggerInbox, jobs, context.clock()).accept(jobId,
+                    eventId, eventType, idempotencyKey, payload);
+        } catch (RuntimeException failure) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerFailure);
+            throw failure;
+        }
+        context.schedulerMetrics().ifPresent(metrics -> {
+            if (result.duplicate()) metrics.recordTriggerDuplicate();
+            else if (result.accepted()) metrics.recordTriggerAccepted();
+            else metrics.recordTriggerFailure();
+        });
+        respond(exchange, result.duplicate() ? 200 : 202, triggerResultJson(result));
+    }
+
+    private void authenticateTrigger(HttpExchange exchange, String jobId, String eventId,
+                                     String eventType, String idempotencyKey, String payload) {
+        var verifier = eventSecurity.verifier(context);
+        if (verifier == null) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerSecurityRejection);
+            throw new AdminHttpException(503, "trigger_signing_not_configured",
+                    "firefly.trigger.hmac-secret must be configured");
+        }
+        String timestamp = requiredHeader(exchange, "X-Firefly-Timestamp");
+        String nonce = requiredHeader(exchange, "X-Firefly-Nonce");
+        String signature = requiredHeader(exchange, "X-Firefly-Signature");
+        if (nonce.length() > 256) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerSecurityRejection);
+            throw new AdminHttpException(400, "invalid_trigger_nonce", "nonce is too long");
+        }
+        Instant signedAt;
+        try {
+            signedAt = Instant.parse(timestamp);
+        } catch (RuntimeException invalidTimestamp) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerSecurityRejection);
+            throw new AdminHttpException(401, "invalid_trigger_signature", "invalid trigger timestamp");
+        }
+        if (!verifier.verify(jobId, eventId, eventType, idempotencyKey, payload, signedAt, nonce, signature)) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerSecurityRejection);
+            throw new AdminHttpException(401, "invalid_trigger_signature", "invalid or expired trigger signature");
+        }
+        Instant now = context.clock().instant();
+        if (!triggerInbox.reserveNonce(nonce, now.plus(eventSecurity.nonceTtl()), now)) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerSecurityRejection);
+            throw new AdminHttpException(409, "trigger_replay_detected", "trigger nonce has already been used");
+        }
+    }
+
+    private String requiredHeader(HttpExchange exchange, String name) {
+        String value = exchange.getRequestHeaders().getFirst(name);
+        if (value == null || value.isBlank()) {
+            context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerSecurityRejection);
+            throw new AdminHttpException(401, "invalid_trigger_signature", "missing " + name + " header");
+        }
+        return value.trim();
+    }
+
+    private int queryLimit(HttpExchange exchange, int defaultValue) {
+        String value = requests.queryParameter(exchange, "limit");
+        if (value.isBlank()) return defaultValue;
+        int limit = Integer.parseInt(value);
+        if (limit < 1 || limit > 500) throw new IllegalArgumentException("limit must be between 1 and 500");
+        return limit;
+    }
+
+    private String triggerResultJson(EventTriggerService.TriggerResult result) {
+        return "{\"accepted\":" + result.accepted() + ",\"duplicate\":" + result.duplicate()
+                + ",\"status\":\"" + responses.escape(result.status()) + "\"}";
+    }
+
+    private String failedTriggersJson(List<com.firefly.trigger.FailedEventTrigger> events) {
+        String values = events.stream().map(failed -> {
+                    var event = failed.event();
+                    return "{\"eventId\":\""
+                        + responses.escape(event.eventId()) + "\",\"jobId\":\""
+                        + responses.escape(failed.jobId()) + "\",\"eventType\":\""
+                        + responses.escape(event.eventType()) + "\",\"idempotencyKey\":\""
+                        + responses.escape(event.idempotencyKey()) + "\",\"receivedAt\":\""
+                        + event.receivedAt() + "\",\"failedAt\":\"" + event.processedAt()
+                        + "\",\"failureReason\":\"" + responses.escape(failed.failureReason()) + "\"}";
+                })
+                .collect(java.util.stream.Collectors.joining(","));
+        return "{\"failedTriggers\":[" + values + "]}";
     }
 
     void backfills(HttpExchange exchange) throws IOException {
@@ -145,7 +287,18 @@ final class AdminExecutionController {
         }
         if ("/api/backfills".equals(path)) {
             if ("GET".equalsIgnoreCase(method)) {
-                respond(exchange, 200, backfillListJson(coordinator.list(100)));
+                String statusValue = AdminPageSupport.text(requests, exchange, "status");
+                com.firefly.trigger.BackfillProgress.BackfillStatus status = statusValue.isBlank() ? null
+                        : com.firefly.trigger.BackfillProgress.BackfillStatus.valueOf(
+                        statusValue.toUpperCase(java.util.Locale.ROOT));
+                var page = coordinator.query(new com.firefly.trigger.BackfillQuery(
+                        AdminPageSupport.text(requests, exchange, "jobId"), status,
+                        AdminPageSupport.instant(requests, exchange, "from"),
+                        AdminPageSupport.instant(requests, exchange, "to"),
+                        AdminPageSupport.cursor(requests, exchange),
+                        AdminPageSupport.limit(requests, exchange, 50)
+                ));
+                respond(exchange, 200, AdminPageSupport.json(backfillListJson(page.items()), page));
                 return;
             }
             if ("POST".equalsIgnoreCase(method)) {
@@ -170,7 +323,9 @@ final class AdminExecutionController {
                 actionSeparator < 0 ? suffix : suffix.substring(0, actionSeparator), StandardCharsets.UTF_8
         );
         if (actionSeparator < 0 && "GET".equalsIgnoreCase(method)) {
-            respond(exchange, 200, backfillProgressJson(coordinator.operation(requestId)));
+            respond(exchange, 200, backfillDetailJson(
+                    coordinator.operation(requestId), coordinator.items(requestId, 500)
+            ));
             return;
         }
         if (actionSeparator >= 0 && "POST".equalsIgnoreCase(method)) {
@@ -247,6 +402,20 @@ final class AdminExecutionController {
                 + ",\"rateLimitPerSecond\":" + operation.options().rateLimitPerSecond()
                 + ",\"createdAt\":\"" + operation.createdAt()
                 + "\",\"updatedAt\":\"" + operation.updatedAt() + "\"}";
+    }
+
+    private String backfillDetailJson(
+            BackfillOperation operation, List<com.firefly.trigger.BackfillItem> items
+    ) {
+        String progress = backfillProgressJson(operation);
+        String failures = items.stream()
+                .filter(item -> item.status() == com.firefly.trigger.BackfillItem.BackfillItemStatus.FAILED)
+                .map(item -> "{\"ordinal\":" + item.ordinal()
+                        + ",\"fireTime\":\"" + responses.escape(item.fireTime().toString())
+                        + "\",\"executionId\":\"" + responses.escape(item.executionId())
+                        + "\",\"error\":\"" + responses.escape(item.error()) + "\"}")
+                .collect(java.util.stream.Collectors.joining(","));
+        return progress.substring(0, progress.length() - 1) + ",\"failures\":[" + failures + "]}";
     }
 
     private BackfillCoordinator requireBackfills() {
@@ -395,7 +564,17 @@ final class AdminExecutionController {
         var repository = context.jobRepository()
                 .orElseThrow(() -> new IllegalStateException("jobRepository is required"));
         if ("/api/outbox/dead".equals(path) && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            respond(exchange, 200, AdminHttpJson.deadDispatches(repository.listDeadDispatches(100)));
+            String typeValue = AdminPageSupport.text(requests, exchange, "dispatchType");
+            com.firefly.store.DispatchType dispatchType = typeValue.isBlank() ? null
+                    : com.firefly.store.DispatchType.valueOf(typeValue.toUpperCase(java.util.Locale.ROOT));
+            var page = repository.queryDeadDispatches(new com.firefly.store.DispatchOutboxQuery(
+                    AdminPageSupport.text(requests, exchange, "jobId"), dispatchType,
+                    AdminPageSupport.instant(requests, exchange, "from"),
+                    AdminPageSupport.instant(requests, exchange, "to"),
+                    AdminPageSupport.cursor(requests, exchange),
+                    AdminPageSupport.limit(requests, exchange, 50)
+            ));
+            respond(exchange, 200, AdminPageSupport.json(AdminHttpJson.deadDispatches(page.items()), page));
             return;
         }
         if ("/api/outbox/batch-requeue".equals(path)

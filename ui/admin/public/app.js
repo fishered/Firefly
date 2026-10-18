@@ -5,6 +5,7 @@ const views = {
   executors: { title: '执行器', action: 'new-executor' },
   executions: { title: '执行记录', action: 'refresh' },
   backfills: { title: '补数管理', action: 'new-backfill' },
+  operations: { title: '运营审计', action: 'refresh' },
   nodes: { title: '节点与集群', badge: 'Cluster Mode', action: 'refresh' },
   plugins: { title: '插件' },
   settings: { title: '账号与安全', action: 'new-user' }
@@ -20,6 +21,14 @@ const state = {
   executions: [],
   deadDispatches: [],
   backfills: [],
+  auditRecords: [],
+  failedTriggers: [],
+  jobHistory: [],
+  executionPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20, jobId: '', status: '', from: '', to: '' },
+  deadOutboxPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20 },
+  backfillPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20 },
+  auditPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20, actor: '', action: '', resourceType: '', outcome: '', from: '', to: '' },
+  jobHistoryPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20, jobId: '', action: '', from: '', to: '' },
   executors: [],
   executorDefinitions: [],
   executorHeartbeatTimeoutSeconds: 30,
@@ -363,6 +372,7 @@ async function loadViewData(view, force) {
     executors: [loadExecutors],
     executions: [loadExecutions, loadDeadDispatches],
     backfills: [loadBackfills, loadJobs],
+    operations: [loadAuditRecords, loadFailedTriggers],
     nodes: [loadNodes],
     plugins: [loadPlugins],
     settings: [loadUsers, loadIntegrationKey]
@@ -418,11 +428,22 @@ async function loadExecutors() {
 
 async function loadExecutions() {
   try {
-    const data = await api('/api/executions');
-    const executions = normalizeList(data, 'executions');
-    state.executions = state.executionFilterJobId
-      ? executions.filter(item => item.jobId === state.executionFilterJobId)
-      : executions;
+    const page = state.executionPage;
+    const params = new URLSearchParams({ limit: String(page.limit) });
+    const cursor = page.cursors[page.index];
+    if (cursor) params.set('cursor', cursor);
+    if (page.jobId) params.set('jobId', page.jobId);
+    if (page.status) params.set('status', page.status);
+    if (page.from) params.set('from', new Date(`${page.from}T00:00:00`).toISOString());
+    if (page.to) {
+      const toExclusive = new Date(`${page.to}T00:00:00`);
+      toExclusive.setDate(toExclusive.getDate() + 1);
+      params.set('to', toExclusive.toISOString());
+    }
+    const data = await api(`/api/executions?${params}`);
+    state.executions = normalizeList(data, 'executions');
+    page.nextCursor = data.nextCursor ?? null;
+    page.hasMore = Boolean(data.hasMore);
   } catch {
     state.executions = [];
   }
@@ -430,8 +451,14 @@ async function loadExecutions() {
 
 async function loadDeadDispatches() {
   try {
-    const data = await api('/api/outbox/dead');
+    const page = state.deadOutboxPage;
+    const params = new URLSearchParams({ limit: String(page.limit) });
+    const cursor = page.cursors[page.index];
+    if (cursor) params.set('cursor', cursor);
+    const data = await api(`/api/outbox/dead?${params}`);
     state.deadDispatches = normalizeList(data, 'deadDispatches');
+    page.nextCursor = data.nextCursor ?? null;
+    page.hasMore = Boolean(data.hasMore);
   } catch {
     state.deadDispatches = [];
   }
@@ -439,10 +466,68 @@ async function loadDeadDispatches() {
 
 async function loadBackfills() {
   try {
-    const data = await api('/api/backfills');
+    const page = state.backfillPage;
+    const params = new URLSearchParams({ limit: String(page.limit) });
+    const cursor = page.cursors[page.index];
+    if (cursor) params.set('cursor', cursor);
+    const data = await api(`/api/backfills?${params}`);
     state.backfills = normalizeList(data, 'backfills');
+    page.nextCursor = data.nextCursor ?? null;
+    page.hasMore = Boolean(data.hasMore);
   } catch {
     state.backfills = [];
+  }
+}
+
+async function loadAuditRecords() {
+  try {
+    const page = state.auditPage;
+    const params = cursorQuery(page);
+    for (const key of ['actor', 'action', 'resourceType', 'outcome']) {
+      if (page[key]) params.set(key, page[key]);
+    }
+    appendDateRange(params, page);
+    const data = await api(`/api/audit?${params}`);
+    state.auditRecords = normalizeList(data, 'items');
+    page.nextCursor = data.nextCursor ?? null;
+    page.hasMore = Boolean(data.hasMore);
+  } catch {
+    state.auditRecords = [];
+  }
+}
+
+async function loadFailedTriggers() {
+  try {
+    state.failedTriggers = normalizeList(await api('/api/triggers/failed?limit=100'), 'failedTriggers');
+  } catch {
+    state.failedTriggers = [];
+  }
+}
+
+async function loadJobHistory() {
+  const page = state.jobHistoryPage;
+  const params = cursorQuery(page);
+  if (page.action) params.set('action', page.action);
+  appendDateRange(params, page);
+  const data = await api(`/api/jobs/${encodeURIComponent(page.jobId)}/history?${params}`);
+  state.jobHistory = normalizeList(data, 'items');
+  page.nextCursor = data.nextCursor ?? null;
+  page.hasMore = Boolean(data.hasMore);
+}
+
+function cursorQuery(page) {
+  const params = new URLSearchParams({ limit: String(page.limit) });
+  const cursor = page.cursors[page.index];
+  if (cursor) params.set('cursor', cursor);
+  return params;
+}
+
+function appendDateRange(params, page) {
+  if (page.from) params.set('from', new Date(`${page.from}T00:00:00`).toISOString());
+  if (page.to) {
+    const toExclusive = new Date(`${page.to}T00:00:00`);
+    toExclusive.setDate(toExclusive.getDate() + 1);
+    params.set('to', toExclusive.toISOString());
   }
 }
 
@@ -490,6 +575,7 @@ function renderView(view) {
   if (view === 'executors') root.innerHTML = executorsPage();
   if (view === 'executions') root.innerHTML = executionsPage();
   if (view === 'backfills') root.innerHTML = backfillsPage();
+  if (view === 'operations') root.innerHTML = operationsPage();
   if (view === 'nodes') root.innerHTML = nodesPage();
   if (view === 'plugins') root.innerHTML = pluginsPage();
   if (view === 'settings') root.innerHTML = usersPage();
@@ -970,12 +1056,13 @@ function executorsPage() {
     ? Math.round(online.reduce((sum, item) => sum + Number(item.heartbeatAgeSeconds ?? 0), 0) / online.length)
     : 0;
   const definitions = state.executorDefinitions ?? [];
+  const reportingResources = online.filter(item => item.resources).length;
   return `
     <section class="summary-strip">
       ${statCard('逻辑执行器', definitions.length, '个', '已注册定义', '▤', 'primary')}
       ${statCard('在线实例', online.length, '个', `${offline.length} 个离线记录`, '●', 'yellow', offline.length ? 'warning' : 'success')}
       ${statCard('平均心跳年龄', averageHeartbeatAge, 's', `离线阈值 ${state.executorHeartbeatTimeoutSeconds}s`, '◔', 'gray')}
-      ${statCard('实例记录', executors.length, '个', '在线与离线状态', '▦', 'red', 'success')}
+      ${statCard('资源快照', reportingResources, '个', `${Math.max(0, online.length - reportingResources)} 个在线实例未上报`, '▦', 'red', reportingResources === online.length ? 'success' : 'warning')}
     </section>
     <section class="table-card">
       <div class="table-title">执行器定义</div>
@@ -1007,18 +1094,19 @@ function executorsPage() {
       <div class="table-title">执行器实例</div>
       <div class="table-scroll">
         <table>
-          <thead><tr>${headers(['执行器','实例','服务','处理器','Gateway','地址','心跳年龄','状态','操作'])}</tr></thead>
+          <thead><tr>${headers(['执行器','实例','服务','处理器','资源','Gateway','地址','心跳年龄','状态','操作'])}</tr></thead>
           <tbody>${executors.map(item => tableRow([
             text(item.executorName),
             code(item.instanceId),
             text(item.serviceName),
             text((item.handlers ?? []).join(', ') || '-'),
+            text(executorResourceSummary(item.resources)),
             text(item.gatewayNodeId || '-'),
             text(`${item.host ?? '-'}:${item.port ?? '-'}`),
             text(`${Number(item.heartbeatAgeSeconds ?? 0)}s`),
             statusText(item.status ?? 'OFFLINE', item.status === 'ONLINE' ? 'success' : 'muted'),
             `<button class="link-button" type="button" data-executor-instance-detail="${escapeHtml(item.instanceId)}" data-executor-name="${escapeHtml(item.executorName)}">查看</button>`
-          ])).join('') || emptyRow(9, '暂无执行器实例')}</tbody>
+          ])).join('') || emptyRow(10, '暂无执行器实例')}</tbody>
         </table>
       </div>
     </section>
@@ -1058,6 +1146,14 @@ function openExecutorInstancesDialog(executorName) {
   bindExecutorInstanceDetailActions(root);
 }
 
+function executorResourceSummary(resources) {
+  if (!resources) return '未上报';
+  const cpu = Number(resources.availableCpuMillis ?? 0);
+  const memoryMb = Math.round(Number(resources.availableMemoryBytes ?? 0) / 1024 / 1024);
+  const active = Number(resources.activeExecutions ?? 0);
+  return `${cpu}m CPU · ${memoryMb} MiB · active=${active}`;
+}
+
 function openExecutorInstanceDetail(executorName, instanceId) {
   const instance = state.executors.find(item =>
     item.executorName === executorName && item.instanceId === instanceId
@@ -1091,6 +1187,8 @@ function openExecutorInstanceDetail(executorName, instanceId) {
             ${detailItem('最后心跳', formatDate(instance.lastHeartbeatAt))}
             ${detailItem('心跳年龄', `${Number(instance.heartbeatAgeSeconds ?? 0)}s`)}
             ${detailItem('离线阈值', `${state.executorHeartbeatTimeoutSeconds}s`)}
+            ${detailItem('可用资源', executorResourceSummary(instance.resources))}
+            ${detailItem('资源标签', (instance.resources?.tags ?? []).join(', ') || '-')}
             ${detailItem('元数据', metadata)}
           </div>
         </div>
@@ -1110,7 +1208,7 @@ function bindExecutorInstanceDetailActions(root = document) {
 
 function executionsPage() {
   const summary = summarizeExecutions(state.executions);
-  const rows = state.executions.slice(0, 8).map(item => tableRow([
+  const rows = state.executions.map(item => tableRow([
     code(item.executionId),
     code(item.jobId),
     text(formatDate(item.scheduledFireTime)),
@@ -1133,12 +1231,12 @@ function executionsPage() {
   ])).join('');
   return `
     <section class="toolbar">
-      <label class="field">任务ID <input placeholder="输入任务ID"></label>
+      <label class="field">任务ID <input id="execution-filter-job" placeholder="输入任务ID" value="${escapeHtml(state.executionPage.jobId)}"></label>
       <label class="field">执行器名称 <select><option>全部执行器</option></select></label>
-      <label class="field">执行状态 <select><option>全部状态</option></select></label>
-      <label class="field">时间范围 <span class="inline-field"><input type="date"><span>~</span><input type="date"></span></label>
-      <button class="btn primary" type="button">🔍 查询</button>
-      <button class="btn" type="button">◆ 重置</button>
+      <label class="field">执行状态 <select id="execution-filter-status"><option value="">全部状态</option>${['DISPATCHING','DISPATCHED','RUNNING','SUCCEEDED','FAILED','TIMEOUT','PARTIAL','CANCELLED'].map(value => `<option value="${value}" ${state.executionPage.status === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+      <label class="field">时间范围 <span class="inline-field"><input id="execution-filter-from" type="date" value="${escapeHtml(state.executionPage.from)}"><span>~</span><input id="execution-filter-to" type="date" value="${escapeHtml(state.executionPage.to)}"></span></label>
+      <button class="btn primary" type="button" data-execution-filter="apply">🔍 查询</button>
+      <button class="btn" type="button" data-execution-filter="reset">◆ 重置</button>
     </section>
     <section class="stats-grid">
       ${statCard('总执行数', state.executions.length, '', '', '▤', 'primary')}
@@ -1153,7 +1251,7 @@ function executionsPage() {
           <tbody>${rows || emptyRow(10, '暂无执行记录')}</tbody>
         </table>
       </div>
-      ${tableFooter(`显示 1-${Math.min(state.executions.length, 8)} 条，共 ${state.executions.length} 条记录`, Math.max(1, Math.ceil(state.executions.length / 8)))}
+      ${cursorFooter('executionPage', state.executions.length)}
     </section>
     <section class="table-card">
       <div class="table-title">派发死信 <span class="count-badge">${state.deadDispatches.length}</span></div>
@@ -1163,6 +1261,7 @@ function executionsPage() {
           <tbody>${deadRows || emptyRow(7, '当前没有派发死信')}</tbody>
         </table>
       </div>
+      ${cursorFooter('deadOutboxPage', state.deadDispatches.length)}
     </section>
   `;
 }
@@ -1199,17 +1298,141 @@ function backfillsPage() {
         <thead><tr>${headers(['请求 ID','任务 ID','时间范围','状态','进度','已派发','失败数','Canary','操作'])}</tr></thead>
         <tbody>${rows || emptyRow(9, '暂无补数操作')}</tbody>
       </table></div>
+      ${cursorFooter('backfillPage', state.backfills.length)}
     </section>`;
+}
+
+function operationsPage() {
+  const auditRows = state.auditRecords.map(item => tableRow([
+    code(item.auditId),
+    text(formatDate(item.occurredAt)),
+    text(item.actor || '-'),
+    text(item.role || '-'),
+    code(item.action),
+    text(item.resourceType || '-'),
+    code(item.resourceId || '-'),
+    executionTag(item.outcome || 'UNKNOWN'),
+    text(item.detail || '-')
+  ])).join('');
+  const failedRows = state.failedTriggers.map(item => tableRow([
+    code(item.idempotencyKey),
+    code(item.jobId),
+    text(item.eventType),
+    text(formatDate(item.failedAt)),
+    text(item.failureReason || '-'),
+    `<div class="job-actions">
+      <button class="link-button" type="button" data-trigger-failure="replay" data-trigger-key="${escapeHtml(item.idempotencyKey)}">重放</button>
+      <button class="link-button danger" type="button" data-trigger-failure="acknowledge" data-trigger-key="${escapeHtml(item.idempotencyKey)}">确认</button>
+    </div>`
+  ])).join('');
+  const page = state.auditPage;
+  return `
+    <section class="toolbar">
+      <label class="field">操作者 <input id="audit-filter-actor" value="${escapeHtml(page.actor)}" placeholder="actor"></label>
+      <label class="field">动作 <input id="audit-filter-action" value="${escapeHtml(page.action)}" placeholder="action"></label>
+      <label class="field">资源类型 <input id="audit-filter-resource" value="${escapeHtml(page.resourceType)}" placeholder="resourceType"></label>
+      <label class="field">结果 <select id="audit-filter-outcome"><option value="">全部结果</option>${['SUCCESS','FAILURE'].map(value => `<option value="${value}" ${page.outcome === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+      <label class="field">时间范围 <span class="inline-field"><input id="audit-filter-from" type="date" value="${escapeHtml(page.from)}"><span>~</span><input id="audit-filter-to" type="date" value="${escapeHtml(page.to)}"></span></label>
+      <button class="btn primary" type="button" data-audit-filter="apply">查询</button>
+      <button class="btn" type="button" data-audit-filter="reset">重置</button>
+    </section>
+    <section class="table-card">
+      <div class="table-title">失败事件 <span class="count-badge">${state.failedTriggers.length}</span></div>
+      <div class="table-scroll"><table class="compact-table">
+        <thead><tr>${headers(['幂等键','任务 ID','事件类型','失败时间','失败原因','操作'])}</tr></thead>
+        <tbody>${failedRows || emptyRow(6, '当前没有失败事件')}</tbody>
+      </table></div>
+    </section>
+    <section class="table-card">
+      <div class="table-title">审计日志 <span class="count-badge">${state.auditRecords.length}</span></div>
+      <div class="table-scroll"><table class="compact-table">
+        <thead><tr>${headers(['Audit ID','时间','操作者','角色','动作','资源类型','资源 ID','结果','详情'])}</tr></thead>
+        <tbody>${auditRows || emptyRow(9, '暂无审计记录')}</tbody>
+      </table></div>
+      ${cursorFooter('auditPage', state.auditRecords.length)}
+    </section>`;
+}
+
+function cursorFooter(key, itemCount) {
+  const page = state[key];
+  return `<div class="table-footer"><span>第 ${page.index + 1} 页，本页 ${itemCount} 条</span>
+    <div class="pagination">
+      <button class="page-btn" type="button" data-cursor-page="${key}" data-page-direction="prev" ${page.index === 0 ? 'disabled' : ''}>‹</button>
+      <span class="page-btn active">${page.index + 1}</span>
+      <button class="page-btn" type="button" data-cursor-page="${key}" data-page-direction="next" ${page.hasMore ? '' : 'disabled'}>›</button>
+    </div></div>`;
+}
+
+async function turnCursorPage(key, direction) {
+  const page = state[key];
+  if (direction === 'next' && page.hasMore && page.nextCursor) {
+    page.cursors = page.cursors.slice(0, page.index + 1);
+    page.cursors.push(page.nextCursor);
+    page.index += 1;
+  } else if (direction === 'prev' && page.index > 0) {
+    page.index -= 1;
+  } else return;
+  if (key === 'executionPage') await loadExecutions();
+  if (key === 'deadOutboxPage') await loadDeadDispatches();
+  if (key === 'backfillPage') await loadBackfills();
+  if (key === 'auditPage') await loadAuditRecords();
+  if (key === 'jobHistoryPage') {
+    await loadJobHistory();
+    renderJobHistoryDialog();
+    return;
+  }
+  renderView(state.currentView);
+}
+
+function resetCursorPage(page) {
+  page.cursors = [null];
+  page.index = 0;
+  page.nextCursor = null;
+  page.hasMore = false;
 }
 
 function backfillActions(item) {
   const id = escapeHtml(item.requestId);
   const actions = [];
+  actions.push(`<button class="link-button" type="button" data-backfill-detail="${id}">详情</button>`);
   if (['PENDING', 'RUNNING'].includes(item.status)) actions.push(`<button class="link-button" type="button" data-backfill-action="pause" data-backfill-id="${id}">暂停</button>`);
   if (item.status === 'PAUSED') actions.push(`<button class="link-button" type="button" data-backfill-action="resume" data-backfill-id="${id}">继续</button>`);
   if (item.canary && ['PENDING', 'RUNNING', 'PAUSED'].includes(item.status)) actions.push(`<button class="link-button" type="button" data-backfill-action="promote" data-backfill-id="${id}">全量执行</button>`);
   if (!['COMPLETED', 'CANCELLED'].includes(item.status)) actions.push(`<button class="link-button danger" type="button" data-backfill-action="cancel" data-backfill-id="${id}">取消</button>`);
   return actions.join(' ') || '-';
+}
+
+async function openBackfillDetail(requestId) {
+  try {
+    const detail = await api(`/api/backfills/${encodeURIComponent(requestId)}`);
+    const failures = detail.failures ?? [];
+    const rows = failures.map(item => tableRow([
+      text(item.ordinal), text(formatDate(item.fireTime)), code(item.executionId), text(item.error || '-')
+    ])).join('');
+    const root = document.getElementById('modal-root');
+    root.innerHTML = `
+      <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="backfill-detail-title">
+        <section class="modal">
+          <div class="modal-header"><div><h2 id="backfill-detail-title">补数详情</h2><div class="modal-subtitle code">${escapeHtml(detail.requestId)}</div></div><button class="btn icon" type="button" data-close>×</button></div>
+          <div class="modal-body execution-body">
+            <div class="detail-grid">
+              ${detailItem('任务', detail.jobId)}
+              ${detailItem('状态', executionTag(detail.status), true)}
+              ${detailItem('进度', `${Number(detail.cursor ?? 0)} / ${Number(detail.expanded ?? 0)}`)}
+              ${detailItem('失败数', String(Number(detail.failed ?? 0)))}
+              ${detailItem('创建时间', formatDate(detail.createdAt))}
+              ${detailItem('更新时间', formatDate(detail.updatedAt))}
+            </div>
+            <div class="table-scroll target-table"><table>
+              <thead><tr>${headers(['序号','触发时间','Execution ID','失败原因'])}</tr></thead>
+              <tbody>${rows || emptyRow(4, '当前没有失败触发点')}</tbody>
+            </table></div>
+          </div>
+          <div class="modal-footer"><button class="btn" type="button" data-close>关闭</button></div>
+        </section>
+      </div>`;
+    root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  } catch (error) { toast(error.message); }
 }
 
 function openBackfillDialog() {
@@ -1465,6 +1688,19 @@ async function deleteExecutor(executorName) {
     await api(`/api/executor-definitions/${encodeURIComponent(executorName)}`, { method: 'DELETE' });
     await refreshView(false);
     toast(`执行器已删除：${executorName}`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function operateFailedTrigger(idempotencyKey, action) {
+  const label = action === 'replay' ? '重放' : '确认';
+  if (!window.confirm(`确认${label}失败事件“${idempotencyKey}”？`)) return;
+  try {
+    await api(`/api/triggers/failed/${encodeURIComponent(idempotencyKey)}/${action}`, { method: 'POST' });
+    toast(`失败事件已${label}：${idempotencyKey}`);
+    await Promise.all([loadFailedTriggers(), loadAuditRecords()]);
+    renderView('operations');
   } catch (error) {
     toast(error.message);
   }
@@ -2542,11 +2778,17 @@ function jobActions(job) {
     <button class="icon-button" type="button" title="${toggleLabel}" aria-label="${toggleLabel}" data-job-operation="toggle" data-job-id="${id}">${toggleIcon}</button>
     <button class="icon-button" type="button" title="编辑任务" aria-label="编辑任务" data-job-operation="edit" data-job-id="${id}">&#9998;</button>
     <button class="icon-button" type="button" title="查看执行记录" aria-label="查看执行记录" data-job-operation="view" data-job-id="${id}">&#128065;</button>
+    <button class="icon-button" type="button" title="变更历史" aria-label="变更历史" data-job-operation="history" data-job-id="${id}">&#8801;</button>
     <button class="icon-button danger" type="button" title="删除任务" aria-label="删除任务" data-job-operation="delete" data-job-id="${id}">&#10005;</button>
   </div>`;
 }
 
 function bindViewActions(view) {
+  document.querySelectorAll('[data-cursor-page]').forEach(button => {
+    button.addEventListener('click', () => turnCursorPage(
+      button.dataset.cursorPage, button.dataset.pageDirection
+    ));
+  });
   if (view === 'jobs') {
     document.querySelectorAll('[data-job-operation]').forEach(button => {
       button.addEventListener('click', () => operateJob(button.dataset.jobId, button.dataset.jobOperation));
@@ -2569,6 +2811,22 @@ function bindViewActions(view) {
     });
   }
   if (view === 'executions') {
+    document.querySelector('[data-execution-filter="apply"]')?.addEventListener('click', async () => {
+      const page = state.executionPage;
+      page.jobId = document.getElementById('execution-filter-job').value.trim();
+      page.status = document.getElementById('execution-filter-status').value;
+      page.from = document.getElementById('execution-filter-from').value;
+      page.to = document.getElementById('execution-filter-to').value;
+      resetCursorPage(page);
+      await loadExecutions();
+      renderView('executions');
+    });
+    document.querySelector('[data-execution-filter="reset"]')?.addEventListener('click', async () => {
+      Object.assign(state.executionPage, { jobId: '', status: '', from: '', to: '' });
+      resetCursorPage(state.executionPage);
+      await loadExecutions();
+      renderView('executions');
+    });
     document.querySelectorAll('[data-execution-detail]').forEach(button => {
       button.addEventListener('click', () => openExecutionDetail(button.dataset.executionDetail));
     });
@@ -2577,8 +2835,36 @@ function bindViewActions(view) {
     });
   }
   if (view === 'backfills') {
+    document.querySelectorAll('[data-backfill-detail]').forEach(button => {
+      button.addEventListener('click', () => openBackfillDetail(button.dataset.backfillDetail));
+    });
     document.querySelectorAll('[data-backfill-action]').forEach(button => {
       button.addEventListener('click', () => operateBackfill(button.dataset.backfillId, button.dataset.backfillAction));
+    });
+  }
+  if (view === 'operations') {
+    document.querySelector('[data-audit-filter="apply"]')?.addEventListener('click', async () => {
+      const page = state.auditPage;
+      page.actor = document.getElementById('audit-filter-actor').value.trim();
+      page.action = document.getElementById('audit-filter-action').value.trim();
+      page.resourceType = document.getElementById('audit-filter-resource').value.trim();
+      page.outcome = document.getElementById('audit-filter-outcome').value;
+      page.from = document.getElementById('audit-filter-from').value;
+      page.to = document.getElementById('audit-filter-to').value;
+      resetCursorPage(page);
+      await loadAuditRecords();
+      renderView('operations');
+    });
+    document.querySelector('[data-audit-filter="reset"]')?.addEventListener('click', async () => {
+      Object.assign(state.auditPage, { actor: '', action: '', resourceType: '', outcome: '', from: '', to: '' });
+      resetCursorPage(state.auditPage);
+      await loadAuditRecords();
+      renderView('operations');
+    });
+    document.querySelectorAll('[data-trigger-failure]').forEach(button => {
+      button.addEventListener('click', () => operateFailedTrigger(
+        button.dataset.triggerKey, button.dataset.triggerFailure
+      ));
     });
   }
   if (view === 'executors') {
@@ -2780,8 +3066,13 @@ async function operateJob(jobId, operation) {
   const job = state.jobs.find(item => item.id === jobId);
   if (!job) return;
   if (operation === 'view') {
-    state.executionFilterJobId = jobId;
+    state.executionPage.jobId = jobId;
+    resetCursorPage(state.executionPage);
     await setView('executions');
+    return;
+  }
+  if (operation === 'history') {
+    await openJobHistoryDialog(jobId);
     return;
   }
   if (operation === 'edit') {
@@ -2810,6 +3101,67 @@ async function operateJob(jobId, operation) {
   } catch (error) {
     toast(error.message);
   }
+}
+
+async function openJobHistoryDialog(jobId) {
+  Object.assign(state.jobHistoryPage, { jobId, action: '', from: '', to: '' });
+  resetCursorPage(state.jobHistoryPage);
+  try {
+    await loadJobHistory();
+    renderJobHistoryDialog();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function renderJobHistoryDialog() {
+  const page = state.jobHistoryPage;
+  const rows = state.jobHistory.map(item => tableRow([
+    text(formatDate(item.occurredAt)),
+    code(item.action),
+    text(item.actor || '-'),
+    text(item.version),
+    code(item.historyId)
+  ])).join('');
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="job-history-title">
+      <section class="modal wide-modal">
+        <div class="modal-header"><div><h2 id="job-history-title">任务变更历史</h2><div class="modal-subtitle code">${escapeHtml(page.jobId)}</div></div><button class="btn icon" type="button" data-close>×</button></div>
+        <div class="modal-body">
+          <section class="toolbar">
+            <label class="field">动作 <input id="history-filter-action" value="${escapeHtml(page.action)}" placeholder="CREATE / UPDATE"></label>
+            <label class="field">时间范围 <span class="inline-field"><input id="history-filter-from" type="date" value="${escapeHtml(page.from)}"><span>~</span><input id="history-filter-to" type="date" value="${escapeHtml(page.to)}"></span></label>
+            <button class="btn primary" type="button" data-history-filter="apply">查询</button>
+            <button class="btn" type="button" data-history-filter="reset">重置</button>
+          </section>
+          <div class="table-scroll"><table class="compact-table">
+            <thead><tr>${headers(['时间','动作','操作者','版本','History ID'])}</tr></thead>
+            <tbody>${rows || emptyRow(5, '暂无变更历史')}</tbody>
+          </table></div>
+          ${cursorFooter('jobHistoryPage', state.jobHistory.length)}
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>关闭</button></div>
+      </section>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  root.querySelectorAll('[data-cursor-page="jobHistoryPage"]').forEach(button => {
+    button.addEventListener('click', () => turnCursorPage('jobHistoryPage', button.dataset.pageDirection));
+  });
+  root.querySelector('[data-history-filter="apply"]')?.addEventListener('click', async () => {
+    page.action = root.querySelector('#history-filter-action').value.trim();
+    page.from = root.querySelector('#history-filter-from').value;
+    page.to = root.querySelector('#history-filter-to').value;
+    resetCursorPage(page);
+    await loadJobHistory();
+    renderJobHistoryDialog();
+  });
+  root.querySelector('[data-history-filter="reset"]')?.addEventListener('click', async () => {
+    Object.assign(page, { action: '', from: '', to: '' });
+    resetCursorPage(page);
+    await loadJobHistory();
+    renderJobHistoryDialog();
+  });
 }
 
 function openJobEditDialog(job) {

@@ -36,6 +36,13 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
 
     @Override
     public boolean heartbeat(String executorName, String instanceId, Instant heartbeatAt) {
+        return heartbeat(executorName, instanceId, heartbeatAt, null);
+    }
+
+    @Override
+    public boolean heartbeat(
+            String executorName, String instanceId, Instant heartbeatAt, Map<String, String> metadata
+    ) {
         Objects.requireNonNull(heartbeatAt, "heartbeatAt");
         synchronized (lock) {
             InstanceKey key = new InstanceKey(executorName, instanceId);
@@ -43,7 +50,10 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
             if (current == null) {
                 return false;
             }
-            instances.put(key, copyWithHeartbeat(current, heartbeatAt, ExecutorInstanceStatus.ONLINE));
+            instances.put(key, copyWithHeartbeat(
+                    current, heartbeatAt, ExecutorInstanceStatus.ONLINE,
+                    metadata == null ? current.metadata() : metadata
+            ));
             return true;
         }
     }
@@ -56,7 +66,9 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
             if (current == null) {
                 return false;
             }
-            instances.put(key, copyWithHeartbeat(current, current.lastHeartbeatAt(), ExecutorInstanceStatus.OFFLINE));
+            instances.put(key, copyWithHeartbeat(
+                    current, current.lastHeartbeatAt(), ExecutorInstanceStatus.OFFLINE, current.metadata()
+            ));
             return true;
         }
     }
@@ -89,7 +101,8 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
     private static ExecutorInstance copyWithHeartbeat(
             ExecutorInstance current,
             Instant lastHeartbeatAt,
-            ExecutorInstanceStatus status
+            ExecutorInstanceStatus status,
+            Map<String, String> metadata
     ) {
         return new ExecutorInstance(
                 current.executorName(),
@@ -103,7 +116,7 @@ public final class InMemoryExecutorRegistry implements ExecutorRegistry {
                 current.registeredAt(),
                 lastHeartbeatAt,
                 status,
-                current.metadata()
+                metadata
         );
     }
 

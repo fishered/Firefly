@@ -4,6 +4,7 @@ import com.firefly.domain.CronSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.store.InMemoryJobRepository;
+import com.firefly.trigger.BackfillCoordinator;
 import com.firefly.trigger.InMemoryBackfillOperationStore;
 import org.junit.jupiter.api.Test;
 
@@ -30,11 +31,15 @@ class AdminHttpBackfillTest {
         InMemoryJobRepository jobs = new InMemoryJobRepository(clock);
         jobs.save(JobDefinition.builder().id("job").name("job").handlerName("handler")
                 .schedule(new CronSchedule("0 * * * * *")).build(), NOW.plusSeconds(60));
+        BackfillCoordinator coordinator = new BackfillCoordinator(
+                jobs, null, new InMemoryBackfillOperationStore(), clock,
+                "admin-http-test", Duration.ofSeconds(30)
+        );
         AdminHttpPlugin plugin = new AdminHttpPlugin(new AdminHttpOptions(
                 "127.0.0.1", port, Duration.ofSeconds(30)
         ));
         plugin.start(FireflyPluginContext.builder().clock(clock).jobRepository(jobs)
-                .backfillOperationStore(new InMemoryBackfillOperationStore()).build());
+                .backfillCoordinator(coordinator).build());
         try {
             String request = """
                     {"requestId":"run","jobId":"job","fromInclusive":"2026-09-28T00:00:00Z",
@@ -47,11 +52,14 @@ class AdminHttpBackfillTest {
             assertTrue(preview.body().contains("\"canaryExecutions\":2"));
 
             assertEquals(202, post(port, "/api/backfills", request).statusCode());
+            coordinator.runAvailable(1, 10);
             String paused = awaitStatus(port, "run", "PAUSED");
             assertTrue(paused.contains("\"dispatched\":2"));
             assertTrue(paused.contains("\"remaining\":0"));
+            assertTrue(paused.contains("\"failures\":[]"));
 
             assertEquals(202, post(port, "/api/backfills/run/promote", "{}").statusCode());
+            coordinator.runAvailable(1, 10);
             String completed = awaitStatus(port, "run", "COMPLETED");
             assertTrue(completed.contains("\"dispatched\":4"));
             assertTrue(get(port, "/api/backfills").body().contains("\"requestId\":\"run\""));

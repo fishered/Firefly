@@ -142,6 +142,15 @@ public final class BackfillCoordinator {
         return operations.list(limit);
     }
 
+    public com.firefly.query.CursorPage<BackfillOperation> query(BackfillQuery query) {
+        return operations.query(query);
+    }
+
+    public List<BackfillItem> items(String requestId, int limit) {
+        if (operations.find(requestId).isEmpty()) throw notFound(requestId);
+        return operations.listItems(requestId, limit);
+    }
+
     private BackfillOperation process(BackfillOperation claimed, int requestedLimit) {
         BackfillOperation current = claimed;
         int limit = Math.min(requestedLimit, current.options().batchSize());

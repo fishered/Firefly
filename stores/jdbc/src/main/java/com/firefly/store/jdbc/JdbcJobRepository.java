@@ -1284,7 +1284,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                             claim_owner, claim_until, ack_deadline, snapshot_payload, last_error
                      from firefly_dispatch_outbox
                      where status='DEAD'
-                     order by updated_at desc, outbox_id
+                     order by available_at desc, outbox_id desc
                      """)) {
             statement.setMaxRows(limit);
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -1296,6 +1296,47 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to list dead dispatch outbox records", e);
+        }
+    }
+
+    @Override
+    public com.firefly.query.CursorPage<DispatchOutboxRecord> queryDeadDispatches(
+            com.firefly.store.DispatchOutboxQuery query
+    ) {
+        StringBuilder sql = new StringBuilder("""
+                select outbox_id, execution_id, root_execution_id, run_attempt, scheduled_fire_time, dispatch_time,
+                       owner_node_id, fencing_token, dispatch_type, status, attempt, available_at,
+                       claim_owner, claim_until, ack_deadline, snapshot_payload, last_error
+                from firefly_dispatch_outbox where status='DEAD'
+                """);
+        List<Object> parameters = new ArrayList<>();
+        if (!query.jobId().isBlank()) { sql.append(" and job_id=?"); parameters.add(query.jobId()); }
+        if (query.dispatchType() != null) { sql.append(" and dispatch_type=?"); parameters.add(query.dispatchType().name()); }
+        if (query.fromInclusive() != null) { sql.append(" and available_at>=?"); parameters.add(query.fromInclusive()); }
+        if (query.toExclusive() != null) { sql.append(" and available_at<?"); parameters.add(query.toExclusive()); }
+        if (query.after() != null) {
+            sql.append(" and (available_at<? or (available_at=? and outbox_id<?))");
+            parameters.add(query.after().timestamp());
+            parameters.add(query.after().timestamp());
+            parameters.add(query.after().id());
+        }
+        sql.append(" order by available_at desc, outbox_id desc limit ?");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            for (int index = 0; index < parameters.size(); index++) {
+                Object value = parameters.get(index);
+                if (value instanceof Instant instant) statement.setTimestamp(index + 1, Timestamp.from(instant));
+                else statement.setString(index + 1, value.toString());
+            }
+            statement.setInt(parameters.size() + 1, query.limit() + 1);
+            List<DispatchOutboxRecord> values = new ArrayList<>();
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) values.add(mapDispatchRecord(resultSet));
+            }
+            return com.firefly.query.CursorPage.of(values, query.limit(), value ->
+                    new com.firefly.query.PageCursor(value.availableAt(), value.outboxId()));
+        } catch (SQLException failure) {
+            throw new JdbcException("failed to query dead dispatch outbox records", failure);
         }
     }
 

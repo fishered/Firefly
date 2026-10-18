@@ -159,3 +159,28 @@ firefly:
 TLS/mTLS 可通过 Gateway 和 Executor 客户端配置启用。服务端配置 `firefly.executor.gateway.netty.tls.certificate-chain`、`private-key`、`trust-certificates`、`require-client-auth` 和 `reload-interval`；客户端配置 `firefly.executor.tls-*`，包括信任证书、客户端证书和主机名校验。Gateway 会为新连接热加载变化后的 PEM 文件，已有连接保留到自然重连。
 
 注册拒绝响应包含稳定 `reasonCode`；Prometheus 暴露活跃连接、注册拒绝和断线指标。`CANCEL_JOB` 是协作式取消，Executor 会中断本地 Future 并回报 `CANCELLED`，业务 Handler 仍需正确响应线程中断。
+
+## 资源快照与准入
+
+1.1.6 起，Executor 在注册和心跳中上报可用 CPU milli、可用内存、资源标签、活动执行数和租户活动数。默认采样器使用 JVM 最大内存、当前堆占用、处理器数量和本地 Worker 活动数；也可以通过 `resourceReporter` 接入容器或节点侧指标。
+
+```java
+NettyExecutorClient client = NettyExecutorClient.builder()
+        .executorName("billing-executor")
+        .resourceCpuCapacityMillis(4_000)
+        .resourceMemoryCapacityBytes(4L * 1024 * 1024 * 1024)
+        .resourceTags(Set.of("region:cn-east", "gpu:false"))
+        .build();
+```
+
+任务参数声明准入要求；未声明任何约束时保持旧版路由行为：
+
+```text
+firefly.resource.tenantId=tenant-a
+firefly.resource.cpuMillis=500
+firefly.resource.memoryBytes=268435456
+firefly.resource.requiredTags=region:cn-east,gpu:false
+firefly.resource.maxTenantConcurrent=8
+```
+
+Gateway 在共享位置目录的最新会话上原子预留资源。计划实例容量不足或快照已变化时，会按任务路由策略继续尝试其他候选；广播模式不会把一个实例的失败替换成另一个实例，以保留“一实例一次”的语义。未上报资源快照的旧客户端仍能接收无约束任务，但不会被选中执行带资源约束的任务。

@@ -434,6 +434,7 @@ final class AdminHttpJson {
             }
             boolean online = instance.status().name().equals("ONLINE")
                     && !instance.lastHeartbeatAt().isBefore(now.minus(heartbeatTimeout));
+            var resources = com.firefly.executor.ExecutorResourceMetadata.report(instance.metadata());
             json.append("{\"executorName\":\"").append(escape(instance.executorName()))
                     .append("\",\"instanceId\":\"").append(escape(instance.instanceId()))
                     .append("\",\"sessionId\":\"").append(escape(instance.sessionId()))
@@ -445,8 +446,23 @@ final class AdminHttpJson {
                     .append("\",\"status\":\"").append(online ? "ONLINE" : "OFFLINE")
                     .append("\",\"registeredAt\":\"").append(escape(instance.registeredAt().toString()))
                     .append("\",\"lastHeartbeatAt\":\"").append(escape(instance.lastHeartbeatAt().toString()))
-                    .append("\",\"heartbeatAgeSeconds\":").append(Math.max(0, Duration.between(instance.lastHeartbeatAt(), now).toSeconds()))
-                    .append(",\"handlers\":[");
+                    .append("\",\"heartbeatAgeSeconds\":").append(Math.max(0, Duration.between(instance.lastHeartbeatAt(), now).toSeconds()));
+            if (resources.isPresent()) {
+                var report = resources.get();
+                json.append(",\"resources\":{\"availableCpuMillis\":").append(report.availableCpuMillis())
+                        .append(",\"availableMemoryBytes\":").append(report.availableMemoryBytes())
+                        .append(",\"activeExecutions\":").append(report.activeExecutions())
+                        .append(",\"tags\":[");
+                int tagIndex = 0;
+                for (String tag : report.tags().stream().sorted().toList()) {
+                    if (tagIndex++ > 0) json.append(',');
+                    json.append('"').append(escape(tag)).append('"');
+                }
+                json.append("]}");
+            } else {
+                json.append(",\"resources\":null");
+            }
+            json.append(",\"handlers\":[");
             int handlerIndex = 0;
             for (String handler : java.util.Arrays.stream(
                             instance.metadata().getOrDefault("handlerNames", "").split(","))

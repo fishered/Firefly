@@ -5,6 +5,7 @@ import com.firefly.domain.ExecutorInstance;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -16,6 +17,12 @@ public interface ExecutorRegistry {
     Optional<ExecutorInstance> find(String executorName, String instanceId);
 
     boolean heartbeat(String executorName, String instanceId, Instant heartbeatAt);
+
+    default boolean heartbeat(
+            String executorName, String instanceId, Instant heartbeatAt, Map<String, String> metadata
+    ) {
+        return heartbeat(executorName, instanceId, heartbeatAt);
+    }
 
     boolean markOffline(String executorName, String instanceId);
 

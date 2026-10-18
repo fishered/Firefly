@@ -33,6 +33,7 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await expect(page.locator('.calendar-summary-card')).toContainText('cn-workday');
 
     await page.locator('[data-view="executors"]').click();
+    await expect(page.locator('tbody').nth(1)).toContainText('2000m CPU');
     await page.locator('#page-actions button').click();
     await expect(page.locator('#executor-dialog')).toBeVisible();
     await page.locator('#executor-dialog [name="name"]').fill('billing-executor');
@@ -71,6 +72,9 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await expect(page.locator('#backfill-dialog button[type="submit"]')).toBeEnabled();
     await page.locator('#backfill-dialog button[type="submit"]').click();
     await expect(page.locator('[data-backfill-action="pause"]')).toBeVisible();
+    await page.locator('[data-backfill-detail]').click();
+    await expect(page.locator('#backfill-detail-title')).toContainText('Backfill details');
+    await page.locator('[data-close]').last().click();
 
     await page.locator('[data-view="executions"]').click();
     await page.locator('[data-execution-detail="exec-failed-sample-job"]').click();
@@ -92,6 +96,62 @@ test('returns to sign-in when the UI session expires', async ({ page }) => {
     await page.waitForTimeout(1_250);
     await page.locator('[data-view="jobs"]').click();
     await expect(page.locator('#login-form')).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test('uses opaque server cursors for execution filters and page navigation', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="executions"]').click();
+    await page.locator('#execution-filter-job').fill('page-job');
+    await page.locator('[data-execution-filter="apply"]').click();
+    await expect(page.locator('[data-execution-detail="page-execution-2"]')).toBeVisible();
+    await expect(page.locator('[data-execution-detail="page-execution-1"]')).toHaveCount(0);
+
+    await page.locator('[data-cursor-page="executionPage"][data-page-direction="next"]').click();
+    await expect(page.locator('[data-execution-detail="page-execution-1"]')).toBeVisible();
+    await expect(page.locator('[data-execution-detail="page-execution-2"]')).toHaveCount(0);
+
+    await page.locator('[data-cursor-page="executionPage"][data-page-direction="prev"]').click();
+    await expect(page.locator('[data-execution-detail="page-execution-2"]')).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test('pages audit and job history cursors and operates failed triggers', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="backfills"]').click();
+    await expect(page.getByText('backfill-page-2')).toBeVisible();
+    await page.locator('[data-cursor-page="backfillPage"][data-page-direction="next"]').click();
+    await expect(page.getByText('backfill-page-1')).toBeVisible();
+
+    await page.locator('[data-view="executions"]').click();
+    await expect(page.getByText('dead-page-2')).toBeVisible();
+    await page.locator('[data-cursor-page="deadOutboxPage"][data-page-direction="next"]').click();
+    await expect(page.getByText('dead-page-1')).toBeVisible();
+
+    await page.locator('[data-view="operations"]').click();
+    await expect(page.getByText('audit-page-2')).toBeVisible();
+    await page.locator('[data-cursor-page="auditPage"][data-page-direction="next"]').click();
+    await expect(page.getByText('audit-page-1')).toBeVisible();
+    await expect(page.getByText('audit-page-2')).toHaveCount(0);
+
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('[data-trigger-key="failed-event-1"][data-trigger-failure="acknowledge"]').click();
+    await expect(page.locator('[data-trigger-key="failed-event-1"]')).toHaveCount(0);
+
+    await page.locator('[data-view="jobs"]').click();
+    await page.locator('[data-job-id="sample-job"][data-job-operation="history"]').click();
+    await expect(page.getByText('history-page-2')).toBeVisible();
+    await page.locator('[data-cursor-page="jobHistoryPage"][data-page-direction="next"]').click();
+    await expect(page.getByText('history-page-1')).toBeVisible();
+    await expect(page.getByText('history-page-2')).toHaveCount(0);
   } finally {
     await app.close();
   }
@@ -175,6 +235,15 @@ async function routeMockRequest(state, method, url, body, response) {
     json(response, 200, { jobs: state.jobs });
     return;
   }
+  const jobHistoryMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/history$/);
+  if (method === 'GET' && jobHistoryMatch) {
+    const jobId = decodeURIComponent(jobHistoryMatch[1]);
+    const cursor = url.searchParams.get('cursor');
+    json(response, 200, cursor === 'history-2'
+      ? { items: [historyRecord('history-page-1', jobId)], nextCursor: null, hasMore: false }
+      : { items: [historyRecord('history-page-2', jobId)], nextCursor: 'history-2', hasMore: true });
+    return;
+  }
   if (method === 'GET' && url.pathname === '/api/calendars') {
     json(response, 200, { calendars: state.calendars });
     return;
@@ -232,7 +301,14 @@ async function routeMockRequest(state, method, url, body, response) {
     return;
   }
   if (method === 'GET' && url.pathname === '/api/executions') {
-    json(response, 200, { executions: state.executions });
+    if (url.searchParams.get('jobId') === 'page-job') {
+      const cursor = url.searchParams.get('cursor');
+      json(response, 200, cursor === 'page-2'
+        ? { executions: [pagedExecution('page-execution-1')], nextCursor: null, hasMore: false }
+        : { executions: [pagedExecution('page-execution-2')], nextCursor: 'page-2', hasMore: true });
+      return;
+    }
+    json(response, 200, { executions: state.executions, nextCursor: null, hasMore: false });
     return;
   }
   const replayPreviewMatch = url.pathname.match(/^\/api\/executions\/([^/]+)\/replay\/preview$/);
@@ -279,11 +355,39 @@ async function routeMockRequest(state, method, url, body, response) {
     return;
   }
   if (method === 'GET' && url.pathname === '/api/outbox/dead') {
-    json(response, 200, { deadDispatches: [] });
+    const cursor = url.searchParams.get('cursor');
+    json(response, 200, cursor === 'dead-2'
+      ? { deadDispatches: [pagedDeadDispatch('dead-page-1')], nextCursor: null, hasMore: false }
+      : { deadDispatches: [pagedDeadDispatch('dead-page-2')], nextCursor: 'dead-2', hasMore: true });
     return;
   }
   if (method === 'GET' && url.pathname === '/api/backfills') {
-    json(response, 200, { backfills: state.backfills });
+    if (state.backfills.length) {
+      json(response, 200, { backfills: state.backfills, nextCursor: null, hasMore: false });
+    } else {
+      const cursor = url.searchParams.get('cursor');
+      json(response, 200, cursor === 'backfill-2'
+        ? { backfills: [pagedBackfill('backfill-page-1')], nextCursor: null, hasMore: false }
+        : { backfills: [pagedBackfill('backfill-page-2')], nextCursor: 'backfill-2', hasMore: true });
+    }
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/api/audit') {
+    const cursor = url.searchParams.get('cursor');
+    json(response, 200, cursor === 'audit-2'
+      ? { items: [auditRecord('audit-page-1')], nextCursor: null, hasMore: false }
+      : { items: [auditRecord('audit-page-2')], nextCursor: 'audit-2', hasMore: true });
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/api/triggers/failed') {
+    json(response, 200, { failedTriggers: state.failedTriggers });
+    return;
+  }
+  const failedTriggerMatch = url.pathname.match(/^\/api\/triggers\/failed\/([^/]+)\/(replay|acknowledge)$/);
+  if (method === 'POST' && failedTriggerMatch) {
+    const key = decodeURIComponent(failedTriggerMatch[1]);
+    state.failedTriggers = state.failedTriggers.filter(item => item.idempotencyKey !== key);
+    json(response, 202, failedTriggerMatch[2] === 'replay' ? { accepted: true } : { acknowledged: true });
     return;
   }
   if (method === 'POST' && url.pathname === '/api/backfills/preview') {
@@ -312,6 +416,13 @@ async function routeMockRequest(state, method, url, body, response) {
       updatedAt: new Date().toISOString()
     });
     json(response, 202, state.backfills[0]);
+    return;
+  }
+  const backfillDetailMatch = url.pathname.match(/^\/api\/backfills\/([^/]+)$/);
+  if (method === 'GET' && backfillDetailMatch) {
+    const requestId = decodeURIComponent(backfillDetailMatch[1]);
+    const backfill = state.backfills.find(item => item.requestId === requestId);
+    json(response, backfill ? 200 : 404, backfill ? { ...backfill, failures: [] } : { error: 'not_found' });
     return;
   }
   const backfillActionMatch = url.pathname.match(/^\/api\/backfills\/([^/]+)\/(pause|resume|cancel|promote)$/);
@@ -385,7 +496,13 @@ function createMockState() {
       port: 1883,
       lastHeartbeatAt: now.toISOString(),
       heartbeatAgeSeconds: 1,
-      status: 'ONLINE'
+      status: 'ONLINE',
+      resources: {
+        availableCpuMillis: 2000,
+        availableMemoryBytes: 536870912,
+        activeExecutions: 1,
+        tags: ['zone:test']
+      }
     }],
     executions: [{
       executionId: 'exec-sample-job',
@@ -407,6 +524,13 @@ function createMockState() {
       targets: [{ targetExecutionId: 'failed-target-1', status: 'FAILED', errorMessage: 'boom' }]
     }],
     backfills: [],
+    failedTriggers: [{
+      idempotencyKey: 'failed-event-1',
+      jobId: 'sample-job',
+      eventType: 'ORDER_CREATED',
+      failedAt: startedAt,
+      failureReason: 'executor unavailable'
+    }],
     nodes: [{
       nodeId: 'scheduler-1',
       roles: ['SCHEDULER', 'GATEWAY'],
@@ -462,6 +586,68 @@ function runningExecution(jobId) {
       status: 'RUNNING',
       attempts: 1
     }]
+  };
+}
+
+function pagedExecution(executionId) {
+  return {
+    executionId,
+    jobId: 'page-job',
+    status: 'SUCCEEDED',
+    scheduledFireTime: new Date().toISOString(),
+    dispatchTime: new Date().toISOString(),
+    startTime: new Date().toISOString(),
+    endTime: new Date().toISOString()
+  };
+}
+
+function auditRecord(auditId) {
+  return {
+    auditId,
+    occurredAt: new Date().toISOString(),
+    actor: 'operator',
+    role: 'OPERATOR',
+    action: 'POST /api/triggers/failed/event/replay',
+    resourceType: 'triggers',
+    resourceId: 'event',
+    outcome: 'SUCCESS',
+    detail: 'status=202'
+  };
+}
+
+function historyRecord(historyId, jobId) {
+  return {
+    historyId,
+    jobId,
+    version: 2,
+    action: 'UPDATE',
+    actor: 'operator',
+    occurredAt: new Date().toISOString()
+  };
+}
+
+function pagedBackfill(requestId) {
+  return {
+    requestId,
+    jobId: 'sample-job',
+    fromInclusive: new Date().toISOString(),
+    toInclusive: new Date().toISOString(),
+    status: 'COMPLETED',
+    cursor: 1,
+    expanded: 1,
+    dispatched: 1,
+    failed: 0
+  };
+}
+
+function pagedDeadDispatch(outboxId) {
+  return {
+    outboxId,
+    jobId: 'sample-job',
+    dispatchType: 'REMOTE',
+    attempt: 5,
+    availableAt: new Date().toISOString(),
+    lastError: 'gateway unavailable'
   };
 }
 

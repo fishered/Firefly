@@ -10,10 +10,13 @@ import java.util.List;
 final class AdminSystemController {
     private final FireflyPluginContext context;
     private final AdminHttpResponder responses;
+    private final AdminRequestReader requests;
 
-    AdminSystemController(FireflyPluginContext context, AdminHttpResponder responses) {
+    AdminSystemController(FireflyPluginContext context, AdminHttpResponder responses,
+                          AdminRequestReader requests) {
         this.context = java.util.Objects.requireNonNull(context, "context");
         this.responses = java.util.Objects.requireNonNull(responses, "responses");
+        this.requests = java.util.Objects.requireNonNull(requests, "requests");
     }
 
     void index(HttpExchange exchange) throws IOException {
@@ -39,8 +42,20 @@ final class AdminSystemController {
             methodNotAllowed(exchange);
             return;
         }
-        var records = context.auditRepository().map(repository -> repository.listRecent(200)).orElse(List.of());
-        responses.ok(exchange, AdminHttpResponder.JSON, AdminHttpJson.audit(records));
+        var query = new com.firefly.audit.AuditQuery(
+                AdminPageSupport.text(requests, exchange, "actor"),
+                AdminPageSupport.text(requests, exchange, "action"),
+                AdminPageSupport.text(requests, exchange, "resourceType"),
+                AdminPageSupport.text(requests, exchange, "outcome"),
+                AdminPageSupport.instant(requests, exchange, "from"),
+                AdminPageSupport.instant(requests, exchange, "to"),
+                AdminPageSupport.cursor(requests, exchange),
+                AdminPageSupport.limit(requests, exchange, 100)
+        );
+        var page = context.auditRepository().map(repository -> repository.query(query))
+                .orElse(new com.firefly.query.CursorPage<com.firefly.audit.AuditRecord>(List.of(), null));
+        responses.ok(exchange, AdminHttpResponder.JSON,
+                AdminPageSupport.json(AdminHttpJson.audit(page.items()), page));
     }
 
     private void methodNotAllowed(HttpExchange exchange) throws IOException {
