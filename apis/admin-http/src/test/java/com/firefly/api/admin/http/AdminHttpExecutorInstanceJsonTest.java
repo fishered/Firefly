@@ -3,12 +3,15 @@ package com.firefly.api.admin.http;
 import com.firefly.domain.ExecutorInstance;
 import com.firefly.domain.ExecutorInstanceStatus;
 import com.firefly.domain.ExecutorProtocol;
+import com.firefly.executor.ExecutorResourceMetadata;
+import com.firefly.executor.ExecutorResourceReport;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,7 +30,10 @@ class AdminHttpExecutorInstanceJsonTest {
                 .registeredAt(now.minusSeconds(20))
                 .lastHeartbeatAt(now.minusSeconds(4))
                 .status(ExecutorInstanceStatus.ONLINE)
-                .metadata(Map.of("version", "1.2.0", "handlerNames", "billingHandler,refundHandler"))
+                .metadata(ExecutorResourceMetadata.merge(
+                        Map.of("version", "1.2.0", "handlerNames", "billingHandler,refundHandler"),
+                        new ExecutorResourceReport(2_000, 4_096, Set.of("ssd", "zone-a"), 3, Map.of())
+                ))
                 .build();
 
         String json = AdminHttpJson.executors(List.of(), List.of(instance), now, Duration.ofSeconds(30));
@@ -40,5 +46,9 @@ class AdminHttpExecutorInstanceJsonTest {
         assertTrue(json.contains("\"handlers\":[\"billingHandler\",\"refundHandler\"]"));
         assertTrue(json.contains("\"handlerNames\":\"billingHandler,refundHandler\""));
         assertTrue(json.contains("\"version\":\"1.2.0\""));
+        assertTrue(json.contains("\"availableCpuMillis\":2000"));
+        assertTrue(json.contains("\"availableMemoryBytes\":4096"));
+        assertTrue(json.contains("\"activeExecutions\":3"));
+        assertTrue(json.contains("\"tags\":[\"ssd\",\"zone-a\"]"));
     }
 }

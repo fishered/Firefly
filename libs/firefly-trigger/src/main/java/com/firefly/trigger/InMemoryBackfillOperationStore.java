@@ -78,6 +78,14 @@ public final class InMemoryBackfillOperationStore implements BackfillOperationSt
     }
 
     @Override
+    public synchronized List<BackfillItem> listItems(String requestId, int limit) {
+        if (limit < 1) throw new IllegalArgumentException("limit must be positive");
+        Entry entry = entries.get(requestId);
+        if (entry == null) return List.of();
+        return entry.items.stream().limit(limit).toList();
+    }
+
+    @Override
     public synchronized Optional<BackfillOperation> recordItem(
             String requestId,
             String claimantId,

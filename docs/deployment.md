@@ -69,8 +69,8 @@ firefly:
 ## 分别构建两个镜像
 
 ```powershell
-docker build -t firefly/firefly-server:1.1.5 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.1.5 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.1.7 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.1.7 -f ui/admin/Dockerfile ui/admin
 ```
 
 服务镜像使用 Amazon Corretto OpenJDK 21 Alpine 和 Gradle `installDist` 产物，以非 root 用户运行。前端镜像使用 Node 22 Alpine，
@@ -81,7 +81,7 @@ docker build -t firefly/firefly-admin-ui:1.1.5 -f ui/admin/Dockerfile ui/admin
 Compose 默认使用固定镜像名和 `.env` 中的统一版本：
 
 ```dotenv
-FIREFLY_VERSION=1.1.5
+FIREFLY_VERSION=1.1.7
 ```
 
 需要私有仓库时，对镜像重新打标签，并在部署侧 Compose 覆盖文件中替换 `image` 地址；运行配置不再承担镜像仓库选择职责。
@@ -96,10 +96,10 @@ docker compose up -d --no-build
 也可以分别发布：
 
 ```powershell
-docker tag firefly/firefly-server:1.1.5 registry.example.com/firefly/firefly-server:1.1.5
-docker tag firefly/firefly-admin-ui:1.1.5 registry.example.com/firefly/firefly-admin-ui:1.1.5
-docker push registry.example.com/firefly/firefly-server:1.1.5
-docker push registry.example.com/firefly/firefly-admin-ui:1.1.5
+docker tag firefly/firefly-server:1.1.7 registry.example.com/firefly/firefly-server:1.1.7
+docker tag firefly/firefly-admin-ui:1.1.7 registry.example.com/firefly/firefly-admin-ui:1.1.7
+docker push registry.example.com/firefly/firefly-server:1.1.7
+docker push registry.example.com/firefly/firefly-admin-ui:1.1.7
 ```
 
 ## 分别运行容器
@@ -124,12 +124,12 @@ docker run -d --name firefly-server --network firefly `
   -e FIREFLY_JDBC_SCHEMA_MODE=initialize-if-empty `
   -e FIREFLY_SECURITY_JWT_ENABLED=true `
   -e FIREFLY_SECURITY_JWT_SECRET=change-me-to-a-long-random-signing-secret `
-  firefly/firefly-server:1.1.5
+  firefly/firefly-server:1.1.7
 
 docker run -d --name firefly-admin-ui --network firefly `
   -p 9720:9720 `
   -e FIREFLY_ADMIN_API=http://firefly-server:9710 `
-  firefly/firefly-admin-ui:1.1.5
+  firefly/firefly-admin-ui:1.1.7
 ```
 
 `FIREFLY_ADMIN_API` 必须是前端容器可以访问的地址。容器内的 `127.0.0.1:9710` 指向前端容器自身，不能
@@ -162,6 +162,41 @@ Compose 健康检查。
 
 `FIREFLY_SCHEDULER_SHARD_COUNT` 是集群首次初始化后的共享契约，不能通过普通滚动更新修改。Gateway 内部转发、
 分片重建、排空下线和生产告警约束见 [ha-cluster.md](ha-cluster.md) 与 [database-schema.md](database-schema.md)。
+
+Backfill 由拥有 `scheduler` 角色的节点推进，不依赖 Admin HTTP 插件。以下运行时属性可按吞吐与数据库负载调整：
+
+```properties
+firefly.backfill.worker.claim-lease=PT30S
+firefly.backfill.worker.interval=PT0.2S
+firefly.backfill.worker.max-operations=8
+firefly.backfill.worker.max-executions-per-operation=100
+```
+
+`claim-lease` 必须覆盖一次批处理的正常耗时；缩短 `interval` 或提高两个上限前，应同步观察数据库连接、Outbox 年龄和 `firefly_backfill_*` 指标。
+
+外部事件入口必须为所有 API 节点配置相同的独立 HMAC 密钥：
+
+```properties
+firefly.trigger.hmac-secret=${FIREFLY_TRIGGER_HMAC_SECRET}
+firefly.trigger.signature-max-skew=PT5M
+firefly.trigger.nonce-ttl=PT10M
+firefly.trigger.max-request-body-bytes=65536
+```
+
+未配置密钥时事件入口返回 `503`，不会降级为无签名接收。`nonce-ttl` 必须不小于签名时间窗；JDBC 部署会持久化 nonce，确保节点重启后仍拒绝重放。
+
+## PostgreSQL 备份恢复门禁
+
+预发环境应使用与生产相同的大版本 PostgreSQL，在暂停 Firefly 写入后，把备份恢复到一个独立、空的临时数据库：
+
+```bash
+FIREFLY_BACKUP_SOURCE_URL='postgresql://firefly:***@source/firefly' \
+FIREFLY_BACKUP_RESTORE_URL='postgresql://firefly:***@restore/firefly_restore' \
+FIREFLY_BACKUP_SOURCE_QUIESCED=true \
+bash ./scripts/production/verify-postgresql-backup-restore.sh
+```
+
+脚本拒绝覆盖非空目标库，校验 dump 可读性、核心表行数和 schema 版本。它适合由 CI 的临时 PostgreSQL 服务或预发流水线调用；完成后由流水线删除临时数据库。
 
 ## 受控在线分片扩容
 

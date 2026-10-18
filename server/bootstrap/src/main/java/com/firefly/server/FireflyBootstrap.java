@@ -168,6 +168,32 @@ public final class FireflyBootstrap implements AutoCloseable {
             nodeDrainMonitor.start();
             startup.add("node drain monitor", nodeDrainMonitor);
 
+            var runtimeConfiguration = options.pluginConfiguration();
+            com.firefly.trigger.BackfillCoordinator backfillCoordinator =
+                    new com.firefly.trigger.BackfillCoordinator(
+                            repository, executionRepository, assembly.backfillOperationStore(), runtimeClock,
+                            "backfill-" + options.nodeName(),
+                            Duration.parse(runtimeConfiguration.property(
+                                    "firefly.backfill.worker.claim-lease", "PT30S"
+                            ))
+                    );
+            if (options.nodeRoles().contains(ServerNodeRole.SCHEDULER)) {
+                BackfillWorker backfillWorker = new BackfillWorker(
+                        backfillCoordinator, metrics, runtimeClock,
+                        Duration.parse(runtimeConfiguration.property(
+                                "firefly.backfill.worker.interval", "PT0.2S"
+                        )),
+                        Integer.parseInt(runtimeConfiguration.property(
+                                "firefly.backfill.worker.max-operations", "8"
+                        )),
+                        Integer.parseInt(runtimeConfiguration.property(
+                                "firefly.backfill.worker.max-executions-per-operation", "100"
+                        ))
+                );
+                backfillWorker.start();
+                startup.add("backfill worker", backfillWorker);
+            }
+
             FireflyPluginContext.Builder pluginContext = FireflyPluginContext.builder()
                     .jobRepository(repository)
                     .jobHandlerRegistry(handlerRegistry)
@@ -180,7 +206,9 @@ public final class FireflyBootstrap implements AutoCloseable {
                     .jobHistoryRepository(injector.getInstance(com.firefly.store.JobHistoryRepository.class))
                     .adminUserRepository(assembly.adminUserRepository())
                     .integrationKeyRepository(assembly.integrationKeyRepository())
+                    .triggerInbox(assembly.triggerInbox())
                     .backfillOperationStore(assembly.backfillOperationStore())
+                    .backfillCoordinator(backfillCoordinator)
                     .pluginStatusProvider(plugins::descriptors)
                     .nodeDrainStatusProvider(nodeDrainMonitor)
                     .configuration(options.pluginConfiguration());
@@ -286,6 +314,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                     conditions,
                     new com.firefly.security.InMemoryAdminUserRepository(),
                     new com.firefly.security.InMemoryIntegrationKeyRepository(),
+                    new com.firefly.trigger.InMemoryTriggerInbox(),
                     new com.firefly.trigger.InMemoryBackfillOperationStore()
             );
         }
@@ -335,6 +364,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                 module, combinedCloseable(conditions, clock),
                 new com.firefly.store.jdbc.JdbcAdminUserRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource),
+                new com.firefly.store.jdbc.JdbcTriggerInbox(dataSource),
                 new com.firefly.store.jdbc.JdbcBackfillOperationStore(dataSource)
         );
     }
@@ -628,6 +658,7 @@ public final class FireflyBootstrap implements AutoCloseable {
             AutoCloseable closeable,
             com.firefly.security.AdminUserRepository adminUserRepository,
             com.firefly.security.IntegrationKeyRepository integrationKeyRepository,
+            com.firefly.trigger.TriggerInbox triggerInbox,
             com.firefly.trigger.BackfillOperationStore backfillOperationStore
     ) {
     }

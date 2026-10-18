@@ -68,10 +68,16 @@ final class AdminJobController {
             String actualJobId = URLDecoder.decode(
                     jobId.substring(0, jobId.length() - "/history".length()), StandardCharsets.UTF_8
             );
-            var history = context.jobHistoryRepository()
-                    .map(store -> store.listByJob(actualJobId, 100))
-                    .orElse(List.of());
-            respond(exchange, 200, AdminHttpJson.jobHistory(history));
+            var query = new com.firefly.store.JobHistoryQuery(
+                    actualJobId, AdminPageSupport.text(requests, exchange, "action"),
+                    AdminPageSupport.instant(requests, exchange, "from"),
+                    AdminPageSupport.instant(requests, exchange, "to"),
+                    AdminPageSupport.cursor(requests, exchange),
+                    AdminPageSupport.limit(requests, exchange, 50)
+            );
+            var page = context.jobHistoryRepository().map(store -> store.query(query))
+                    .orElse(new com.firefly.query.CursorPage<com.firefly.store.JobHistoryRecord>(List.of(), null));
+            respond(exchange, 200, AdminPageSupport.json(AdminHttpJson.jobHistory(page.items()), page));
             return;
         }
         if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {

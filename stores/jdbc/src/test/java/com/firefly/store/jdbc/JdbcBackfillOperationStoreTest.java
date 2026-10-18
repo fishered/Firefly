@@ -7,6 +7,7 @@ import com.firefly.trigger.BackfillOperation;
 import com.firefly.trigger.BackfillOptions;
 import com.firefly.trigger.BackfillProgress;
 import com.firefly.trigger.BackfillRequest;
+import com.firefly.trigger.BackfillQuery;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
@@ -64,16 +65,46 @@ class JdbcBackfillOperationStoreTest {
         assertEquals(2, new JdbcBackfillOperationStore(dataSource).find("run").orElseThrow().cursor());
     }
 
+    @Test
+    void keysetPagesOperationsWithTimestampTiesAndFilters() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        JdbcBackfillOperationStore store = new JdbcBackfillOperationStore(dataSource);
+        for (int index = 0; index < 5; index++) {
+            String requestId = "page-run-" + index;
+            String jobId = index == 0 ? "other-job" : "job";
+            assertTrue(store.create(
+                    operation(requestId, jobId, NOW),
+                    List.of(item(0, NOW, requestId + "@0"), item(1, NOW.plusSeconds(60), requestId + "@1"))
+            ));
+        }
+
+        var first = store.query(new BackfillQuery(
+                "job", BackfillProgress.BackfillStatus.PENDING, null, null, null, 2
+        ));
+        var second = store.query(new BackfillQuery(
+                "job", BackfillProgress.BackfillStatus.PENDING, null, null, first.nextCursor(), 2
+        ));
+        assertEquals(Set.of("page-run-4", "page-run-3"), first.items().stream()
+                .map(value -> value.request().requestId()).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(Set.of("page-run-2", "page-run-1"), second.items().stream()
+                .map(value -> value.request().requestId()).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(null, second.nextCursor());
+    }
+
     private static BackfillOperation operation() {
+        return operation("run", "job", NOW);
+    }
+
+    private static BackfillOperation operation(String requestId, String jobId, Instant createdAt) {
         BackfillRequest request = new BackfillRequest(
-                "run", "job", NOW, NOW.plusSeconds(60), 10, "root"
+                requestId, jobId, NOW, NOW.plusSeconds(60), 10, requestId + "-root"
         );
         BackfillOptions options = new BackfillOptions(10, 0, 50, Set.of());
-        JobDefinition definition = JobDefinition.builder().id("job").name("job").handlerName("handler")
+        JobDefinition definition = JobDefinition.builder().id(jobId).name(jobId).handlerName("handler")
                 .schedule(new CronSchedule("0 * * * * *")).build();
         return new BackfillOperation(request, options, definition,
                 BackfillProgress.BackfillStatus.PENDING, 2, 0, 0, 0, 1, true,
-                NOW, "", null, 0, NOW, NOW);
+                NOW, "", null, 0, createdAt, createdAt);
     }
 
     private static BackfillItem item(int ordinal, Instant fireTime, String executionId) {

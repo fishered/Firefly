@@ -301,6 +301,13 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
             return;
         }
         Instant now = clock.instant();
+        int negotiatedProtocolVersion = Math.min(protocolVersion, NettyExecutorProtocol.CURRENT_VERSION);
+        Map<String, String> instanceMetadata = resourceMetadata(payload, Map.of(
+                "serviceName", serviceName,
+                "handlerNames", handlerNames,
+                "protocolVersion", Integer.toString(negotiatedProtocolVersion),
+                "capabilities", NettyExecutorProtocol.encodeCapabilities(negotiatedCapabilities)
+        ));
         executorRegistry.register(ExecutorInstance.builder()
                 .executorName(executorName)
                 .instanceId(instanceId)
@@ -312,21 +319,15 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 .protocol(ExecutorProtocol.TCP)
                 .registeredAt(now)
                 .lastHeartbeatAt(now)
-                .metadata(Map.of("handlerNames", handlerNames))
+                .metadata(instanceMetadata)
                 .build());
-        int negotiatedProtocolVersion = Math.min(protocolVersion, NettyExecutorProtocol.CURRENT_VERSION);
         connectionRegistry.register(
                 executorName, instanceId, sessionId, negotiatedProtocolVersion,
                 negotiatedCapabilities, context.channel()
         );
         instanceDirectory.register(new ExecutorInstanceLocation(
                 executorName, instanceId, gatewayNodeId, advertisedGatewayAddress, sessionId,
-                now, now.plus(instanceLocationLease), Map.of(
-                        "serviceName", serviceName,
-                        "handlerNames", handlerNames,
-                        "protocolVersion", Integer.toString(negotiatedProtocolVersion),
-                        "capabilities", NettyExecutorProtocol.encodeCapabilities(negotiatedCapabilities)
-                )
+                now, now.plus(instanceLocationLease), instanceMetadata
         ));
         lastLocationRefreshAt = now;
         metrics.executorConnections(connectionRegistry.list().size());
@@ -417,13 +418,22 @@ final class NettyExecutorGatewayHandler extends SimpleChannelInboundHandler<Stri
                 .filter(instance -> instance.sessionId().equals(sessionId))
                 .ifPresent(instance -> {
                     Instant now = clock.instant();
-                    executorRegistry.heartbeat(executorName, instanceId, now);
+                    Map<String, String> metadata = resourceMetadata(payload, instance.metadata());
+                    executorRegistry.heartbeat(executorName, instanceId, now, metadata);
                     if (!now.isBefore(lastLocationRefreshAt.plus(instanceLocationRefreshInterval))) {
                         if (instanceDirectory.heartbeat(
-                                executorName, instanceId, gatewayNodeId, sessionId, now, instanceLocationLease
+                                executorName, instanceId, gatewayNodeId, sessionId, now,
+                                instanceLocationLease, metadata
                         )) lastLocationRefreshAt = now;
                     }
                 });
+    }
+
+    private Map<String, String> resourceMetadata(
+            Map<String, String> payload, Map<String, String> base
+    ) {
+        Map<String, String> candidate = com.firefly.executor.ExecutorResourceMetadata.copyReport(payload, base);
+        return com.firefly.executor.ExecutorResourceMetadata.report(candidate).isPresent() ? candidate : base;
     }
 
     private void unregister(ChannelHandlerContext context, Map<String, String> payload) {

@@ -25,6 +25,40 @@ class NettyExecutorClientResourceControlTest {
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
 
     @Test
+    void registrationCarriesLiveResourceSnapshot() {
+        NettyExecutorWorkScheduler workScheduler = NettyExecutorWorkScheduler.owned(
+                new NettyExecutorResourceOptions(1, 1, 1), new SchedulerMetrics()
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(new NettyExecutorClientHandler(
+                "orders", "instance-a", "session-a", "",
+                ExecutorDefinitionRegistrationPolicy.ALLOW_AUTO_CREATE,
+                "orders-service", Duration.ofSeconds(30), new InMemoryJobHandlerRegistry(),
+                workScheduler,
+                () -> new com.firefly.executor.ExecutorResourceReport(
+                        2500, 4096, java.util.Set.of("ssd"), 2, Map.of("tenant-a", 1)
+                ),
+                codec, Clock.fixed(Instant.parse("2026-10-06T00:00:00Z"), ZoneOffset.UTC),
+                new NettyExecutorExecutionRegistry(), ignored -> { }, ignored -> { },
+                (ignored, reason) -> { }
+        ));
+        try {
+            NettyExecutorMessage registration = drainOutbound(channel).getFirst();
+            assertEquals("2500", registration.payload().get(
+                    com.firefly.executor.ExecutorResourceMetadata.AVAILABLE_CPU_MILLIS
+            ));
+            assertEquals("4096", registration.payload().get(
+                    com.firefly.executor.ExecutorResourceMetadata.AVAILABLE_MEMORY_BYTES
+            ));
+            assertEquals("ssd", registration.payload().get(
+                    com.firefly.executor.ExecutorResourceMetadata.TAGS
+            ));
+        } finally {
+            channel.finishAndReleaseAll();
+            workScheduler.close();
+        }
+    }
+
+    @Test
     void boundsQueueAndConcurrencyAndSendsOverloadAck() throws Exception {
         SchedulerMetrics metrics = new SchedulerMetrics();
         NettyExecutorWorkScheduler workScheduler = NettyExecutorWorkScheduler.owned(

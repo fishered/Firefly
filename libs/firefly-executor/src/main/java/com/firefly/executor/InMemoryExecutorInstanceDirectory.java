@@ -20,16 +20,53 @@ public final class InMemoryExecutorInstanceDirectory implements ExecutorInstance
             String executorName, String instanceId, String gatewayNodeId,
             String sessionId, Instant now, Duration leaseDuration
     ) {
+        return heartbeat(executorName, instanceId, gatewayNodeId, sessionId, now, leaseDuration, null);
+    }
+
+    @Override
+    public boolean heartbeat(
+            String executorName, String instanceId, String gatewayNodeId,
+            String sessionId, Instant now, Duration leaseDuration, Map<String, String> metadata
+    ) {
         Key key = new Key(executorName, instanceId);
-        return locations.computeIfPresent(key, (ignored, current) -> {
+        java.util.concurrent.atomic.AtomicBoolean updated = new java.util.concurrent.atomic.AtomicBoolean();
+        locations.computeIfPresent(key, (ignored, current) -> {
             if (!current.gatewayNodeId().equals(gatewayNodeId) || !current.sessionId().equals(sessionId)) {
                 return current;
             }
+            updated.set(true);
             return new ExecutorInstanceLocation(
                     executorName, instanceId, gatewayNodeId, current.gatewayAddress(), sessionId,
-                    now, now.plus(leaseDuration), current.metadata()
+                    now, now.plus(leaseDuration), metadata == null ? current.metadata() : metadata
             );
-        }) != null;
+        });
+        return updated.get();
+    }
+
+    @Override
+    public boolean tryReserve(
+            ExecutorInstanceLocation location, ExecutorResourceRequirement requirement, Instant now
+    ) {
+        Key key = new Key(location.executorName(), location.instanceId());
+        java.util.concurrent.atomic.AtomicBoolean reserved = new java.util.concurrent.atomic.AtomicBoolean();
+        locations.computeIfPresent(key, (ignored, current) -> {
+            if (!current.gatewayNodeId().equals(location.gatewayNodeId())
+                    || !current.sessionId().equals(location.sessionId())
+                    || !current.leaseUntil().isAfter(now)) {
+                return current;
+            }
+            var updated = ExecutorResourceMetadata.reserve(
+                    current.metadata(), current.executorName(), current.instanceId(), requirement
+            );
+            if (updated.isEmpty()) return current;
+            reserved.set(true);
+            return new ExecutorInstanceLocation(
+                    current.executorName(), current.instanceId(), current.gatewayNodeId(),
+                    current.gatewayAddress(), current.sessionId(), current.lastSeenAt(),
+                    current.leaseUntil(), updated.get()
+            );
+        });
+        return reserved.get();
     }
 
     @Override

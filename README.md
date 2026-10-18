@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.5-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.1.7-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -56,6 +56,20 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 | 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
 | 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
 
+### 1.1.7 生产运营闭环
+
+- execution、Backfill、审计、任务历史和 Dead Outbox 使用服务端游标分页、过滤、稳定排序与 JDBC 索引；Admin UI 为全部五类数据接入真实翻页，并提供失败事件确认/重放入口；10 万行门禁验证查询始终有界。
+- 外部事件入口强制 HMAC-SHA256、时间戳、nonce、防重放和独立请求体上限；JDBC 部署使用持久化 inbox/nonce，失败事件可查询、确认或幂等重放。
+- 生产门禁覆盖网络延迟/分区、Gateway 恢复、TLS 证书热轮换、旧 fencing token 和迟到终态写入；提供 PostgreSQL 备份恢复预发校验脚本。
+- 保持 1.1.6 的 Executor 协议 v1/v2、任务定义、插件 API 和数据库 schema 兼容区间不变，可原地滚动升级。
+
+### 1.1.6 资源调度与生产门禁
+
+- Netty Executor 注册与心跳上报可用 CPU、内存、标签、活动执行数和租户并发；Gateway 在共享目录中以最新快照原子预留资源，并在陈旧候选失败后继续回退。
+- Admin API/UI 展示 Executor 资源快照和 Backfill 失败触发点；Prometheus 增加资源容量、预留拒绝、Backfill 积压与 Worker 失败指标及告警。
+- Backfill Worker 从可选 Admin 插件迁移到 Scheduler 运行时，API 节点重启或未启用 Admin 时仍可持续推进持久化补数。
+- 新增统一生产就绪门禁，覆盖三节点 lease 接管、Gateway 重启恢复、1 万实例目录和 PostgreSQL/MySQL 真实数据库并发测试。
+
 ### 1.1.5 补数与重放生产化
 
 - Backfill 操作、触发点和游标持久化到 JDBC，通过租约与 fencing token 确保多 API 节点只有一个 worker 推进。
@@ -80,7 +94,7 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 - 资源与 SLA 模型：按 CPU、内存、标签和租户并发预算筛选执行器，并评估排队、启动和完成阶段的 SLA 预算。
 - 业务结果协议：统一输入/成功/失败计数、checkpoint、结果位置和 SHA-256 校验摘要；`SchedulingInputRevision` 用于解释输入版本。
 
-1.1.3 首次交付上述公共模型、SPI 和内存协调器；1.1.4 补全事件 aggregation window 的 JDBC 存储；1.1.5 完成补数持久化与重放管理闭环。资源快照的运行时采集仍保留在后续版本。
+1.1.3 首次交付上述公共模型、SPI 和内存协调器；1.1.4 补全事件 aggregation window 的 JDBC 存储；1.1.5 完成补数持久化与重放管理闭环；1.1.6 完成资源快照运行时采集、原子准入和独立 Backfill Worker。
 
 ## 架构
 
@@ -207,8 +221,8 @@ Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任
 
 | 镜像 | 容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server:1.1.5` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui:1.1.5` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+| `firefly/firefly-server:1.1.7` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.1.7` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
 
 准备配置并启动：
 
@@ -257,7 +271,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.5</version>
+            <version>1.1.7</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -492,8 +506,8 @@ npm run check
 构建 Docker 镜像：
 
 ```powershell
-docker build -t firefly/firefly-server:1.1.5 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.1.5 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.1.7 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.1.7 -f ui/admin/Dockerfile ui/admin
 ```
 
 提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。

@@ -223,6 +223,7 @@ class JdbcExecutionRepositoryTest {
         assertEquals(1, target.attempt());
     }
 
+    @org.junit.jupiter.api.Tag("production-readiness")
     @Test
     void terminalTargetAndParentStatesDoNotRegressOnLateMessages() {
         JdbcExecutionRepository repository = new JdbcExecutionRepository(JdbcTestSupport.dataSource());

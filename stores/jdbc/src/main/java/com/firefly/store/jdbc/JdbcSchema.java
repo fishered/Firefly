@@ -164,6 +164,7 @@ public final class JdbcSchema {
         } catch (SQLException e) {
             throw new JdbcException("failed to validate firefly jdbc schema", e);
         }
+        JdbcFeatureSchema.validate(dataSource, options);
     }
 
     private static boolean hasAnyFireflyTable(Connection connection) throws SQLException {
@@ -176,7 +177,7 @@ public final class JdbcSchema {
         return false;
     }
 
-    private static void validateTable(DatabaseMetaData metadata, String tableName, Set<String> requiredColumns) throws SQLException {
+    static void validateTable(DatabaseMetaData metadata, String tableName, Set<String> requiredColumns) throws SQLException {
         if (!tableExists(metadata, tableName)) {
             throw new JdbcException("missing firefly jdbc table: " + tableName);
         }
@@ -541,6 +542,14 @@ public final class JdbcSchema {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create index " + index + " on " + table + " (" + columns + ")");
             }
+        }
+    }
+
+    static void ensureColumn(Connection connection, String table, String column, String definition)
+            throws SQLException {
+        if (columns(connection.getMetaData(), table).contains(column.toLowerCase(java.util.Locale.ROOT))) return;
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("alter table " + table + " add column " + column + " " + definition);
         }
     }
 

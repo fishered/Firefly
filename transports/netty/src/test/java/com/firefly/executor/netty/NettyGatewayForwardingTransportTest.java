@@ -2,6 +2,7 @@ package com.firefly.executor.netty;
 
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.net.ServerSocket;
 import java.time.Duration;
@@ -15,6 +16,103 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NettyGatewayForwardingTransportTest {
+    @Tag("production-readiness")
+    @Test
+    void recoversAfterDelayedGatewayFailureAndNetworkPartition() throws Exception {
+        int port = freePort();
+        com.sun.net.httpserver.HttpServer impaired = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", port), 0
+        );
+        impaired.createContext("/internal/executor/dispatch", exchange -> {
+            try {
+                Thread.sleep(250);
+                exchange.sendResponseHeaders(503, -1);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        impaired.start();
+
+        String token = "cluster-secret";
+        com.firefly.metrics.SchedulerMetrics metrics = new com.firefly.metrics.SchedulerMetrics();
+        NettyGatewayForwardingTransport client = new NettyGatewayForwardingTransport(
+                new NettyExecutorConnectionRegistry(), options(0, token), metrics
+        );
+        String frame = new NettyExecutorJsonCodec().encode(new NettyExecutorMessage(
+                "message-partition", NettyExecutorMessageType.TRIGGER_JOB,
+                java.util.Map.of("executionId", "exec-partition")
+        ));
+        assertFalse(client.forward(
+                "http://127.0.0.1:" + port, "orders", "orders-1", "session-1", frame
+        ));
+        impaired.stop(0);
+
+        NettyExecutorConnectionRegistry remoteConnections = new NettyExecutorConnectionRegistry();
+        EmbeddedChannel executorChannel = new EmbeddedChannel();
+        remoteConnections.register(
+                "orders", "orders-1", "session-1", 2,
+                Set.of("TARGET_ACK", "RESULT_REPORT", "CANCELLATION"), executorChannel
+        );
+        NettyGatewayForwardingTransport recovered = new NettyGatewayForwardingTransport(
+                remoteConnections, options(port, token)
+        );
+        recovered.start();
+        try {
+            assertTrue(client.forward(
+                    "http://127.0.0.1:" + port, "orders", "orders-1", "session-1", frame
+            ));
+            assertNotNull(executorChannel.readOutbound());
+            assertTrue(metrics.snapshot().gatewayForwardAttempts() == 2);
+            assertTrue(metrics.snapshot().gatewayForwardFailures() == 1);
+            assertTrue(metrics.snapshot().gatewayForwardSuccesses() == 1);
+        } finally {
+            impaired.stop(0);
+            recovered.close();
+            client.close();
+            executorChannel.finishAndReleaseAll();
+        }
+    }
+
+    @Tag("production-readiness")
+    @Test
+    void recoversForwardingAfterRemoteGatewayRestarts() throws Exception {
+        int port = freePort();
+        String token = "cluster-secret";
+        NettyGatewayForwardingTransport client = new NettyGatewayForwardingTransport(
+                new NettyExecutorConnectionRegistry(), options(0, token)
+        );
+        EmbeddedChannel executorChannel = new EmbeddedChannel();
+        String frame = new NettyExecutorJsonCodec().encode(new NettyExecutorMessage(
+                "message-restart", NettyExecutorMessageType.TRIGGER_JOB,
+                java.util.Map.of("executionId", "exec-restart")
+        ));
+        assertFalse(client.forward(
+                "http://127.0.0.1:" + port, "orders", "orders-1", "session-1", frame
+        ));
+
+        NettyExecutorConnectionRegistry remoteConnections = new NettyExecutorConnectionRegistry();
+        remoteConnections.register(
+                "orders", "orders-1", "session-1", 2,
+                Set.of("TARGET_ACK", "RESULT_REPORT", "CANCELLATION"), executorChannel
+        );
+        NettyGatewayForwardingTransport restarted = new NettyGatewayForwardingTransport(
+                remoteConnections, options(port, token)
+        );
+        restarted.start();
+        try {
+            assertTrue(client.forward(
+                    "http://127.0.0.1:" + port, "orders", "orders-1", "session-1", frame
+            ));
+            assertNotNull(executorChannel.readOutbound());
+        } finally {
+            restarted.close();
+            client.close();
+            executorChannel.finishAndReleaseAll();
+        }
+    }
+
     @Test
     void forwardsAPlannedFrameToTheGatewayHoldingTheFencedSession() throws Exception {
         int port = freePort();

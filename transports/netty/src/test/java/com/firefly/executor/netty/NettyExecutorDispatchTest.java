@@ -7,6 +7,11 @@ import com.firefly.domain.ExecutorRoutingStrategy;
 import com.firefly.domain.ExecutorRetryScope;
 import com.firefly.executor.InMemoryExecutorRegistry;
 import com.firefly.executor.RemoteDispatchRequest;
+import com.firefly.executor.ExecutorInstanceLocation;
+import com.firefly.executor.ExecutorResourceMetadata;
+import com.firefly.executor.ExecutorResourceReport;
+import com.firefly.executor.InMemoryExecutorInstanceDirectory;
+import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.catalog.InMemorySchedulerCatalog;
 import com.firefly.execution.InMemoryExecutionRepository;
 import com.firefly.execution.ExecutionReplayService;
@@ -21,12 +26,74 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NettyExecutorDispatchTest {
     private final NettyExecutorJsonCodec codec = new NettyExecutorJsonCodec();
+
+    @Test
+    void resourceConstraintFallsThroughToAnEligibleInstanceAndReservesIt() {
+        Instant now = Instant.parse("2026-10-06T00:00:00Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        NettyExecutorConnectionRegistry connections = new NettyExecutorConnectionRegistry();
+        EmbeddedChannel small = new EmbeddedChannel();
+        EmbeddedChannel large = new EmbeddedChannel();
+        connections.register("orders", "small", small);
+        connections.register("orders", "large", large);
+        InMemoryExecutorInstanceDirectory directory = new InMemoryExecutorInstanceDirectory();
+        directory.register(location("small", now, 500));
+        directory.register(location("large", now, 4000));
+        SchedulerMetrics metrics = new SchedulerMetrics();
+        NettyExecutorGateway gateway = new NettyExecutorGateway(
+                9700, new InMemoryExecutorRegistry(), connections, clock,
+                new InMemorySchedulerCatalog(), true, "gateway-test",
+                new InMemoryExecutionRepository(), (ignored, time) -> { }, "",
+                (ignored, retry) -> { }, metrics, NettyExecutorGatewayOptions.defaults(), directory
+        );
+        RemoteDispatchRequest base = request(ExecutorDispatchMode.UNICAST, 1);
+        RemoteDispatchRequest constrained = new RemoteDispatchRequest(
+                base.executorName(), base.handlerName(),
+                new ExecutionContext(
+                        base.context().executionId(), base.context().rootExecutionId(), base.context().runAttempt(),
+                        base.context().jobId(), base.context().handlerName(),
+                        base.context().scheduledFireTime(), base.context().dispatchTime(),
+                        base.context().actualFireTime(), Map.of(
+                                "firefly.resource.cpuMillis", "1000",
+                                "firefly.resource.tenantId", "tenant-a",
+                                "firefly.resource.maxTenantConcurrent", "1"
+                        )
+                ),
+                base.dispatchMode(), base.routingStrategy(), base.completionPolicy(), base.shardCount(),
+                base.routingKey(), base.ownerNodeId(), base.fencingToken(), base.rootExecutionId(),
+                base.runAttempt(), base.retryScope(), base.traceCarrier()
+        );
+
+        var result = gateway.dispatch(constrained);
+
+        assertEquals(List.of("large"), result.targetInstanceIds());
+        assertEquals(0, outboundCount(small));
+        assertEquals(1, outboundCount(large));
+        var snapshot = ExecutorResourceMetadata.snapshot(
+                "orders", "large", directory.listOnline("orders", now).stream()
+                        .filter(item -> item.instanceId().equals("large")).findFirst().orElseThrow().metadata(),
+                "tenant-a"
+        ).orElseThrow();
+        assertEquals(3000, snapshot.availableCpuMillis());
+        assertEquals(1, snapshot.tenantActiveExecutions());
+    }
+
+    private ExecutorInstanceLocation location(String instanceId, Instant now, long cpuMillis) {
+        return new ExecutorInstanceLocation(
+                "orders", instanceId, "gateway-test", "", instanceId,
+                now, now.plus(Duration.ofMinutes(1)), ExecutorResourceMetadata.merge(
+                        Map.of(), new ExecutorResourceReport(cpuMillis, 8192, Set.of(), 0, Map.of())
+                )
+        );
+    }
 
     @Test
     void unicastSendsOneMessageWhileBroadcastSendsOneChildPerInstance() {

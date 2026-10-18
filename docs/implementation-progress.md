@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-09-28。
+最后更新：2026-10-15。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -28,11 +28,27 @@ examples/*                   Embedded 与 Netty executor 示例
 
 ## 2. 已落地能力
 
+### 1.1.7 生产运营闭环
+
+- execution、Backfill、审计、任务历史和 Dead Outbox 已使用 JDBC keyset cursor 分页，提供条件过滤、稳定的时间+唯一 ID 排序及覆盖索引；Admin UI 的五类查询全部使用服务端翻页，运营审计页同时接入失败事件确认与重放。
+- 外部事件 HTTP 入口强制 HMAC-SHA256、时间戳、nonce、防重放和独立请求体上限；JDBC 运行时默认装配持久化 inbox/nonce。
+- 失败事件保留目标任务和失败原因，支持查询、确认和原 execution root 幂等重放，所有写操作进入 Admin 审计，并输出失败数及接收、重复、失败、重放、安全拒绝指标。
+- `verifyProductionReadiness` 增加 10 万行游标查询、网络延迟/分区恢复、TLS/mTLS 身份与信任热轮换、Outbox claim fencing、旧 shard token 和迟到终态写入门禁；PostgreSQL 备份恢复脚本可在 CI 或预发复现。
+- 1.1.7 保持插件 API level 1、Executor 协议 v1/v2 和数据库 schema 兼容版本 12，并提供 1.1.6 原地升级说明。
+
+### 1.1.6 资源调度与生产门禁
+
+- Netty Executor 的注册与心跳已携带实时资源快照：可用 CPU milli、可用内存、资源标签、活动执行数和按租户活动数；旧客户端未上报快照时继续使用原路由语义。
+- 共享 Executor 位置目录支持会话 fencing 下的原子资源预留。Gateway 先尝试计划实例，再按轮询、随机或一致性哈希次序回退到下一个满足 CPU、内存、标签和租户并发约束的实例。
+- Admin API/UI 展示实例资源快照和 Backfill 失败触发点；Prometheus 输出资源容量、预留拒绝、Backfill 活动/暂停/失败/年龄和 Worker 失败指标。
+- Backfill Worker 已从可选 Admin HTTP 插件迁移到 Scheduler 运行时，补数生命周期不再依赖 Admin 插件是否启用；Worker 的 lease、轮询间隔和批次上限可配置。
+- `verifyProductionReadiness` 汇总三节点 lease 接管、Gateway 重启恢复、1 万 Executor 目录和 PostgreSQL/MySQL Testcontainers 并发测试，并由 CI 独立门禁执行。
+
 ### 1.1.5 补数与重放生产化
 
 - 新增 `BackfillOperationStore` 和 H2/MySQL/PostgreSQL v18 feature migration，持久化请求快照、触发点、游标、Canary 和下次可派发时间。
 - `BackfillCoordinator` 使用租约与 fencing token 推进批次，重启后从持久化游标恢复；已存在的 execution 会被识别为已派发，避免重复计数。
-- Admin HTTP 新增补数预览、列表、详情、暂停、继续、取消和 Canary promote；API 节点内 worker 持续处理可运行操作。
+- Admin HTTP 新增补数预览、列表、详情、暂停、继续、取消和 Canary promote；1.1.6 起由 Scheduler 节点内 worker 持续处理可运行操作。
 - 执行重放从 Outbox 中读取原始不可变 `JobDefinition` 快照，与当前定义生成差异预览；变更后必须显式确认，并可仅重放失败目标。
 - Admin UI 新增补数管理页和失败执行重放对话框；Java 全量测试、JDBC 快照测试和 Playwright E2E 覆盖新路径。
 
@@ -54,7 +70,7 @@ examples/*                   Embedded 与 Netty executor 示例
 - 已新增资源感知执行器选择和 `SlaBudget` / `SlaBudgetAssessment`，支持资源标签、CPU/内存、租户并发预算及排队/启动/完成 SLA 阶段评估。
 - 已新增 `BusinessResultSummary` 和 `SchedulingInputRevision`，统一业务结果计数、checkpoint、结果位置、SHA-256 摘要和调度输入版本说明。
 
-上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；1.1.4 补充事件 aggregation window 的 JDBC 存储；1.1.5 完成补数状态与重放管理的 Admin HTTP/UI 生产接线。资源快照的运行时采集仍是后续增量。
+上述 1.1.3 能力已完成公共模型、核心服务和 focused tests；1.1.4 补充事件 aggregation window 的 JDBC 存储；1.1.5 完成补数状态与重放管理的 Admin HTTP/UI 生产接线；1.1.6 完成资源快照运行时采集、共享目录原子预留与独立 Backfill Worker。
 
 ### 调度核心
 
@@ -295,10 +311,9 @@ UNREGISTER_EXECUTOR
 
 ## 4. 仍需上线前验证
 
-1. 在 Docker/预发环境运行 PostgreSQL、MySQL Testcontainers 与三节点故障注入；当前本机无 Docker 时真实数据库测试会跳过。
-2. 对 Gateway 内部转发做网络分区、延迟、节点重启和 10k+ Executor 位置目录压测，并按结果校准位置租约和 HTTP 超时。
-3. 关键副作用可使用内置 JDBC fenced store 快速接入，但仍需用业务唯一键/事务覆盖“副作用提交后进程崩溃、完成标记未提交”的窗口。
-4. 上线前完成容量基线、TLS/内部网络访问控制、备份恢复演练和告警阈值校准。
+1. CI 已通过 `verifyProductionReadiness` 固化 PostgreSQL/MySQL Testcontainers、三节点接管、10 万行游标查询、网络延迟/分区与 Gateway 恢复、TLS/mTLS 轮换、fencing 和 10k Executor 目录门禁；具体部署仍需按真实拓扑校准容量基线。
+2. 关键副作用可使用内置 JDBC fenced store 快速接入，但仍需用业务唯一键/事务覆盖“副作用提交后进程崩溃、完成标记未提交”的窗口。
+3. 仓库已提供 PostgreSQL 备份恢复校验脚本；上线前仍需用生产同版本数据库和真实备份介质执行演练，并按实际吞吐校准位置租约、内部 HTTP 超时与 Prometheus 告警阈值。
 
 ## 5. 常用验证入口
 
@@ -308,6 +323,7 @@ UNREGISTER_EXECUTOR
 .\gradlew.bat :transports:netty:test
 .\gradlew.bat test
 .\gradlew.bat :stores:jdbc:realDatabaseTest
+.\gradlew.bat verifyProductionReadiness
 ```
 
 运行 server：

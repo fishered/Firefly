@@ -242,11 +242,22 @@ firefly_scheduler_owned_shards
 firefly_database_clock_offset_milliseconds
 firefly_database_clock_drift_warnings_total
 firefly_database_clock_sync_failures_total
+firefly_executor_resource_instances
+firefly_executor_available_cpu_millis
+firefly_executor_available_memory_bytes
+firefly_executor_resource_active_executions
+firefly_executor_resource_reservation_rejections_total
+firefly_backfill_active_operations
+firefly_backfill_paused_operations
+firefly_backfill_failed_items
+firefly_backfill_oldest_active_age_seconds
+firefly_backfill_operations_processed_total
+firefly_backfill_worker_failures_total
 ```
 
 这些指标由插件根据 `FireflyPluginContext` 快照生成。调度核心不知道 Prometheus 的存在。
 
-仓库内的 `config/prometheus/firefly-alerts.yml` 提供 p99 调度延迟、任务逾期、热点分片、Outbox 停滞、lease 失败、数据库时钟漂移和 Executor 注册异常告警。
+仓库内的 `config/prometheus/firefly-alerts.yml` 提供 p99 调度延迟、任务逾期、热点分片、Outbox 停滞、lease 失败、数据库时钟漂移、Executor 注册/资源准入和 Backfill 停滞告警。
 
 ## 环境变量
 

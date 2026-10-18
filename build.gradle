@@ -7,7 +7,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.1.5"
+    version = "1.1.7"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
@@ -248,6 +248,28 @@ tasks.register("verifyModuleBoundaries") {
 
 tasks.named("check") {
     dependsOn("verifyModuleBoundaries")
+}
+
+def productionReadinessProjects = [
+        ":libs:scheduler-core", ":server:runtime", ":stores:jdbc", ":transports:netty"
+]
+productionReadinessProjects.each { projectPath ->
+    project(projectPath).tasks.register("productionReadinessTest", Test) {
+        group = "verification"
+        description = "Runs ${projectPath} production-readiness scenarios."
+        testClassesDirs = project(projectPath).sourceSets.test.output.classesDirs
+        classpath = project(projectPath).sourceSets.test.runtimeClasspath
+        useJUnitPlatform {
+            includeTags("production-readiness")
+        }
+    }
+}
+
+tasks.register("verifyProductionReadiness") {
+    group = "verification"
+    description = "Runs HA/fencing, network and Gateway recovery, TLS rotation, 10k directory, 100k cursor, and real database release gates."
+    dependsOn(productionReadinessProjects.collect { "${it}:productionReadinessTest" })
+    dependsOn(":stores:jdbc:realDatabaseTest")
 }
 
 tasks.register("publishToFireflyMavenLocal") {

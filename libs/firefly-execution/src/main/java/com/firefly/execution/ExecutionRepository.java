@@ -43,6 +43,24 @@ public interface ExecutionRepository {
 
     List<ExecutionRecord> listRecent(int limit);
 
+    default com.firefly.query.CursorPage<ExecutionRecord> query(ExecutionQuery query) {
+        java.util.Comparator<ExecutionRecord> order = java.util.Comparator
+                .comparing(ExecutionRecord::createdAt).reversed()
+                .thenComparing(ExecutionRecord::executionId, java.util.Comparator.reverseOrder());
+        java.util.List<ExecutionRecord> values = listRecent(Integer.MAX_VALUE).stream()
+                .filter(value -> query.jobId().isBlank() || value.jobId().equals(query.jobId()))
+                .filter(value -> query.status() == null || value.status() == query.status())
+                .filter(value -> query.fromInclusive() == null || !value.createdAt().isBefore(query.fromInclusive()))
+                .filter(value -> query.toExclusive() == null || value.createdAt().isBefore(query.toExclusive()))
+                .filter(value -> query.after() == null
+                        || value.createdAt().isBefore(query.after().timestamp())
+                        || (value.createdAt().equals(query.after().timestamp())
+                        && value.executionId().compareTo(query.after().id()) < 0))
+                .sorted(order).limit((long) query.limit() + 1).toList();
+        return com.firefly.query.CursorPage.of(values, query.limit(),
+                value -> new com.firefly.query.PageCursor(value.createdAt(), value.executionId()));
+    }
+
     default List<ExecutionRecord> listByRootExecutionId(String rootExecutionId) {
         return listRecent(Integer.MAX_VALUE).stream()
                 .filter(execution -> execution.rootExecutionId().equals(rootExecutionId))

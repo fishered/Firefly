@@ -13,6 +13,22 @@ public interface BackfillOperationStore {
 
     List<BackfillOperation> list(int limit);
 
+    default com.firefly.query.CursorPage<BackfillOperation> query(BackfillQuery query) {
+        List<BackfillOperation> values = list(Integer.MAX_VALUE).stream()
+                .filter(value -> query.jobId().isBlank() || value.request().jobId().equals(query.jobId()))
+                .filter(value -> query.status() == null || value.status() == query.status())
+                .filter(value -> query.fromInclusive() == null || !value.createdAt().isBefore(query.fromInclusive()))
+                .filter(value -> query.toExclusive() == null || value.createdAt().isBefore(query.toExclusive()))
+                .filter(value -> query.after() == null || value.createdAt().isBefore(query.after().timestamp())
+                        || (value.createdAt().equals(query.after().timestamp())
+                        && value.request().requestId().compareTo(query.after().id()) < 0))
+                .sorted(java.util.Comparator.comparing(BackfillOperation::createdAt).reversed()
+                        .thenComparing(value -> value.request().requestId(), java.util.Comparator.reverseOrder()))
+                .limit((long) query.limit() + 1).toList();
+        return com.firefly.query.CursorPage.of(values, query.limit(), value ->
+                new com.firefly.query.PageCursor(value.createdAt(), value.request().requestId()));
+    }
+
     Optional<BackfillOperation> claim(
             String requestId, Instant now, String claimantId, Duration claimLease
     );
@@ -22,6 +38,10 @@ public interface BackfillOperationStore {
     );
 
     Optional<BackfillItem> nextItem(String requestId, String claimantId);
+
+    default List<BackfillItem> listItems(String requestId, int limit) {
+        return List.of();
+    }
 
     Optional<BackfillOperation> recordItem(
             String requestId,

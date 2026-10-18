@@ -254,7 +254,7 @@ public final class NettyExecutorGateway implements RemoteExecutorTransport {
         this.forwardingTransport = new NettyGatewayForwardingTransport(connectionRegistry, options, metrics);
         this.dispatchService = new NettyExecutorDispatchService(
                 schedulerCatalog, connectionRegistry, instanceDirectory, clock, executionRepository,
-                gatewayNodeId, forwardingTransport, codec
+                gatewayNodeId, forwardingTransport, codec, metrics
         );
         this.resultPersistenceExecutor = new NettyResultPersistenceExecutor(options.resultQueueCapacity());
     }

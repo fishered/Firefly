@@ -6,6 +6,9 @@ import com.firefly.trigger.BackfillOperationStore;
 import com.firefly.trigger.BackfillOptions;
 import com.firefly.trigger.BackfillProgress;
 import com.firefly.trigger.BackfillRequest;
+import com.firefly.trigger.BackfillQuery;
+import com.firefly.query.CursorPage;
+import com.firefly.query.PageCursor;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -68,7 +71,7 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement("""
                      select * from firefly_backfill_operation
-                     order by created_at desc, request_id
+                     order by created_at desc, request_id desc
                      """)) {
             statement.setMaxRows(limit);
             List<BackfillOperation> operations = new ArrayList<>();
@@ -78,6 +81,40 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
             return List.copyOf(operations);
         } catch (SQLException failure) {
             throw new JdbcException("failed to list backfill operations", failure);
+        }
+    }
+
+    @Override
+    public CursorPage<BackfillOperation> query(BackfillQuery query) {
+        StringBuilder sql = new StringBuilder("select * from firefly_backfill_operation where 1=1");
+        List<Object> parameters = new ArrayList<>();
+        if (!query.jobId().isBlank()) { sql.append(" and job_id=?"); parameters.add(query.jobId()); }
+        if (query.status() != null) { sql.append(" and status=?"); parameters.add(query.status().name()); }
+        if (query.fromInclusive() != null) { sql.append(" and created_at>=?"); parameters.add(query.fromInclusive()); }
+        if (query.toExclusive() != null) { sql.append(" and created_at<?"); parameters.add(query.toExclusive()); }
+        if (query.after() != null) {
+            sql.append(" and (created_at<? or (created_at=? and request_id<?))");
+            parameters.add(query.after().timestamp());
+            parameters.add(query.after().timestamp());
+            parameters.add(query.after().id());
+        }
+        sql.append(" order by created_at desc, request_id desc limit ?");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            for (int index = 0; index < parameters.size(); index++) {
+                Object value = parameters.get(index);
+                if (value instanceof Instant instant) statement.setTimestamp(index + 1, Timestamp.from(instant));
+                else statement.setString(index + 1, value.toString());
+            }
+            statement.setInt(parameters.size() + 1, query.limit() + 1);
+            List<BackfillOperation> values = new ArrayList<>();
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) values.add(map(resultSet));
+            }
+            return CursorPage.of(values, query.limit(), value ->
+                    new PageCursor(value.createdAt(), value.request().requestId()));
+        } catch (SQLException failure) {
+            throw new JdbcException("failed to query backfill operations", failure);
         }
     }
 
@@ -167,6 +204,33 @@ public final class JdbcBackfillOperationStore implements BackfillOperationStore 
             }
         } catch (SQLException failure) {
             throw new JdbcException("failed to read next backfill item", failure);
+        }
+    }
+
+    @Override
+    public List<BackfillItem> listItems(String requestId, int limit) {
+        if (limit < 1) throw new IllegalArgumentException("limit must be positive");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select ordinal, fire_time, execution_id, status, error_message
+                     from firefly_backfill_item where request_id=? order by ordinal
+                     """)) {
+            statement.setString(1, requestId);
+            statement.setMaxRows(limit);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<BackfillItem> items = new ArrayList<>();
+                while (resultSet.next()) {
+                    items.add(new BackfillItem(
+                            resultSet.getInt("ordinal"), resultSet.getTimestamp("fire_time").toInstant(),
+                            resultSet.getString("execution_id"),
+                            BackfillItem.BackfillItemStatus.valueOf(resultSet.getString("status")),
+                            resultSet.getString("error_message")
+                    ));
+                }
+                return List.copyOf(items);
+            }
+        } catch (SQLException failure) {
+            throw new JdbcException("failed to list backfill items", failure);
         }
     }
 

@@ -107,6 +107,7 @@ final class JdbcJobRepositoryTest {
         );
     }
 
+    @org.junit.jupiter.api.Tag("production-readiness")
     @Test
     void requiresTheCurrentShardFencingTokenWhenAdvancingAClusterJob() {
         DataSource dataSource = JdbcTestSupport.dataSource();

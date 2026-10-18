@@ -45,6 +45,87 @@ final class JdbcSchemaTest {
     }
 
     @Test
+    void installsEventReplayAndCursorPaginationSchema() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+
+        try (Connection connection = dataSource.getConnection()) {
+            var triggerColumns = new java.util.HashSet<String>();
+            try (ResultSet columns = connection.getMetaData().getColumns(
+                    connection.getCatalog(), connection.getSchema(), "FIREFLY_TRIGGER_INBOX", null
+            )) {
+                while (columns.next()) {
+                    triggerColumns.add(columns.getString("COLUMN_NAME").toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+            assertTrue(triggerColumns.contains("job_id"));
+            assertTrue(triggerColumns.contains("failure_reason"));
+            try (ResultSet tables = connection.getMetaData().getTables(
+                    connection.getCatalog(), connection.getSchema(), "FIREFLY_TRIGGER_NONCE", null
+            )) {
+                assertTrue(tables.next());
+            }
+            assertTrue(hasIndex(connection, "FIREFLY_EXECUTION", "idx_firefly_execution_job_page"));
+            assertTrue(hasIndex(connection, "FIREFLY_EXECUTION", "idx_firefly_execution_status_page"));
+            assertTrue(hasIndex(connection, "FIREFLY_AUDIT_LOG", "idx_firefly_audit_actor_page"));
+            assertTrue(hasIndex(connection, "FIREFLY_JOB_HISTORY", "idx_firefly_job_history_filter_page"));
+            assertTrue(hasIndex(connection, "FIREFLY_BACKFILL_OPERATION", "idx_firefly_backfill_status_page"));
+            assertTrue(hasIndex(connection, "FIREFLY_DISPATCH_OUTBOX", "idx_firefly_outbox_dead_type_page"));
+        }
+    }
+
+    @Test
+    void validateRejectsMissingExternallyManagedFeatureMigration() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.createStatement()) {
+            statement.execute("drop table firefly_trigger_nonce");
+        }
+
+        JdbcException failure = assertThrows(
+                JdbcException.class,
+                () -> JdbcSchema.validate(dataSource, JdbcSchemaOptions.of("h2"))
+        );
+
+        assertTrue(failure.getMessage().contains("firefly_trigger_nonce"));
+    }
+
+    @Test
+    void upgradesV116FeatureSchemaInPlace() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.createStatement()) {
+            statement.execute("drop index idx_firefly_execution_job_page");
+            statement.execute("drop table firefly_trigger_nonce");
+            statement.execute("alter table firefly_trigger_inbox drop column failure_reason");
+            statement.execute("alter table firefly_trigger_inbox drop column job_id");
+        }
+
+        JdbcSchema.initializeIfEmpty(dataSource, JdbcSchemaOptions.of("h2"));
+
+        try (Connection connection = dataSource.getConnection()) {
+            var columns = new java.util.HashSet<String>();
+            try (ResultSet resultSet = connection.getMetaData().getColumns(
+                    connection.getCatalog(), connection.getSchema(), "FIREFLY_TRIGGER_INBOX", null
+            )) {
+                while (resultSet.next()) {
+                    columns.add(resultSet.getString("COLUMN_NAME").toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+            assertTrue(columns.contains("job_id"));
+            assertTrue(columns.contains("failure_reason"));
+            try (ResultSet resultSet = connection.getMetaData().getTables(
+                    connection.getCatalog(), connection.getSchema(), "FIREFLY_TRIGGER_NONCE", null
+            )) {
+                assertTrue(resultSet.next());
+            }
+            assertTrue(hasIndex(connection, "FIREFLY_EXECUTION", "idx_firefly_execution_job_page"));
+        }
+    }
+
+    @Test
     void ignoresFireflyTablesOutsideTheCurrentSchema() throws Exception {
         DataSource dataSource = rawH2DataSource();
         try (Connection connection = dataSource.getConnection();
@@ -335,6 +416,7 @@ final class JdbcSchemaTest {
         try (Connection connection = dataSource.getConnection();
              var statement = connection.createStatement()) {
             statement.execute("drop index idx_firefly_outbox_role_claim");
+            statement.execute("drop index idx_firefly_outbox_dead_type_page");
             statement.execute("alter table firefly_dispatch_outbox drop column dispatch_type");
             statement.execute("alter table firefly_dispatch_outbox drop column snapshot_payload");
             statement.execute("delete from firefly_schema_version where version = 7");
@@ -450,6 +532,18 @@ final class JdbcSchemaTest {
         dataSource.setUser("sa");
         dataSource.setPassword("");
         return dataSource;
+    }
+
+    private boolean hasIndex(Connection connection, String table, String expected) throws Exception {
+        try (ResultSet indexes = connection.getMetaData().getIndexInfo(
+                connection.getCatalog(), connection.getSchema(), table, false, false
+        )) {
+            while (indexes.next()) {
+                String name = indexes.getString("INDEX_NAME");
+                if (name != null && name.equalsIgnoreCase(expected)) return true;
+            }
+            return false;
+        }
     }
 
     private long metadataLong(DataSource dataSource, String key) throws Exception {

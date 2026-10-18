@@ -32,6 +32,8 @@ stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/mysql.sql
 | `firefly_job_history` | 任务创建、启停和删除的变更历史 |
 | `firefly_dependency_wait` | 依赖门控等待次数、下次检查时间和跨节点恢复状态 |
 | `firefly_dependency_gate` | 每个业务触发时间的有界依赖门控、claim、释放和过期状态 |
+| `firefly_trigger_inbox` | 外部事件幂等状态、目标任务、失败原因和处理时间 |
+| `firefly_trigger_nonce` | HMAC 请求 nonce 及过期时间，用于跨重启防重放 |
 | `firefly_user` | Admin 控制台账号、PBKDF2 密码摘要、角色、启停状态和乐观锁版本 |
 | `firefly_integration_key` | 系统 Integration Key 的 PBKDF2 摘要、轮换版本和更新时间，不保存明文 |
 
@@ -64,7 +66,7 @@ firefly.jdbc.schema.mode=validate
 firefly.jdbc.schema.mode=initialize-if-empty
 ```
 
-该模式会执行幂等建表、补齐历史版本新增列、按集群配置的分片数为旧任务回填 `shard_id`、为可恢复的旧 Outbox 回填任务快照，并为 v7 活动 execution 回填 `timeout_at`，然后验证表、列、集群不变量和 `firefly_schema_version`。生产环境由外部迁移系统管理时可以使用：
+该模式会执行幂等建表、补齐历史版本新增列、按集群配置的分片数为旧任务回填 `shard_id`、为可恢复的旧 Outbox 回填任务快照，并依次安装 v13-v19 feature migration 和查询索引，然后验证表、列、集群不变量和 `firefly_schema_version`。这些 feature migration 保持 schema 兼容版本 `12`，便于 1.1.6/1.1.7 滚动升级。生产环境由外部迁移系统管理时可以使用：
 
 ```properties
 firefly.jdbc.schema.mode=validate

@@ -31,6 +31,7 @@
 | [jdbc-store.md](jdbc-store.md) | JDBC Store 的方言与初始化边界 |
 | [ha-cluster.md](ha-cluster.md) | 节点、分片租约、fencing 和故障恢复 |
 | [deployment.md](deployment.md) | Docker、节点角色和生产部署 |
+| [upgrade-v1.1.7.md](upgrade-v1.1.7.md) | 从 1.1.6 原地升级到 1.1.7 |
 | [integration.md](integration.md) | Java、Spring Boot 与远程 Executor 集成 |
 | [remote-adapter.md](remote-adapter.md) | 非 Spring Java 服务的 Remote Adapter 接入与配置 |
 | [maven-central-publishing.md](maven-central-publishing.md) | Maven Central 发布流程 |

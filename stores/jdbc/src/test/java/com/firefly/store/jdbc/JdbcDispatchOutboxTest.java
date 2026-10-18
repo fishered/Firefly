@@ -333,6 +333,43 @@ class JdbcDispatchOutboxTest {
     }
 
     @Test
+    void keysetPagesDeadDispatchesWithTimestampTiesAndFilters() {
+        DataSource dataSource = JdbcTestSupport.dataSource();
+        Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        JdbcJobRepository jobs = new JdbcJobRepository(dataSource, ignored -> now);
+        for (int index = 0; index < 5; index++) {
+            String jobId = index == 0 ? "other-dead-job" : "dead-job";
+            JobDefinition job = JobDefinition.builder()
+                    .id(jobId).name(jobId).handlerName("remote:orders:run")
+                    .schedule(new CronSchedule("0 * * * * *")).build();
+            assertTrue(jobs.enqueueManual(new ExecutionCommand(
+                    "dead-page-" + index, job, now, now, "node-a", 1L
+            )));
+        }
+        assertEquals(5, jobs.claimDispatches("gateway-a", now, 10, Duration.ofSeconds(15)).size());
+        for (int index = 0; index < 5; index++) {
+            assertTrue(jobs.retryDispatch(
+                    "dead-page-" + index, now.plusSeconds(30), "gateway unavailable", 0
+            ));
+        }
+
+        var first = jobs.queryDeadDispatches(new com.firefly.store.DispatchOutboxQuery(
+                "dead-job", com.firefly.store.DispatchType.REMOTE, null, null, null, 2
+        ));
+        var second = jobs.queryDeadDispatches(new com.firefly.store.DispatchOutboxQuery(
+                "dead-job", com.firefly.store.DispatchType.REMOTE, null, null, first.nextCursor(), 2
+        ));
+        assertEquals(Set.of("dead-page-4", "dead-page-3"), first.items().stream()
+                .map(com.firefly.store.DispatchOutboxRecord::outboxId)
+                .collect(java.util.stream.Collectors.toSet()));
+        assertEquals(Set.of("dead-page-2", "dead-page-1"), second.items().stream()
+                .map(com.firefly.store.DispatchOutboxRecord::outboxId)
+                .collect(java.util.stream.Collectors.toSet()));
+        assertEquals(null, second.nextCursor());
+    }
+
+    @org.junit.jupiter.api.Tag("production-readiness")
+    @Test
     void fencesLateOutboxWritesAfterAnotherGatewayReclaimsTheDispatch() {
         DataSource dataSource = JdbcTestSupport.dataSource();
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
