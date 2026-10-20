@@ -1,10 +1,16 @@
-# Manual GHCR Image Publishing
+# GHCR Image Publishing
 
-This directory contains the manual release workflow for the Firefly container
-images:
+The preferred release path is the `publish-ghcr` GitHub Actions workflow. Run
+it from the default branch with the immutable release version (for example
+`1.1.7`). It checks out the matching annotated tag, validates the Gradle
+version, refuses to overwrite an existing release tag, and publishes the
+version, minor, and optional `latest` tags for:
 
 - `ghcr.io/fishered/firefly`
 - `ghcr.io/fishered/firefly-admin`
+
+The PowerShell script in this directory is the local fallback when Docker
+Desktop is available.
 
 The script builds from an annotated release Git tag in a temporary detached
 worktree. It does not switch branches or modify the current worktree. By

@@ -1,0 +1,104 @@
+name: publish-ghcr
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 1.1.7
+        required: true
+        type: string
+      publish_latest:
+        description: Also publish the latest tag
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: Verify release tag and project version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version='${{ inputs.version }}'
+          if [[ ! "$expected_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: ${expected_version}"
+            exit 1
+          fi
+          expected_tag="v${expected_version}"
+          actual_tag="$(git describe --tags --exact-match HEAD)"
+          if [[ "$actual_tag" != "$expected_tag" ]]; then
+            echo "Checked out tag ${actual_tag} does not match ${expected_tag}."
+            exit 1
+          fi
+          actual_version="$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*[\"'\"']([^\"'\"']+)[\"'\"'][[:space:]]*$/\1/p' build.gradle | head -n 1)"
+          if [[ "$actual_version" != "$expected_version" ]]; then
+            echo "Gradle version ${actual_version} does not match requested version ${expected_version}."
+            exit 1
+          fi
+          minor="${expected_version%.*}"
+          echo "minor=${minor}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject an existing immutable release tag
+        shell: bash
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for image in firefly firefly-admin; do
+            if docker manifest inspect "ghcr.io/${OWNER}/${image}:${VERSION}" >/dev/null 2>&1; then
+              echo "Immutable release tag ghcr.io/${OWNER}/${image}:${VERSION} already exists."
+              exit 1
+            fi
+          done
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: FIREFLY_VERSION=${{ inputs.version }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/firefly:${{ inputs.version }}
+            ghcr.io/${{ github.repository_owner }}/firefly:${{ steps.release.outputs.minor }}
+            ${{ inputs.publish_latest && format('ghcr.io/{0}/firefly:latest', github.repository_owner) || '' }}
+
+      - name: Build and publish Admin image
+        uses: docker/build-push-action@v6
+        with:
+          context: ui/admin
+          file: ui/admin/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: FIREFLY_VERSION=${{ inputs.version }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/firefly-admin:${{ inputs.version }}
+            ghcr.io/${{ github.repository_owner }}/firefly-admin:${{ steps.release.outputs.minor }}
+            ${{ inputs.publish_latest && format('ghcr.io/{0}/firefly-admin:latest', github.repository_owner) || '' }}
