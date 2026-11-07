@@ -4,6 +4,7 @@ import com.firefly.engine.JobDispatcher;
 import com.firefly.engine.DispatchSubmission;
 import com.firefly.store.DispatchOutboxRecord;
 import com.firefly.store.DispatchType;
+import com.firefly.store.DispatchFairnessPolicy;
 import com.firefly.store.JobRepository;
 import com.firefly.metrics.SchedulerMetrics;
 import com.firefly.lifecycle.ManagedWorker;
@@ -37,6 +38,9 @@ public final class DispatchOutboxWorker implements AutoCloseable {
     private final DispatchOutboxOptions options;
     private final java.util.function.Predicate<com.firefly.engine.ExecutionCommand> dispatchEligibility;
     private volatile java.util.function.BooleanSupplier claimAdmission = () -> true;
+    private volatile java.util.function.Supplier<DispatchFairnessPolicy> fairnessPolicy =
+            DispatchFairnessPolicy::defaults;
+    private volatile com.firefly.governance.TenantQuotaStore tenantQuotaStore;
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "firefly-dispatch-outbox");
         thread.setDaemon(false);
@@ -109,6 +113,23 @@ public final class DispatchOutboxWorker implements AutoCloseable {
         this.claimAdmission = java.util.Objects.requireNonNull(claimAdmission, "claimAdmission");
     }
 
+    /** Reads weights on every claim batch so quota changes take effect without restarting workers. */
+    public void configureTenantFairness(
+            com.firefly.governance.TenantQuotaStore quotaStore,
+            Duration agingInterval
+    ) {
+        java.util.Objects.requireNonNull(quotaStore, "quotaStore");
+        java.util.Objects.requireNonNull(agingInterval, "agingInterval");
+        this.fairnessPolicy = () -> new DispatchFairnessPolicy(
+                quotaStore.list().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        com.firefly.governance.TenantDefinition::tenantId,
+                        com.firefly.governance.TenantDefinition::weight
+                )),
+                agingInterval
+        );
+        this.tenantQuotaStore = quotaStore;
+    }
+
     void drain() {
         if (!claimAdmission.getAsBoolean()) return;
         Instant now = clock.instant();
@@ -132,16 +153,35 @@ public final class DispatchOutboxWorker implements AutoCloseable {
                             record.outboxId(), nodeId, record.attempt(), Duration.ZERO,
                             "maximum delivery attempts exceeded", options.maxAttempts()
                     );
-                    if (dead) metrics.recordOutboxDeliveryExhaustion();
+                    if (dead) {
+                        metrics.recordOutboxDeliveryExhaustion();
+                        releaseTenantReservations(record.outboxId(), now);
+                    }
                     span.setStatus(StatusCode.ERROR, "maximum delivery attempts exceeded");
                     continue;
                 }
                 if (!dispatchEligibility.test(record.command())) {
-                    repository.deferClaimedDispatch(
+                    boolean deferred = repository.deferClaimedDispatch(
                             record.outboxId(), nodeId, record.attempt(), options.pollInterval(),
                             "no local executor route on gateway " + nodeId
                     );
+                    if (deferred) releaseRunningReservation(record.outboxId(), now);
                     span.addEvent("route.deferred");
+                    continue;
+                }
+                com.firefly.governance.TenantAdmissionDecision admission = admit(record, now);
+                if (admission != null && !admission.admitted()) {
+                    String reason = "tenant admission rejected: " + admission.reason().name()
+                            + " tenant=" + record.command().definition().tenantId();
+                    repository.deferClaimedDispatch(
+                            record.outboxId(), nodeId, record.attempt(), options.pollInterval(), reason
+                    );
+                    metrics.recordTenantAdmissionRejection(
+                            record.command().definition().tenantId(), admission.reason()
+                    );
+                    span.setAttribute("firefly.tenant.id", record.command().definition().tenantId());
+                    span.setAttribute("firefly.tenant.admission.reason", admission.reason().name());
+                    span.addEvent("tenant.admission.deferred");
                     continue;
                 }
                 dispatch(record, span);
@@ -159,8 +199,9 @@ public final class DispatchOutboxWorker implements AutoCloseable {
                 .setAttribute("firefly.node.id", nodeId)
                 .startSpan();
         try (Scope ignored = span.makeCurrent()) {
-            List<DispatchOutboxRecord> records = repository.claimDispatches(
-                    nodeId, now, options.claimBatchSize(), options.claimDuration(), dispatchTypes
+            List<DispatchOutboxRecord> records = repository.claimFairDispatches(
+                    nodeId, now, options.claimBatchSize(), options.claimDuration(), dispatchTypes,
+                    fairnessPolicy.get()
             );
             span.setAttribute("firefly.outbox.claimed", records.size());
             return records;
@@ -193,7 +234,11 @@ public final class DispatchOutboxWorker implements AutoCloseable {
                         submission.completion().whenComplete((status, error) ->
                         {
                             java.time.Instant completedAt = clock.instant();
-                            repository.completeDispatch(record.outboxId(), completedAt);
+                            boolean completed = repository.completeClaimedDispatch(
+                                    record.outboxId(), nodeId, record.attempt(), completedAt
+                            );
+                            if (!completed) return;
+                            releaseTenantReservations(record.outboxId(), completedAt);
                             if (status == com.firefly.execution.ExecutionStatus.FAILED || error != null) {
                                 repository.scheduleExecutionRetry(record.command().executionId(), completedAt, false);
                             }
@@ -213,10 +258,55 @@ public final class DispatchOutboxWorker implements AutoCloseable {
                 options.maxRetryBackoff().toMillis(),
                 Math.multiplyExact(1_000L, 1L << Math.min(record.attempt(), 20))
         );
-        repository.retryClaimedDispatchAfter(
+        boolean retried = repository.retryClaimedDispatchAfter(
                 record.outboxId(), nodeId, record.attempt(), Duration.ofMillis(delayMillis),
                 error, options.maxAttempts()
         );
+        if (retried) releaseRunningReservation(record.outboxId(), clock.instant());
+    }
+
+    private com.firefly.governance.TenantAdmissionDecision admit(
+            DispatchOutboxRecord record, Instant now
+    ) {
+        com.firefly.governance.TenantQuotaStore store = tenantQuotaStore;
+        if (store == null) return null;
+        java.util.Map<String, String> parameters = record.command().definition().parameters();
+        long cpuMillis = nonNegativeLong(parameters.get("firefly.resource.cpuMillis"));
+        long memoryBytes = nonNegativeLong(parameters.get("firefly.resource.memoryBytes"));
+        Duration lease;
+        try {
+            lease = record.command().definition().timeout().plus(options.claimDuration());
+        } catch (ArithmeticException overflow) {
+            lease = record.command().definition().timeout();
+        }
+        return store.tryReserve(new com.firefly.governance.TenantAdmissionRequest(
+                com.firefly.governance.TenantReservationKeys.running(record.outboxId()),
+                record.command().definition().tenantId(), 1,
+                cpuMillis, memoryBytes, 0, 0
+        ), now, lease);
+    }
+
+    private void releaseRunningReservation(String executionId, Instant now) {
+        com.firefly.governance.TenantQuotaStore store = tenantQuotaStore;
+        if (store != null) {
+            store.release(com.firefly.governance.TenantReservationKeys.running(executionId), now);
+        }
+    }
+
+    private void releaseTenantReservations(String executionId, Instant now) {
+        com.firefly.governance.TenantQuotaStore store = tenantQuotaStore;
+        if (store == null) return;
+        store.release(com.firefly.governance.TenantReservationKeys.running(executionId), now);
+        store.release(com.firefly.governance.TenantReservationKeys.backlog(executionId), now);
+    }
+
+    private static long nonNegativeLong(String value) {
+        if (value == null || value.isBlank()) return 0;
+        try {
+            return Math.max(0, Long.parseLong(value.trim()));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private void safeDrain() {

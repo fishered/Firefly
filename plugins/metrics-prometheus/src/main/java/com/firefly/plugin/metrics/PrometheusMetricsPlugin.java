@@ -178,7 +178,12 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
         body.append("# HELP firefly_trigger_failed_events Unresolved failed external trigger events.\n")
                 .append("# TYPE firefly_trigger_failed_events gauge\n")
                 .append("firefly_trigger_failed_events ").append(failedTriggers).append('\n');
-        context.schedulerMetrics().ifPresent(metrics -> appendRuntimeMetrics(body, metrics.snapshot()));
+        context.schedulerMetrics().ifPresent(metrics -> {
+            appendRuntimeMetrics(body, metrics.snapshot());
+            appendTenantAdmissionMetrics(body, metrics.tenantAdmissionRejections());
+            appendTenantCapacityHealthMetrics(body, metrics);
+        });
+        context.tenantQuotaStore().ifPresent(store -> appendTenantUsageMetrics(body, store, now));
         body.append("# HELP firefly_scheduler_shard_due_jobs Due jobs grouped by scheduler shard.\n")
                 .append("# TYPE firefly_scheduler_shard_due_jobs gauge\n");
         java.util.stream.IntStream.range(0, context.schedulerShardCount()).forEach(shard ->
@@ -326,5 +331,94 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .append(name).append("_sum ").append(snapshot.sumSeconds()).append('\n')
                 .append("# TYPE ").append(name).append("_max gauge\n")
                 .append(name).append("_max ").append(snapshot.maxSeconds()).append('\n');
+    }
+
+    private void appendTenantAdmissionMetrics(
+            StringBuilder body,
+            java.util.Map<SchedulerMetrics.TenantAdmissionMetricKey, Long> rejections
+    ) {
+        body.append("# HELP firefly_tenant_admission_rejections_total Quota-aware dispatch admissions rejected.\n")
+                .append("# TYPE firefly_tenant_admission_rejections_total counter\n");
+        rejections.entrySet().stream()
+                .sorted(java.util.Comparator
+                        .comparing((java.util.Map.Entry<SchedulerMetrics.TenantAdmissionMetricKey, Long> entry) ->
+                                entry.getKey().tenantId())
+                        .thenComparing(entry -> entry.getKey().reason().name()))
+                .forEach(entry -> body.append("firefly_tenant_admission_rejections_total{tenant=\"")
+                        .append(escapeLabel(entry.getKey().tenantId())).append("\",reason=\"")
+                        .append(entry.getKey().reason().name()).append("\"} ")
+                        .append(entry.getValue()).append('\n'));
+    }
+
+    private void appendTenantCapacityHealthMetrics(StringBuilder body, SchedulerMetrics metrics) {
+        appendLowCardinalityCounter(body, "firefly_tenant_capacity_observations_dropped_total",
+                "Capacity observations dropped before persistence.", "reason",
+                metrics.tenantCapacityObservationsDropped());
+        appendLowCardinalityCounter(body, "firefly_tenant_capacity_flush_failures_total",
+                "Capacity observation flush failures.", "reason", metrics.tenantCapacityFlushFailures());
+        appendLowCardinalityCounter(body, "firefly_tenant_quota_preview_total",
+                "Tenant quota previews by overall risk.", "risk", metrics.tenantQuotaPreviews());
+        body.append("# HELP firefly_tenant_capacity_flush_lag_seconds Age of the oldest pending capacity bucket.\n")
+                .append("# TYPE firefly_tenant_capacity_flush_lag_seconds gauge\n")
+                .append("firefly_tenant_capacity_flush_lag_seconds ")
+                .append(metrics.tenantCapacityFlushLagSeconds()).append('\n');
+    }
+
+    private static void appendLowCardinalityCounter(
+            StringBuilder body, String name, String help, String label, java.util.Map<String, Long> values
+    ) {
+        body.append("# HELP ").append(name).append(' ').append(help).append('\n')
+                .append("# TYPE ").append(name).append(" counter\n");
+        values.entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry ->
+                body.append(name).append('{').append(label).append("=\"")
+                        .append(escapeLabel(entry.getKey())).append("\"} ")
+                        .append(entry.getValue()).append('\n'));
+    }
+
+    private void appendTenantUsageMetrics(
+            StringBuilder body,
+            com.firefly.governance.TenantQuotaStore store,
+            Instant now
+    ) {
+        body.append("# HELP firefly_tenant_usage Authoritative tenant resource usage.\n")
+                .append("# TYPE firefly_tenant_usage gauge\n")
+                .append("# HELP firefly_tenant_quota_limit Configured tenant resource limit; zero means unlimited.\n")
+                .append("# TYPE firefly_tenant_quota_limit gauge\n")
+                .append("# HELP firefly_tenant_weight Configured weighted-fair scheduling weight.\n")
+                .append("# TYPE firefly_tenant_weight gauge\n")
+                .append("# HELP firefly_tenant_enabled Whether admission is enabled for the tenant.\n")
+                .append("# TYPE firefly_tenant_enabled gauge\n");
+        store.list().stream()
+                .sorted(java.util.Comparator.comparing(com.firefly.governance.TenantDefinition::tenantId))
+                .forEach(definition -> {
+                    String tenant = escapeLabel(definition.tenantId());
+                    com.firefly.governance.TenantUsage usage = store.usage(definition.tenantId(), now);
+                    appendTenantResource(body, tenant, "concurrent",
+                            usage.activeExecutions(), definition.maxConcurrent());
+                    appendTenantResource(body, tenant, "cpu_millis",
+                            usage.reservedCpuMillis(), definition.maxCpuMillis());
+                    appendTenantResource(body, tenant, "memory_bytes",
+                            usage.reservedMemoryBytes(), definition.maxMemoryBytes());
+                    appendTenantResource(body, tenant, "backlog",
+                            usage.backlog(), definition.maxBacklog());
+                    appendTenantResource(body, tenant, "trigger_rate_per_second",
+                            usage.triggersInWindow(), definition.maxTriggerRatePerSecond());
+                    body.append("firefly_tenant_weight{tenant=\"").append(tenant).append("\"} ")
+                            .append(definition.weight()).append('\n')
+                            .append("firefly_tenant_enabled{tenant=\"").append(tenant).append("\"} ")
+                            .append(definition.enabled() ? 1 : 0).append('\n');
+                });
+    }
+
+    private static void appendTenantResource(
+            StringBuilder body, String tenant, String resource, long usage, long limit
+    ) {
+        String labels = "{tenant=\"" + tenant + "\",resource=\"" + resource + "\"} ";
+        body.append("firefly_tenant_usage").append(labels).append(usage).append('\n')
+                .append("firefly_tenant_quota_limit").append(labels).append(limit).append('\n');
+    }
+
+    private static String escapeLabel(String value) {
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"");
     }
 }

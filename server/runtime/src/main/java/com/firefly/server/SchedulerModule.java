@@ -31,6 +31,8 @@ import com.firefly.store.InMemoryJobHistoryRepository;
 import com.firefly.batch.BatchRepository;
 import com.firefly.batch.InMemoryBatchRepository;
 import com.firefly.schedule.SchedulingConditionEvaluator;
+import com.firefly.governance.TenantQuotaAwareJobRepository;
+import com.firefly.governance.TenantQuotaStore;
 
 import java.time.Clock;
 import java.util.Objects;
@@ -89,6 +91,21 @@ public final class SchedulerModule extends AbstractModule {
                 new InMemoryAuditRepository(), new InMemoryJobHistoryRepository(),
                 new InMemoryExecutorInstanceDirectory(), localWorkerOptions,
                 new InMemoryBatchRepository(), conditionEvaluator);
+    }
+
+    public SchedulerModule(
+            int shardCount,
+            SchedulerEngineOptions schedulerEngineOptions,
+            LocalWorkerOptions localWorkerOptions,
+            SchedulingConditionEvaluator conditionEvaluator,
+            TenantQuotaStore tenantQuotaStore
+    ) {
+        this(new InMemoryJobRepository(), new InMemoryNodeRegistry(), new InMemorySchedulerCatalog(),
+                new InMemoryShardManager(), new InMemoryExecutionRepository(), shardCount,
+                Clock.systemUTC(), new SchedulerMetrics(), schedulerEngineOptions,
+                new InMemoryAuditRepository(), new InMemoryJobHistoryRepository(),
+                new InMemoryExecutorInstanceDirectory(), localWorkerOptions,
+                new InMemoryBatchRepository(), conditionEvaluator, tenantQuotaStore);
     }
 
     public SchedulerModule(JobRepository jobRepository, NodeRegistry nodeRegistry) {
@@ -259,7 +276,37 @@ public final class SchedulerModule extends AbstractModule {
             BatchRepository batchRepository,
             SchedulingConditionEvaluator conditionEvaluator
     ) {
-        this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository");
+        this(jobRepository, nodeRegistry, schedulerCatalog, shardManager, executionRepository,
+                shardCount, runtimeClock, metrics, schedulerEngineOptions, auditRepository,
+                jobHistoryRepository, executorInstanceDirectory, localWorkerOptions, batchRepository,
+                conditionEvaluator, null);
+    }
+
+    public SchedulerModule(
+            JobRepository jobRepository,
+            NodeRegistry nodeRegistry,
+            SchedulerCatalog schedulerCatalog,
+            ShardManager shardManager,
+            ExecutionRepository executionRepository,
+            int shardCount,
+            Clock runtimeClock,
+            SchedulerMetrics metrics,
+            SchedulerEngineOptions schedulerEngineOptions,
+            AuditRepository auditRepository,
+            JobHistoryRepository jobHistoryRepository,
+            ExecutorInstanceDirectory executorInstanceDirectory,
+            LocalWorkerOptions localWorkerOptions,
+            BatchRepository batchRepository,
+            SchedulingConditionEvaluator conditionEvaluator,
+            TenantQuotaStore tenantQuotaStore
+    ) {
+        JobRepository requiredRepository = Objects.requireNonNull(jobRepository, "jobRepository");
+        this.jobRepository = tenantQuotaStore == null ? requiredRepository
+                : TenantQuotaAwareJobRepository.wrap(
+                        requiredRepository, tenantQuotaStore,
+                        Objects.requireNonNull(runtimeClock, "runtimeClock"),
+                        Objects.requireNonNull(metrics, "metrics")
+                );
         this.nodeRegistry = Objects.requireNonNull(nodeRegistry, "nodeRegistry");
         this.schedulerCatalog = Objects.requireNonNull(schedulerCatalog, "schedulerCatalog");
         this.shardManager = Objects.requireNonNull(shardManager, "shardManager");

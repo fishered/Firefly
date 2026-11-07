@@ -182,7 +182,7 @@ Maven 依赖：
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.7</version>
+            <version>1.2.1</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

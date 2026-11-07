@@ -5,6 +5,7 @@ const views = {
   executors: { title: '执行器', action: 'new-executor' },
   executions: { title: '执行记录', action: 'refresh' },
   backfills: { title: '补数管理', action: 'new-backfill' },
+  tenants: { title: '租户治理', action: 'new-tenant' },
   operations: { title: '运营审计', action: 'refresh' },
   nodes: { title: '节点与集群', badge: 'Cluster Mode', action: 'refresh' },
   plugins: { title: '插件' },
@@ -21,6 +22,8 @@ const state = {
   executions: [],
   deadDispatches: [],
   backfills: [],
+  tenants: [],
+  tenantCapacityReport: null,
   auditRecords: [],
   failedTriggers: [],
   jobHistory: [],
@@ -349,6 +352,12 @@ function renderActions(view) {
     document.getElementById('refresh-page').addEventListener('click', () => refreshView(true));
     return;
   }
+  if (views[view].action === 'new-tenant') {
+    actions.innerHTML = `<button class="btn primary" type="button"><span>+</span>新建租户</button><button id="refresh-page" class="btn" type="button"><span>⟳</span>刷新</button>`;
+    actions.querySelector('.primary').addEventListener('click', () => openTenantDialog());
+    document.getElementById('refresh-page').addEventListener('click', () => refreshView(true));
+    return;
+  }
   if (views[view].action === 'refresh') {
     actions.innerHTML = `<button id="refresh-page" class="btn" type="button"><span>⟳</span>刷新</button>`;
     document.getElementById('refresh-page').addEventListener('click', () => refreshView(true));
@@ -367,11 +376,12 @@ async function loadViewData(view, force) {
   if (!force && Date.now() - loadedAt < VIEW_CACHE_MS) return;
   const loaders = {
     overview: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes],
-    jobs: [loadJobs, loadExecutors, loadCalendars],
+    jobs: [loadJobs, loadExecutors, loadCalendars, loadTenants],
     calendars: [loadCalendars],
     executors: [loadExecutors],
     executions: [loadExecutions, loadDeadDispatches],
     backfills: [loadBackfills, loadJobs],
+    tenants: [loadTenants],
     operations: [loadAuditRecords, loadFailedTriggers],
     nodes: [loadNodes],
     plugins: [loadPlugins],
@@ -567,6 +577,14 @@ async function loadPlugins() {
   }
 }
 
+async function loadTenants() {
+  try {
+    state.tenants = normalizeList(await api('/api/tenants'), 'tenants');
+  } catch {
+    state.tenants = [];
+  }
+}
+
 function renderView(view) {
   const root = document.getElementById('view-root');
   if (view === 'overview') root.innerHTML = overviewPage();
@@ -575,11 +593,206 @@ function renderView(view) {
   if (view === 'executors') root.innerHTML = executorsPage();
   if (view === 'executions') root.innerHTML = executionsPage();
   if (view === 'backfills') root.innerHTML = backfillsPage();
+  if (view === 'tenants') root.innerHTML = tenantsPage();
   if (view === 'operations') root.innerHTML = operationsPage();
   if (view === 'nodes') root.innerHTML = nodesPage();
   if (view === 'plugins') root.innerHTML = pluginsPage();
   if (view === 'settings') root.innerHTML = usersPage();
   bindViewActions(view);
+}
+
+function tenantsPage() {
+  const rows = state.tenants.map(tenant => {
+    const usage = tenant.usage ?? {};
+    return tableRow([
+      code(tenant.tenantId),
+      statusText(tenant.enabled ? 'ENABLED' : 'DISABLED', tenant.enabled ? 'success' : 'muted'),
+      text(String(tenant.weight ?? 1)),
+      tenantUsageCell(usage.activeExecutions, tenant.maxConcurrent),
+      tenantUsageCell(usage.reservedCpuMillis, tenant.maxCpuMillis, 'ms'),
+      tenantUsageCell(usage.reservedMemoryBytes, tenant.maxMemoryBytes, 'B'),
+      tenantUsageCell(usage.backlog, tenant.maxBacklog),
+      tenantUsageCell(usage.triggersInWindow, tenant.maxTriggerRatePerSecond, '/s'),
+      text(String(tenant.version ?? 0)),
+      `<button class="link-button" type="button" data-tenant-edit="${escapeHtml(tenant.tenantId)}">编辑配额</button>`
+    ]);
+  }).join('');
+  const saturated = state.tenants.filter(tenant => tenantSaturated(tenant)).length;
+  return `
+    <section class="summary-strip">
+      ${statCard('租户总数', state.tenants.length, '个', '动态配置即时生效', '◈', 'primary')}
+      ${statCard('已启用租户', state.tenants.filter(item => item.enabled).length, '个', '可接受新任务', '●', 'yellow')}
+      ${statCard('接近配额', saturated, '个', saturated ? '使用率达到 90%' : '当前容量充足', '▲', 'red', saturated ? 'warning' : 'success')}
+    </section>
+    <section class="table-card">
+      <div class="table-toolbar"><div><strong>租户配额与实时用量</strong><span class="table-count">共 ${state.tenants.length} 条</span></div><div><button class="btn" type="button" data-capacity-report>容量报告</button> <span class="muted">0 表示不限制</span></div></div>
+      <div class="table-scroll"><table>
+        <thead><tr>${headers(['Tenant ID', 'Status', 'Weight', 'Concurrency', 'CPU', 'Memory', 'Backlog', 'Trigger rate', 'Version', 'Actions'])}</tr></thead>
+        <tbody>${rows || emptyRow(10, '暂无租户配置')}</tbody>
+      </table></div>
+    </section>
+    ${capacityReportPanel()}`;
+}
+
+function capacityReportPanel() {
+  if (!state.tenantCapacityReport) return '';
+  const items = normalizeList(state.tenantCapacityReport, 'items');
+  const rows = items.map(item => tableRow([
+    code(item.tenantId), statusText(item.overallRisk ?? 'UNKNOWN', capacityRiskTone(item.overallRisk)),
+    text(`${Math.round(Number(item.window?.coverageRatio ?? 0) * 100)}%`),
+    text(String((item.resources ?? []).reduce((sum, resource) => sum + Number(resource.rejections ?? 0), 0))),
+    `<button class="link-button" type="button" data-tenant-edit="${escapeHtml(item.tenantId)}">查看并调整</button>`
+  ])).join('');
+  return `<section class="table-card" data-capacity-report-panel>
+    <div class="table-toolbar"><div><strong>容量风险报告</strong><span class="table-count">${items.length} 个租户</span></div>
+      <div><button class="btn" type="button" data-capacity-export="json">导出 JSON</button> <button class="btn" type="button" data-capacity-export="csv">导出 CSV</button></div></div>
+    <div class="table-scroll"><table><thead><tr>${headers(['Tenant ID', 'Risk', 'Coverage', 'Rejections', 'Actions'])}</tr></thead>
+      <tbody>${rows || emptyRow(5, '暂无容量数据')}</tbody></table></div></section>`;
+}
+
+function capacityRiskTone(risk) {
+  if (risk === 'CRITICAL' || risk === 'HIGH') return 'danger';
+  if (risk === 'MEDIUM' || risk === 'UNKNOWN') return 'warning';
+  return 'success';
+}
+
+function tenantUsageCell(value, limit, suffix = '') {
+  const actual = Number(value ?? 0);
+  const maximum = Number(limit ?? 0);
+  const level = maximum > 0 && actual >= maximum ? 'danger' : maximum > 0 && actual / maximum >= 0.9 ? 'warning' : 'success';
+  return `<span class="${level}">${actual}${suffix}</span><span class="muted"> / ${maximum > 0 ? `${maximum}${suffix}` : '∞'}</span>`;
+}
+
+function tenantSaturated(tenant) {
+  const usage = tenant.usage ?? {};
+  return [
+    [usage.activeExecutions, tenant.maxConcurrent],
+    [usage.reservedCpuMillis, tenant.maxCpuMillis],
+    [usage.reservedMemoryBytes, tenant.maxMemoryBytes],
+    [usage.backlog, tenant.maxBacklog],
+    [usage.triggersInWindow, tenant.maxTriggerRatePerSecond]
+  ].some(([value, limit]) => Number(limit) > 0 && Number(value ?? 0) / Number(limit) >= 0.9);
+}
+
+function openTenantDialog(existing = null) {
+  const root = document.getElementById('modal-root');
+  const tenant = existing ?? {
+    tenantId: '', enabled: true, weight: 1, maxConcurrent: 0, maxCpuMillis: 0,
+    maxMemoryBytes: 0, maxBacklog: 0, maxTriggerRatePerSecond: 0, version: 0
+  };
+  root.innerHTML = `
+    <div class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="tenant-dialog-title">
+      <form id="tenant-dialog" class="modal">
+        <div class="modal-header"><div><h2 id="tenant-dialog-title">${existing ? '编辑租户配额' : '新建租户'}</h2><div class="modal-subtitle">并发、CPU、内存、积压和触发速率由所有 Gateway/Scheduler 共享。</div></div><button class="btn icon" type="button" data-close>×</button></div>
+        <div class="form-grid">
+          <label class="field">租户 ID<input name="tenantId" required maxlength="128" value="${escapeHtml(tenant.tenantId)}" ${existing ? 'readonly' : ''}></label>
+          <label class="field">调度权重<input name="weight" type="number" required min="1" value="${Number(tenant.weight)}"></label>
+          <label class="field">最大并发<input name="maxConcurrent" type="number" required min="0" value="${Number(tenant.maxConcurrent)}"></label>
+          <label class="field">CPU 配额 (ms)<input name="maxCpuMillis" type="number" required min="0" value="${Number(tenant.maxCpuMillis)}"></label>
+          <label class="field">内存配额 (bytes)<input name="maxMemoryBytes" type="number" required min="0" value="${Number(tenant.maxMemoryBytes)}"></label>
+          <label class="field">最大积压<input name="maxBacklog" type="number" required min="0" value="${Number(tenant.maxBacklog)}"></label>
+          <label class="field">每秒触发上限<input name="maxTriggerRatePerSecond" type="number" required min="0" value="${Number(tenant.maxTriggerRatePerSecond)}"></label>
+          <label class="field"><span>准入状态</span><select name="enabled"><option value="true" ${tenant.enabled ? 'selected' : ''}>启用</option><option value="false" ${tenant.enabled ? '' : 'selected'}>禁用</option></select></label>
+          ${existing ? '<label class="field">分析窗口<select name="window"><option value="P1D">24 小时</option><option value="P7D" selected>7 天</option><option value="P30D">30 天</option></select></label><label class="field">安全余量 (%)<input name="headroomPercent" type="number" min="5" max="100" value="20"></label>' : ''}
+        </div>
+        <div data-tenant-preview-result aria-live="polite"></div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button>${existing ? '<button class="btn primary" type="button" data-tenant-preview>预览变更</button>' : ''}<button class="btn" type="submit">直接保存</button></div>
+      </form>
+    </div>`;
+  root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
+  root.querySelector('#tenant-dialog').addEventListener('submit', event => saveTenant(event, tenant.version ?? 0));
+  root.querySelector('[data-tenant-preview]')?.addEventListener('click', () => previewTenant(root.querySelector('#tenant-dialog'), tenant.version ?? 0));
+}
+
+function tenantFormBody(form, expectedVersion) {
+  const values = Object.fromEntries(new FormData(form).entries());
+  return {
+    tenantId: values.tenantId.trim(),
+    enabled: values.enabled === 'true', weight: Number(values.weight),
+    maxConcurrent: Number(values.maxConcurrent), maxCpuMillis: Number(values.maxCpuMillis),
+    maxMemoryBytes: Number(values.maxMemoryBytes), maxBacklog: Number(values.maxBacklog),
+    maxTriggerRatePerSecond: Number(values.maxTriggerRatePerSecond), expectedVersion: Number(expectedVersion),
+    window: values.window || 'P7D', headroomPercent: Number(values.headroomPercent || 20)
+  };
+}
+
+async function previewTenant(form, expectedVersion) {
+  const body = tenantFormBody(form, expectedVersion);
+  const tenantId = body.tenantId;
+  delete body.tenantId;
+  const target = form.querySelector('[data-tenant-preview-result]');
+  const button = form.querySelector('[data-tenant-preview]');
+  button.disabled = true;
+  try {
+    const preview = await api(`/api/tenants/${encodeURIComponent(tenantId)}/quota-preview`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    form.dataset.previewRisk = preview.overallRisk;
+    target.innerHTML = tenantPreviewPanel(preview);
+    target.querySelectorAll('[data-apply-recommendation]').forEach(apply => apply.addEventListener('click', () => {
+      const input = form.querySelector(`[name="${apply.dataset.applyRecommendation}"]`);
+      if (input) input.value = apply.dataset.recommendedValue;
+    }));
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function tenantPreviewPanel(preview) {
+  const rows = (preview.resources ?? []).map(resource => {
+    const field = {concurrency: 'maxConcurrent', cpuMillis: 'maxCpuMillis', memoryBytes: 'maxMemoryBytes', backlog: 'maxBacklog', triggerRatePerSecond: 'maxTriggerRatePerSecond'}[resource.resource];
+    const recommendation = resource.recommendedLimit == null ? '<span class="muted">无可靠建议</span>' :
+      `${text(String(resource.recommendedLimit))} <button class="link-button" type="button" data-apply-recommendation="${field}" data-recommended-value="${resource.recommendedLimit}">采用</button>`;
+    return tableRow([text(resource.resource), text(String(resource.current)), text(Number(resource.average ?? 0).toFixed(1)), text(String(resource.peak)), text(String(resource.proposedLimit)), recommendation, statusText(resource.quality, resource.quality === 'COMPLETE' ? 'success' : 'warning'), statusText(resource.risk, capacityRiskTone(resource.risk))]);
+  }).join('');
+  return `<section class="table-card tenant-preview" data-preview-risk="${escapeHtml(preview.overallRisk)}">
+    <div class="table-toolbar"><strong>预览结果 · ${escapeHtml(preview.overallRisk)}</strong><span class="muted">覆盖率 ${Math.round(Number(preview.window?.coverageRatio ?? 0) * 100)}%</span></div>
+    <div class="table-scroll"><table><thead><tr>${headers(['Resource', 'Current', 'Average', 'Peak', 'Proposed', 'Recommended', 'Quality', 'Risk'])}</tr></thead><tbody>${rows}</tbody></table></div>
+  </section>`;
+}
+
+async function saveTenant(event, expectedVersion) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const body = tenantFormBody(form, expectedVersion);
+  const tenantId = body.tenantId;
+  delete body.tenantId; delete body.window; delete body.headroomPercent;
+  if (form.dataset.previewRisk === 'CRITICAL' && !window.confirm('预览结果为 CRITICAL，确认仍要直接保存？')) return;
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    await api(`/api/tenants/${encodeURIComponent(tenantId)}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    closeDialog();
+    viewLoadedAt.delete('tenants');
+    await loadTenants();
+    renderView('tenants');
+    toast(`租户配额已保存：${tenantId}`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function loadCapacityReport() {
+  state.tenantCapacityReport = await api('/api/tenant-capacity?window=P7D&limit=500');
+}
+
+async function exportCapacity(format) {
+  try {
+    const response = await fetch(`/api/tenant-capacity/export?window=P7D&format=${format}`);
+    if (!response.ok) throw new Error(`导出失败 (${response.status})`);
+    const blob = await response.blob();
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `firefly-tenant-capacity.${format}`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error) { toast(error.message); }
 }
 
 function calendarsPage() {
@@ -1902,6 +2115,10 @@ function openJobDialog() {
           ${dialogField('分片数', 'shardCount', '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
           ${dialogField('路由键', 'routingKey', '', false, 'text', jobFieldHelp.routingKey)}
           ${calendarSelect('')}
+          ${tenantSelect('default')}
+          ${dialogField('排队优先级 (0-9)', 'param.firefly.resource.priority', '0', true, 'number', null, 'min="0" max="9"')}
+          ${dialogField('CPU 需求 (ms)', 'param.firefly.resource.cpuMillis', '0', true, 'number', null, 'min="0"')}
+          ${dialogField('内存需求 (bytes)', 'param.firefly.resource.memoryBytes', '0', true, 'number', null, 'min="0"')}
           ${scheduleEditorFields('*/5 * * * * *', 'Asia/Shanghai')}
         </div>
         <div class="modal-footer">
@@ -1951,6 +2168,11 @@ function calendarSelect(value = '') {
   const options = [`<option value="">不使用业务日历</option>`, ...latestCalendars().map(c => `<option value="${escapeHtml(c.id)}" ${c.id === value ? 'selected' : ''}>${escapeHtml(c.id)}（v${c.version}）</option>`)].join('');
   const selected = latestCalendars().find(calendar => calendar.id === value);
   return `<label class="field calendar-binding-field" data-field="calendarId">${fieldLabel('业务日历', ['任务会按绑定日历的时区和日期例外判断是否触发。'])}<select name="calendarId">${options}</select><span class="calendar-binding-preview" data-calendar-binding-preview>${calendarBindingSummary(selected)}</span></label>`;
+}
+
+function tenantSelect(value = 'default') {
+  const ids = [...new Set(['default', ...state.tenants.map(tenant => tenant.tenantId)])].sort();
+  return `<label class="field" data-field="tenantId">租户<select name="param.firefly.resource.tenantId">${ids.map(id => `<option value="${escapeHtml(id)}" ${id === value ? 'selected' : ''}>${escapeHtml(id)}</option>`).join('')}</select></label>`;
 }
 
 function calendarBindingSummary(calendar) {
@@ -2741,6 +2963,8 @@ function jobsPage() {
     text(job.zoneId ?? 'UTC'),
     text(formatDate(job.nextFireTime)),
     text(job.executorName ?? '-'),
+    code(job.tenantId ?? 'default'),
+    text(String(job.queuePriority ?? 0)),
     text(job.dispatchMode ?? 'UNICAST'),
     statusText(job.enabled === false ? 'DISABLED' : 'ENABLED', job.enabled === false ? 'muted' : 'success'),
     statusText(job.lastResult ?? '-', job.lastResult === 'FAILED' ? 'danger' : 'success'),
@@ -2761,8 +2985,8 @@ function jobsPage() {
       </div>
       <div class="table-scroll">
         <table class="jobs-table">
-          <thead><tr>${headers(['Job ID', 'Name', 'Group', 'Schedule', 'Time zone', 'Next fire', 'Executor', 'Dispatch', 'Status', 'Last result', 'Actions'])}</tr></thead>
-          <tbody>${rows || emptyRow(11, 'No jobs found')}</tbody>
+          <thead><tr>${headers(['Job ID', 'Name', 'Group', 'Schedule', 'Time zone', 'Next fire', 'Executor', 'Tenant', 'Priority', 'Dispatch', 'Status', 'Last result', 'Actions'])}</tr></thead>
+          <tbody>${rows || emptyRow(13, 'No jobs found')}</tbody>
         </table>
       </div>
     </section>
@@ -2841,6 +3065,18 @@ function bindViewActions(view) {
     document.querySelectorAll('[data-backfill-action]').forEach(button => {
       button.addEventListener('click', () => operateBackfill(button.dataset.backfillId, button.dataset.backfillAction));
     });
+  }
+  if (view === 'tenants') {
+    document.querySelectorAll('[data-tenant-edit]').forEach(button => {
+      button.addEventListener('click', () => openTenantDialog(
+        state.tenants.find(tenant => tenant.tenantId === button.dataset.tenantEdit)
+      ));
+    });
+    document.querySelector('[data-capacity-report]')?.addEventListener('click', async () => {
+      await loadCapacityReport(); renderView('tenants');
+    });
+    document.querySelectorAll('[data-capacity-export]').forEach(button =>
+      button.addEventListener('click', () => exportCapacity(button.dataset.capacityExport)));
   }
   if (view === 'operations') {
     document.querySelector('[data-audit-filter="apply"]')?.addEventListener('click', async () => {
@@ -3183,6 +3419,10 @@ function openJobEditDialog(job) {
           ${dialogField('分片数量', 'shardCount', job.shardCount ?? '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
           ${dialogField('路由键', 'routingKey', job.routingKey ?? '', false, 'text', jobFieldHelp.routingKey)}
           ${calendarSelect(job.calendarId ?? '')}
+          ${tenantSelect(job.tenantId ?? 'default')}
+          ${dialogField('排队优先级 (0-9)', 'param.firefly.resource.priority', job.queuePriority ?? '0', true, 'number', null, 'min="0" max="9"')}
+          ${dialogField('CPU 需求 (ms)', 'param.firefly.resource.cpuMillis', job.resourceCpuMillis ?? '0', true, 'number', null, 'min="0"')}
+          ${dialogField('内存需求 (bytes)', 'param.firefly.resource.memoryBytes', job.resourceMemoryBytes ?? '0', true, 'number', null, 'min="0"')}
           ${dialogField('最大重试次数', 'retryMaxAttempts', job.retryMaxAttempts ?? '1', true, 'number')}
           ${dialogSelect('状态', 'enabled', ['true', 'false'])}
         </div>

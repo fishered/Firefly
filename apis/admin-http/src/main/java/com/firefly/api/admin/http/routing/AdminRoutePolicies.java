@@ -11,6 +11,7 @@ import static com.firefly.api.admin.http.routing.AdminRoutePolicy.PathMatch.REQU
 import static com.firefly.api.admin.http.routing.AdminRoutePolicy.PathMatch.ROOT;
 import static com.firefly.api.admin.http.routing.AdminRoutePolicy.PathMatch.SINGLE_SEGMENT;
 import static com.firefly.api.admin.http.routing.AdminRoutePolicy.PathMatch.TRIGGER;
+import static com.firefly.api.admin.http.routing.AdminRoutePolicy.PathMatch.EXPORT;
 
 /** Named policy catalog used by Admin route registration. */
 public final class AdminRoutePolicies {
@@ -35,6 +36,10 @@ public final class AdminRoutePolicies {
     public static final AdminRoutePolicy OUTBOX = standardBuilder()
             .require(AdminRole.OPERATOR, "POST", REQUEUE)
             .require(AdminRole.OPERATOR, "POST", BATCH_REQUEUE)
+            .build();
+    public static final AdminRoutePolicy CAPACITY = AdminRoutePolicy.builder(AdminRole.ADMIN)
+            .require(AdminRole.OPERATOR, "GET", EXPORT)
+            .require(AdminRole.READER, "GET", ANY)
             .build();
 
     private AdminRoutePolicies() {

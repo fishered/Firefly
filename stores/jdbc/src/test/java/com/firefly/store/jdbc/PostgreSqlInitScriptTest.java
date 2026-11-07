@@ -52,12 +52,21 @@ final class PostgreSqlInitScriptTest {
             "firefly_event_aggregate",
             "firefly_event_aggregate_member",
             "firefly_backfill_operation",
-            "firefly_backfill_item"
+            "firefly_backfill_item",
+            "firefly_tenant_policy",
+            "firefly_tenant_usage",
+            "firefly_tenant_reservation",
+            "firefly_dispatch_fairness_state",
+            "firefly_tenant_capacity_sample",
+            "firefly_tenant_capacity_flush"
     );
     private static final Set<String> ALLOWED_INSERT_TARGETS = Set.of(
             "firefly_schema_version",
             "firefly_cluster_metadata",
-            "firefly_user"
+            "firefly_user",
+            "firefly_tenant_policy",
+            "firefly_tenant_usage",
+            "firefly_dispatch_fairness_state"
     );
 
     @Test

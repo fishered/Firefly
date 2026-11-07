@@ -160,7 +160,9 @@ final class AdminExecutionController {
             if ("replay".equals(action)) {
                 var jobs = context.jobRepository().orElseThrow(
                         () -> new IllegalStateException("jobRepository is required"));
-                var result = new EventTriggerService(triggerInbox, jobs, context.clock()).replay(key);
+                var result = new EventTriggerService(
+                        triggerInbox, jobs, context.clock(), context.tenantQuotaStore().orElse(null)
+                ).replay(key);
                 context.schedulerMetrics().ifPresent(metrics -> {
                     if (result.accepted()) metrics.recordTriggerReplay();
                     else metrics.recordTriggerDuplicate();
@@ -190,7 +192,9 @@ final class AdminExecutionController {
         var jobs = context.jobRepository().orElseThrow(() -> new IllegalStateException("jobRepository is required"));
         EventTriggerService.TriggerResult result;
         try {
-            result = new EventTriggerService(triggerInbox, jobs, context.clock()).accept(jobId,
+            result = new EventTriggerService(
+                    triggerInbox, jobs, context.clock(), context.tenantQuotaStore().orElse(null)
+            ).accept(jobId,
                     eventId, eventType, idempotencyKey, payload);
         } catch (RuntimeException failure) {
             context.schedulerMetrics().ifPresent(com.firefly.metrics.SchedulerMetrics::recordTriggerFailure);
@@ -468,8 +472,16 @@ final class AdminExecutionController {
                     + replayPlanJson(plan) + "}");
             return;
         }
-        if (!service.submitIfAccepted(plan, confirmed, jobs::enqueueManual)) {
+        var replayCommand = plan.commandIfExecutable(confirmed).orElse(null);
+        if (replayCommand == null) {
             respond(exchange, 409, "{\"error\":\"replay_not_accepted\"}");
+            return;
+        }
+        var admission = jobs.enqueueManualWithAdmission(replayCommand);
+        if (!admission.accepted() && !admission.duplicate()) {
+            respond(exchange, 429, "{\"error\":\"tenant_admission_rejected\",\"reason\":\""
+                    + admission.reason().name() + "\",\"tenantId\":\""
+                    + responses.escape(replayCommand.definition().tenantId()) + "\"}");
             return;
         }
         respond(exchange, 202, replayPlanJson(plan));
@@ -636,6 +648,7 @@ final class AdminExecutionController {
             respond(exchange, 409, "{\"error\":\"execution_not_cancellable\"}");
             return;
         }
+        releaseTenantReservations(executionId, now);
         int notifiedTargets = context.executionCancellationDispatcher()
                 .map(dispatcher -> dispatcher.cancel(executionId, reason))
                 .orElse(0);
@@ -673,9 +686,17 @@ final class AdminExecutionController {
         if (current == null || current.status().terminal()) return -1;
         Instant now = context.clock().instant();
         if (!new com.firefly.execution.ExecutionLifecycleService(executions).cancel(executionId, now, reason)) return -1;
+        releaseTenantReservations(executionId, now);
         return context.executionCancellationDispatcher()
                 .map(dispatcher -> dispatcher.cancel(executionId, reason))
                 .orElse(0);
+    }
+
+    private void releaseTenantReservations(String executionId, Instant now) {
+        context.tenantQuotaStore().ifPresent(store -> {
+            store.release(com.firefly.governance.TenantReservationKeys.running(executionId), now);
+            store.release(com.firefly.governance.TenantReservationKeys.backlog(executionId), now);
+        });
     }
 
     private com.firefly.execution.ExecutionRepository executionRepository() {

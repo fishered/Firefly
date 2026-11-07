@@ -35,6 +35,8 @@ public final class InMemoryJobRepository implements JobRepository {
     private final Map<String, com.firefly.schedule.ConditionStatus> conditionStates = new HashMap<>();
     private final Map<String, com.firefly.schedule.DependencyGate> dependencyGates = new HashMap<>();
     private final Set<String> retryScheduled = new java.util.HashSet<>();
+    private final Map<String, Long> tenantVirtualFinishes = new HashMap<>();
+    private long tenantVirtualTime;
     private long configurationVersion;
     private final NavigableSet<ScheduledJobRecord> nextFireTimeIndex = new TreeSet<>(
             Comparator.comparing(ScheduledJobRecord::nextFireTime)
@@ -340,6 +342,57 @@ public final class InMemoryJobRepository implements JobRepository {
     }
 
     @Override
+    public List<DispatchOutboxRecord> claimFairDispatches(
+            String claimant,
+            Instant now,
+            int limit,
+            java.time.Duration claimDuration,
+            Set<DispatchType> dispatchTypes,
+            DispatchFairnessPolicy fairness
+    ) {
+        if (limit < 1 || dispatchTypes.isEmpty()) return List.of();
+        synchronized (lock) {
+            com.firefly.governance.WeightedFairQueue<DispatchOutboxRecord> queue =
+                    new com.firefly.governance.WeightedFairQueue<>(
+                            fairness.agingInterval(), fairness::weightOf,
+                            tenantVirtualFinishes, tenantVirtualTime
+                    );
+            outbox.values().stream()
+                    .filter(record -> dispatchTypes.contains(record.dispatchType()))
+                    .filter(record -> claimable(record, now))
+                    .filter(record -> !record.availableAt().isAfter(now))
+                    .forEach(record -> queue.offer(new com.firefly.governance.TenantQueueEntry<>(
+                            record.outboxId(), record.command().definition().tenantId(),
+                            record.command().definition().queuePriority(), record.availableAt(), record
+                    )));
+            List<DispatchOutboxRecord> result = new ArrayList<>();
+            while (result.size() < limit) {
+                Optional<com.firefly.governance.TenantQueueEntry<DispatchOutboxRecord>> selected = queue.poll(now);
+                if (selected.isEmpty()) break;
+                DispatchOutboxRecord record = selected.get().value();
+                DispatchOutboxRecord next = copy(record, DispatchOutboxStatus.CLAIMED,
+                        record.attempt() + 1, record.availableAt(), claimant,
+                        now.plus(claimDuration), null, record.lastError());
+                outbox.put(record.outboxId(), next);
+                result.add(next);
+            }
+            tenantVirtualFinishes.clear();
+            tenantVirtualFinishes.putAll(queue.virtualFinishes());
+            tenantVirtualTime = queue.virtualTime();
+            return List.copyOf(result);
+        }
+    }
+
+    private static boolean claimable(DispatchOutboxRecord record, Instant now) {
+        return record.status() == DispatchOutboxStatus.PENDING
+                || record.status() == DispatchOutboxStatus.RETRY
+                || record.status() == DispatchOutboxStatus.SENT && record.ackDeadline() != null
+                && !record.ackDeadline().isAfter(now)
+                || record.status() == DispatchOutboxStatus.CLAIMED && record.claimUntil() != null
+                && !record.claimUntil().isAfter(now);
+    }
+
+    @Override
     public boolean markDispatchSent(String outboxId, Instant ackDeadline) {
         synchronized (lock) {
             DispatchOutboxRecord current = outbox.get(outboxId);
@@ -431,6 +484,22 @@ public final class InMemoryJobRepository implements JobRepository {
     @Override
     public boolean completeDispatch(String outboxId, Instant now) {
         return acknowledgeDispatch(outboxId, now);
+    }
+
+    @Override
+    public boolean completeClaimedDispatch(
+            String outboxId, String claimant, int claimAttempt, Instant now
+    ) {
+        synchronized (lock) {
+            DispatchOutboxRecord current = outbox.get(outboxId);
+            if (current == null || current.status() != DispatchOutboxStatus.SENT
+                    || !current.claimOwner().equals(claimant) || current.attempt() != claimAttempt) {
+                return false;
+            }
+            outbox.put(outboxId, copy(current, DispatchOutboxStatus.DONE, current.attempt(),
+                    current.availableAt(), "", null, null, current.lastError()));
+            return true;
+        }
     }
 
     @Override

@@ -69,6 +69,33 @@ public final class JdbcFeatureSchema {
             )),
             Map.entry("firefly_backfill_item", Set.of(
                     "request_id", "ordinal", "fire_time", "execution_id", "status", "error_message", "updated_at"
+            )),
+            Map.entry("firefly_tenant_policy", Set.of(
+                    "tenant_id", "enabled", "weight", "max_concurrent", "max_cpu_millis",
+                    "max_memory_bytes", "max_backlog", "max_trigger_rate", "version", "updated_at"
+            )),
+            Map.entry("firefly_tenant_usage", Set.of(
+                    "tenant_id", "active_executions", "reserved_cpu_millis", "reserved_memory_bytes",
+                    "backlog", "trigger_window_started_at", "triggers_in_window", "version"
+            )),
+            Map.entry("firefly_tenant_reservation", Set.of(
+                    "reservation_id", "tenant_id", "concurrent_executions", "cpu_millis", "memory_bytes",
+                    "backlog", "triggers", "created_at", "expires_at"
+            )),
+            Map.entry("firefly_dispatch_fairness_state", Set.of(
+                    "state_key", "virtual_finish", "updated_at"
+            )),
+            Map.entry("firefly_tenant_capacity_sample", Set.of(
+                    "tenant_id", "bucket_start", "sample_count", "min_policy_version", "max_policy_version",
+                    "min_runtime_version", "max_runtime_version", "max_active_executions",
+                    "max_reserved_cpu_millis", "max_reserved_memory_bytes", "max_backlog", "max_trigger_rate",
+                    "saturated_concurrency_samples", "saturated_cpu_samples", "saturated_memory_samples",
+                    "saturated_backlog_samples", "saturated_trigger_rate_samples", "rejected_concurrency",
+                    "rejected_cpu", "rejected_memory", "rejected_backlog", "rejected_trigger_rate",
+                    "rejected_disabled", "created_at", "updated_at"
+            )),
+            Map.entry("firefly_tenant_capacity_flush", Set.of(
+                    "flush_id", "bucket_start", "created_at"
             ))
     );
 
@@ -100,6 +127,21 @@ public final class JdbcFeatureSchema {
                     statement.execute(sql);
                 }
             }
+            for (String sql : JdbcSchemaScript.loadMigration(dialect, 20)) {
+                String normalized = sql.stripLeading().toLowerCase(java.util.Locale.ROOT);
+                if (dialect == JdbcDialect.MYSQL && (normalized.startsWith("alter table")
+                        || normalized.startsWith("create index"))) continue;
+                statement.execute(sql);
+            }
+            for (String sql : JdbcSchemaScript.loadMigration(dialect, 21)) {
+                String normalized = sql.stripLeading().toLowerCase(java.util.Locale.ROOT);
+                if (dialect == JdbcDialect.MYSQL && normalized.startsWith("create index")) continue;
+                statement.execute(sql);
+            }
+            JdbcSchema.ensureColumn(connection, "firefly_dispatch_outbox", "tenant_id",
+                    "varchar(128) not null default 'default'");
+            JdbcSchema.ensureColumn(connection, "firefly_dispatch_outbox", "queue_priority",
+                    "integer not null default 0");
             JdbcSchema.ensureIndex(connection, "firefly_calendar_date_rule", "idx_firefly_calendar_rule_date", "calendar_id, calendar_version, rule_date");
             JdbcSchema.ensureIndex(connection, "firefly_calendar_import", "idx_firefly_calendar_import_status", "calendar_id, status, imported_at");
             JdbcSchema.ensureIndex(connection, "firefly_dependency_wait", "idx_firefly_dependency_wait_next", "next_check_at, job_id");
@@ -138,6 +180,17 @@ public final class JdbcFeatureSchema {
                     "status, job_id, available_at, outbox_id");
             JdbcSchema.ensureIndex(connection, "firefly_dispatch_outbox", "idx_firefly_outbox_dead_type_page",
                     "status, dispatch_type, available_at, outbox_id");
+            JdbcSchema.ensureIndex(connection, "firefly_tenant_reservation",
+                    "idx_firefly_tenant_reservation_expiry", "expires_at, reservation_id");
+            JdbcSchema.ensureIndex(connection, "firefly_tenant_reservation",
+                    "idx_firefly_tenant_reservation_tenant_expiry", "tenant_id, expires_at, reservation_id");
+            JdbcSchema.ensureIndex(connection, "firefly_dispatch_outbox",
+                    "idx_firefly_outbox_tenant_claim",
+                    "dispatch_type, status, tenant_id, available_at, outbox_id");
+            JdbcSchema.ensureIndex(connection, "firefly_tenant_capacity_sample",
+                    "idx_firefly_capacity_bucket_tenant", "bucket_start, tenant_id");
+            JdbcSchema.ensureIndex(connection, "firefly_tenant_capacity_flush",
+                    "idx_firefly_capacity_flush_bucket", "bucket_start, flush_id");
             } finally {
                 JdbcSchema.releaseMigrationLock(statement, dialect);
             }

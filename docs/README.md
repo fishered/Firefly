@@ -12,12 +12,15 @@
 | [implementation-progress.md](implementation-progress.md) | 当前已经落地的能力 |
 | [v1.0.2-roadmap.md](v1.0.2-roadmap.md) | 1.0.2 增量范围、非目标和验收标准 |
 | [v1.0.5-roadmap.md](v1.0.5-roadmap.md) | 1.0.5 Remote Adapter 范围、分支栈和验收标准 |
+| [v1.2.1-roadmap.md](v1.2.1-roadmap.md) | 1.2.1 配额预演、容量基线、推荐配置和验收门禁 |
 
 ## 核心能力
 
 | 文档 | 内容 |
 | --- | --- |
 | [scheduler-center.md](scheduler-center.md) | 调度模型、任务、执行器与状态推进 |
+| [multi-tenant-governance.md](multi-tenant-governance.md) | 1.2.0 租户配额、公平调度、准入、指标和 HA 语义 |
+| [capacity-planning.md](capacity-planning.md) | 1.2.1 配额预演、容量基线、确定性推荐、采集和报告 |
 | [netty-executor.md](netty-executor.md) | Executor 协议、接入和业务幂等 |
 | [plugins.md](plugins.md) | 插件 SPI、加载方式和内置插件 |
 | [timezone.md](timezone.md) | 时区和 DST 语义 |
@@ -32,6 +35,8 @@
 | [ha-cluster.md](ha-cluster.md) | 节点、分片租约、fencing 和故障恢复 |
 | [deployment.md](deployment.md) | Docker、节点角色和生产部署 |
 | [upgrade-v1.1.7.md](upgrade-v1.1.7.md) | 从 1.1.6 原地升级到 1.1.7 |
+| [upgrade-v1.2.0.md](upgrade-v1.2.0.md) | 从 1.1.7 滚动升级到 1.2.0 |
+| [upgrade-v1.2.1.md](upgrade-v1.2.1.md) | 从 1.2.0 滚动升级到 1.2.1 |
 | [integration.md](integration.md) | Java、Spring Boot 与远程 Executor 集成 |
 | [remote-adapter.md](remote-adapter.md) | 非 Spring Java 服务的 Remote Adapter 接入与配置 |
 | [maven-central-publishing.md](maven-central-publishing.md) | Maven Central 发布流程 |

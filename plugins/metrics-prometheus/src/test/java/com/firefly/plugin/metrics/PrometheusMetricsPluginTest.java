@@ -4,6 +4,9 @@ import com.firefly.domain.CronSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.cluster.ShardHasher;
 import com.firefly.metrics.SchedulerMetrics;
+import com.firefly.governance.InMemoryTenantQuotaStore;
+import com.firefly.governance.TenantAdmissionRequest;
+import com.firefly.governance.TenantDefinition;
 import com.firefly.plugin.FireflyPluginContext;
 import com.firefly.store.InMemoryJobRepository;
 import com.firefly.trigger.EventTrigger;
@@ -62,6 +65,12 @@ class PrometheusMetricsPluginTest {
         metrics.recordTriggerFailure();
         metrics.recordTriggerReplay();
         metrics.recordTriggerSecurityRejection();
+        metrics.recordTenantAdmissionRejection("blue",
+                com.firefly.governance.TenantAdmissionReason.CPU_QUOTA_EXCEEDED);
+        metrics.recordTenantCapacityObservationDropped("buffer_full");
+        metrics.recordTenantCapacityFlushFailure("store");
+        metrics.recordTenantQuotaPreview("MEDIUM");
+        metrics.tenantCapacityFlushLagSeconds(600);
         Instant now = Instant.parse("2026-07-16T10:00:00Z");
         InMemoryTriggerInbox triggerInbox = new InMemoryTriggerInbox();
         triggerInbox.receive("due-job", new EventTrigger(
@@ -74,6 +83,13 @@ class PrometheusMetricsPluginTest {
                 .schedule(new CronSchedule("0 * * * * *")).build(), now.minusSeconds(12));
         jobs.save(JobDefinition.builder().id("future-job").name("Future").handlerName("handler")
                 .schedule(new CronSchedule("0 * * * * *")).build(), now.plusSeconds(60));
+        InMemoryTenantQuotaStore tenantQuotas = new InMemoryTenantQuotaStore();
+        tenantQuotas.save(new TenantDefinition(
+                "blue", true, 3, 8, 10_000, 65_536, 100, 20, 0, now
+        ), 0, now);
+        tenantQuotas.tryReserve(new TenantAdmissionRequest(
+                "blue-running", "blue", 2, 1_500, 4_096, 7, 3
+        ), now, Duration.ofMinutes(5));
         PrometheusMetricsPlugin plugin = new PrometheusMetricsPlugin(
                 new PrometheusMetricsOptions("127.0.0.1", port, "/metrics", Duration.ofSeconds(30))
         );
@@ -83,6 +99,7 @@ class PrometheusMetricsPluginTest {
                 .schedulerShardCount(4)
                 .schedulerMetrics(metrics)
                 .triggerInbox(triggerInbox)
+                .tenantQuotaStore(tenantQuotas)
                 .build());
         try {
             String body = HttpClient.newHttpClient().send(
@@ -115,6 +132,10 @@ class PrometheusMetricsPluginTest {
             assertTrue(body.contains("firefly_local_worker_active 7"));
             assertTrue(body.contains("firefly_local_worker_max_concurrency 256"));
             assertTrue(body.contains("firefly_local_worker_rejections_total 1"));
+            assertTrue(body.contains("firefly_tenant_capacity_observations_dropped_total{reason=\"buffer_full\"} 1"));
+            assertTrue(body.contains("firefly_tenant_capacity_flush_failures_total{reason=\"store\"} 1"));
+            assertTrue(body.contains("firefly_tenant_quota_preview_total{risk=\"MEDIUM\"} 1"));
+            assertTrue(body.contains("firefly_tenant_capacity_flush_lag_seconds 600"));
             assertTrue(body.contains("firefly_batch_progress_updates_total 1"));
             assertTrue(body.contains("firefly_batch_progress_dropped_total 1"));
             assertTrue(body.contains("firefly_batch_shard_failures_total 1"));
@@ -135,6 +156,12 @@ class PrometheusMetricsPluginTest {
             assertTrue(body.contains("firefly_trigger_failures_total 1"));
             assertTrue(body.contains("firefly_trigger_replays_total 1"));
             assertTrue(body.contains("firefly_trigger_security_rejections_total 1"));
+            assertTrue(body.contains("firefly_tenant_admission_rejections_total{tenant=\"blue\",reason=\"CPU_QUOTA_EXCEEDED\"} 1"));
+            assertTrue(body.contains("firefly_tenant_usage{tenant=\"blue\",resource=\"concurrent\"} 2"));
+            assertTrue(body.contains("firefly_tenant_quota_limit{tenant=\"blue\",resource=\"backlog\"} 100"));
+            assertTrue(body.contains("firefly_tenant_usage{tenant=\"blue\",resource=\"trigger_rate_per_second\"} 3"));
+            assertTrue(body.contains("firefly_tenant_weight{tenant=\"blue\"} 3"));
+            assertTrue(body.contains("firefly_tenant_enabled{tenant=\"blue\"} 1"));
         } finally {
             plugin.close();
         }

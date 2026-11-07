@@ -101,3 +101,44 @@ groups:
           severity: warning
         annotations:
           summary: Firefly is rejecting signed trigger requests
+      - alert: FireflyTenantAdmissionRejected
+        expr: sum by (tenant, reason) (increase(firefly_tenant_admission_rejections_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant admission is being rejected
+      - alert: FireflyTenantQuotaNearCapacity
+        expr: firefly_tenant_quota_limit > 0 and (firefly_tenant_usage / firefly_tenant_quota_limit) >= 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant resource usage is above 90 percent of its quota
+      - alert: FireflyTenantBacklogQuotaExhausted
+        expr: firefly_tenant_quota_limit{resource="backlog"} > 0 and firefly_tenant_usage{resource="backlog"} >= firefly_tenant_quota_limit{resource="backlog"}
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly tenant backlog quota is exhausted
+      - alert: FireflyTenantCapacityFlushFailing
+        expr: increase(firefly_tenant_capacity_flush_failures_total[10m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant capacity observations are failing to flush
+      - alert: FireflyTenantCapacityFlushLagging
+        expr: firefly_tenant_capacity_flush_lag_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant capacity sampling is more than two default buckets behind
+      - alert: FireflyTenantCapacityObservationsDropped
+        expr: increase(firefly_tenant_capacity_observations_dropped_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly dropped capacity planning observations without affecting admission

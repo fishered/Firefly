@@ -3,6 +3,7 @@ package com.firefly.metrics;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
@@ -68,6 +69,15 @@ public final class SchedulerMetrics {
     private final LongAdder triggerFailures = new LongAdder();
     private final LongAdder triggerReplays = new LongAdder();
     private final LongAdder triggerSecurityRejections = new LongAdder();
+    private final java.util.concurrent.ConcurrentHashMap<TenantAdmissionMetricKey, LongAdder>
+            tenantAdmissionRejections = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, LongAdder>
+            tenantCapacityObservationsDropped = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, LongAdder>
+            tenantCapacityFlushFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, LongAdder>
+            tenantQuotaPreviews = new java.util.concurrent.ConcurrentHashMap<>();
+    private final AtomicLong tenantCapacityFlushLagSeconds = new AtomicLong();
 
     public void observeScheduleDelay(Duration value) {
         scheduleDelay.observe(value);
@@ -215,6 +225,68 @@ public final class SchedulerMetrics {
     public void recordTriggerReplay() { triggerReplays.increment(); }
     public void recordTriggerSecurityRejection() { triggerSecurityRejections.increment(); }
 
+    public void recordTenantAdmissionRejection(
+            String tenantId,
+            com.firefly.governance.TenantAdmissionReason reason
+    ) {
+        String tenant = tenantId == null || tenantId.isBlank() ? "default" : tenantId;
+        tenantAdmissionRejections.computeIfAbsent(
+                new TenantAdmissionMetricKey(tenant, Objects.requireNonNull(reason, "reason")),
+                ignored -> new LongAdder()
+        ).increment();
+    }
+
+    public java.util.Map<TenantAdmissionMetricKey, Long> tenantAdmissionRejections() {
+        return tenantAdmissionRejections.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                java.util.Map.Entry::getKey, entry -> entry.getValue().sum()
+        ));
+    }
+
+    public void recordTenantCapacityObservationDropped(String reason) {
+        increment(tenantCapacityObservationsDropped, reason);
+    }
+
+    public void recordTenantCapacityFlushFailure(String reason) {
+        increment(tenantCapacityFlushFailures, reason);
+    }
+
+    public void recordTenantQuotaPreview(String risk) {
+        increment(tenantQuotaPreviews, risk);
+    }
+
+    public void tenantCapacityFlushLagSeconds(long seconds) {
+        tenantCapacityFlushLagSeconds.set(Math.max(0, seconds));
+    }
+
+    public java.util.Map<String, Long> tenantCapacityObservationsDropped() {
+        return values(tenantCapacityObservationsDropped);
+    }
+
+    public java.util.Map<String, Long> tenantCapacityFlushFailures() {
+        return values(tenantCapacityFlushFailures);
+    }
+
+    public java.util.Map<String, Long> tenantQuotaPreviews() {
+        return values(tenantQuotaPreviews);
+    }
+
+    public long tenantCapacityFlushLagSeconds() {
+        return tenantCapacityFlushLagSeconds.get();
+    }
+
+    private static void increment(java.util.concurrent.ConcurrentHashMap<String, LongAdder> target, String key) {
+        String normalized = key == null || key.isBlank() ? "unknown" : key;
+        target.computeIfAbsent(normalized, ignored -> new LongAdder()).increment();
+    }
+
+    private static java.util.Map<String, Long> values(
+            java.util.concurrent.ConcurrentHashMap<String, LongAdder> source
+    ) {
+        return source.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                java.util.Map.Entry::getKey, entry -> entry.getValue().sum()
+        ));
+    }
+
     public Snapshot snapshot() {
         return new Snapshot(
                 scheduleDelay.snapshot(), outboxAge.snapshot(), acknowledgementDelay.snapshot(),
@@ -348,6 +420,11 @@ public final class SchedulerMetrics {
 
     public record Bucket(String upperBound, long cumulativeCount) {
     }
+
+    public record TenantAdmissionMetricKey(
+            String tenantId,
+            com.firefly.governance.TenantAdmissionReason reason
+    ) { }
 
     private record ExecutorResourceCapacity(
             int instances, long availableCpuMillis, long availableMemoryBytes, int activeExecutions

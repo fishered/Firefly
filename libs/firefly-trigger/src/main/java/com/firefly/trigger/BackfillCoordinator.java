@@ -163,17 +163,19 @@ public final class BackfillCoordinator {
                 if (current.nextAllowedAt().isAfter(now)) break;
                 BackfillItem item = operations.nextItem(current.request().requestId(), claimantId).orElse(null);
                 if (item == null) break;
-                boolean queued = jobs.enqueueManual(new ExecutionCommand(
+                com.firefly.store.EnqueueAdmissionResult admission = jobs.enqueueManualWithAdmission(
+                        new ExecutionCommand(
                         item.executionId(), item.executionId(), 0, current.definition(), item.fireTime(), now,
                         "backfill", 1L
                 ));
-                boolean alreadyQueued = !queued && executions != null
+                boolean queued = admission.accepted();
+                boolean alreadyQueued = admission.duplicate() || !queued && executions != null
                         && executions.findExecution(item.executionId()).isPresent();
                 BackfillItem.BackfillItemStatus result = queued || alreadyQueued
                         ? BackfillItem.BackfillItemStatus.DISPATCHED
                         : BackfillItem.BackfillItemStatus.FAILED;
                 String error = result == BackfillItem.BackfillItemStatus.FAILED
-                        ? "manual execution was not accepted" : "";
+                        ? "tenant admission rejected: " + admission.reason().name() : "";
                 Instant nextAllowedAt = current.options().rateLimitPerSecond() == 0
                         ? now : now.plus(current.options().minimumInterval());
                 String requestId = current.request().requestId();

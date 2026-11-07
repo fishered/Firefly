@@ -167,6 +167,23 @@ public record JobDefinition(
         return handlerName;
     }
 
+    /** Tenant queue identity; old definitions remain in the compatibility tenant. */
+    public String tenantId() {
+        String configured = parameters.get("firefly.resource.tenantId");
+        return configured == null || configured.isBlank() ? "default" : configured.trim();
+    }
+
+    /** Queue-only priority in the stable 0..9 range. Running work is never preempted. */
+    public int queuePriority() {
+        String configured = parameters.get("firefly.resource.priority");
+        if (configured == null || configured.isBlank()) return 0;
+        try {
+            return Math.max(0, Math.min(9, Integer.parseInt(configured.trim())));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
     private static JobDestination legacyDestination(String handlerName, Map<String, String> parameters) {
         String executorName = parameters.get("executorName");
         if (executorName != null && !executorName.isBlank()) return JobDestination.remote(executorName);

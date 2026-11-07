@@ -388,6 +388,38 @@ final class JdbcSchemaTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Tag("production-readiness")
+    void v20AllowsV117OutboxWritersAndAppliesTenantDefaults() throws Exception {
+        DataSource dataSource = rawH2DataSource();
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.createStatement()) {
+            statement.execute("""
+                    insert into firefly_dispatch_outbox (
+                        outbox_id, execution_id, root_execution_id, run_attempt, job_id,
+                        scheduled_fire_time, dispatch_time, status, attempt, available_at,
+                        claim_owner, claim_until, ack_deadline, owner_node_id, fencing_token,
+                        dispatch_type, snapshot_payload, last_error, created_at, updated_at
+                    ) values (
+                        'v117-outbox', 'v117-execution', 'v117-execution', 1, 'legacy-job',
+                        current_timestamp, current_timestamp, 'PENDING', 0, current_timestamp,
+                        null, null, null, 'legacy-node', 1, 'REMOTE', '{}', '',
+                        current_timestamp, current_timestamp
+                    )
+                    """);
+            try (ResultSet resultSet = statement.executeQuery("""
+                    select tenant_id, queue_priority
+                    from firefly_dispatch_outbox
+                    where outbox_id='v117-outbox'
+                    """)) {
+                assertTrue(resultSet.next());
+                assertEquals("default", resultSet.getString("tenant_id"));
+                assertEquals(0, resultSet.getInt("queue_priority"));
+            }
+        }
+    }
+
+    @Test
     void upgradesVersionOneJobTableWithDispatchColumns() throws Exception {
         DataSource dataSource = rawH2DataSource();
         JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of("h2"));
@@ -417,6 +449,7 @@ final class JdbcSchemaTest {
              var statement = connection.createStatement()) {
             statement.execute("drop index idx_firefly_outbox_role_claim");
             statement.execute("drop index idx_firefly_outbox_dead_type_page");
+            statement.execute("drop index idx_firefly_outbox_tenant_claim");
             statement.execute("alter table firefly_dispatch_outbox drop column dispatch_type");
             statement.execute("alter table firefly_dispatch_outbox drop column snapshot_payload");
             statement.execute("delete from firefly_schema_version where version = 7");
@@ -506,11 +539,17 @@ final class JdbcSchemaTest {
     @Test
     void loadsDialectScripts() {
         assertEquals(41, JdbcSchemaScript.load(JdbcDialect.H2).size());
-        assertEquals(79, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
+        assertEquals(93, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
         assertEquals(30, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 12).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 12).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 12).size());
+        assertEquals(12, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 20).size());
+        assertEquals(12, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 20).size());
+        assertEquals(10, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 20).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 21).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 21).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 21).size());
 
         assertEquals(3, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).stream()
                 .filter(JdbcSchema::isManagedIndexStatement).count());
