@@ -20,7 +20,8 @@ final class AdminRouteRegistration {
             AdminScheduleController schedules,
             AdminJobController jobs,
             AdminExecutionController executions,
-            AdminClusterController cluster
+            AdminClusterController cluster,
+            AdminTenantController tenants
     ) {
         router.route("/", system::index, ADMIN_ONLY)
                 .route("/api/health", system::health, PUBLIC)
@@ -33,6 +34,7 @@ final class AdminRouteRegistration {
                 .route("/api/schedules/timezones", schedules::timezones, STANDARD)
                 .route("/api/overview", cluster::overview, STANDARD)
                 .route("/api/jobs", jobs::jobs, JOBS)
+                .route("/api/tenants", tenants::tenants, ADMIN_ONLY)
                 .route("/api/users", auth::users, ADMIN_ONLY)
                 .route("/api/executions", executions::executions, EXECUTIONS)
                 .route("/api/triggers", executions::triggers, EXECUTIONS)

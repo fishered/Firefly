@@ -39,7 +39,13 @@ final class AdminHttpJson {
                     .append("\",\"schedule\":\"").append(escape(job.definition().schedule().toString()))
                     .append("\",\"zoneId\":\"").append(escape(job.definition().zoneId().getId()))
                     .append("\",\"calendarId\":\"").append(escape(job.definition().calendarId()))
-                    .append("\",\"enabled\":").append(job.definition().enabled())
+                    .append("\",\"tenantId\":\"").append(escape(job.definition().tenantId()))
+                    .append("\",\"queuePriority\":").append(job.definition().queuePriority())
+                    .append(",\"resourceCpuMillis\":").append(resourceLong(
+                            job.definition().parameters().get("firefly.resource.cpuMillis")))
+                    .append(",\"resourceMemoryBytes\":").append(resourceLong(
+                            job.definition().parameters().get("firefly.resource.memoryBytes")))
+                    .append(",\"enabled\":").append(job.definition().enabled())
                     .append(",\"misfirePolicy\":\"").append(job.definition().misfirePolicy().name())
                     .append("\",\"concurrencyPolicy\":\"").append(job.definition().concurrencyPolicy().name())
                     .append("\",\"dispatchMode\":\"").append(job.definition().dispatchMode().name())
@@ -515,6 +521,15 @@ final class AdminHttpJson {
             }
         }
         return "embedded";
+    }
+
+    private static long resourceLong(String value) {
+        if (value == null || value.isBlank()) return 0;
+        try {
+            return Math.max(0, Long.parseLong(value));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     static String businessHandlerName(String handlerName, Map<String, String> parameters) {

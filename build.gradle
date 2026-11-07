@@ -7,7 +7,7 @@ plugins {
 
 allprojects {
     group = "io.github.fishered"
-    version = "1.1.7"
+    version = "1.2.0"
 
     if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
         tasks.register("prepareKotlinBuildScriptModel") {
@@ -251,7 +251,7 @@ tasks.named("check") {
 }
 
 def productionReadinessProjects = [
-        ":libs:scheduler-core", ":server:runtime", ":stores:jdbc", ":transports:netty"
+        ":libs:firefly-domain", ":libs:scheduler-core", ":server:runtime", ":stores:jdbc", ":transports:netty"
 ]
 productionReadinessProjects.each { projectPath ->
     project(projectPath).tasks.register("productionReadinessTest", Test) {
@@ -267,7 +267,7 @@ productionReadinessProjects.each { projectPath ->
 
 tasks.register("verifyProductionReadiness") {
     group = "verification"
-    description = "Runs HA/fencing, network and Gateway recovery, TLS rotation, 10k directory, 100k cursor, and real database release gates."
+    description = "Runs tenant quota/fairness, HA/fencing, network and Gateway recovery, TLS rotation, 10k directory, 100k backlog/cursor, and real database release gates."
     dependsOn(productionReadinessProjects.collect { "${it}:productionReadinessTest" })
     dependsOn(":stores:jdbc:realDatabaseTest")
 }

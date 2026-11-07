@@ -12,6 +12,16 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await expect(page.locator('html')).toHaveAttribute('lang', 'en-US');
     await expect(page.locator('[data-view="jobs"]')).toContainText('Jobs');
 
+    await page.locator('[data-view="tenants"]').click();
+    await expect(page.locator('[data-tenant-edit="default"]')).toBeVisible();
+    await page.locator('#page-actions .primary').click();
+    await page.locator('#tenant-dialog [name="tenantId"]').fill('blue');
+    await page.locator('#tenant-dialog [name="weight"]').fill('3');
+    await page.locator('#tenant-dialog [name="maxConcurrent"]').fill('2');
+    await page.locator('#tenant-dialog [name="maxBacklog"]').fill('10');
+    await page.locator('#tenant-dialog button[type="submit"]').click();
+    await expect(page.locator('[data-tenant-edit="blue"]')).toBeVisible();
+
     await page.locator('[data-view="calendars"]').click();
     await expect(page.locator('#page-title')).toContainText('Calendars');
     await expect(page.locator('#page-actions button')).toContainText('New calendar');
@@ -51,8 +61,13 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await page.locator('#job-dialog [name="name"]').fill('Billing refresh');
     await page.locator('#job-dialog [name="cron"]').fill('*/10 * * * * *');
     await page.locator('#job-dialog [name="zoneId"]').fill('UTC');
+    await page.locator('#job-dialog [name="param.firefly.resource.tenantId"]').selectOption('blue');
+    await page.locator('#job-dialog [name="param.firefly.resource.priority"]').fill('6');
+    await page.locator('#job-dialog [name="param.firefly.resource.cpuMillis"]').fill('250');
+    await page.locator('#job-dialog [name="param.firefly.resource.memoryBytes"]').fill('1024');
     await page.locator('#job-dialog button[type="submit"]').click();
     await expect(page.locator('[data-job-id="billing-refresh"][data-job-operation="trigger"]')).toBeVisible();
+    await expect(page.locator('tr', { has: page.locator('[data-job-id="billing-refresh"]') })).toContainText('blue');
 
     page.once('dialog', dialog => dialog.accept());
     await page.locator('[data-job-id="billing-refresh"][data-job-operation="trigger"]').click();
@@ -233,6 +248,31 @@ async function routeMockRequest(state, method, url, body, response) {
   }
   if (method === 'GET' && url.pathname === '/api/jobs') {
     json(response, 200, { jobs: state.jobs });
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/api/tenants') {
+    json(response, 200, state.tenants);
+    return;
+  }
+  const tenantMatch = url.pathname.match(/^\/api\/tenants\/([^/]+)$/);
+  if (method === 'PUT' && tenantMatch) {
+    const tenantId = decodeURIComponent(tenantMatch[1]);
+    const previous = state.tenants.find(item => item.tenantId === tenantId);
+    const saved = {
+      tenantId,
+      enabled: body.enabled !== false,
+      weight: Number(body.weight ?? previous?.weight ?? 1),
+      maxConcurrent: Number(body.maxConcurrent ?? previous?.maxConcurrent ?? 0),
+      maxCpuMillis: Number(body.maxCpuMillis ?? previous?.maxCpuMillis ?? 0),
+      maxMemoryBytes: Number(body.maxMemoryBytes ?? previous?.maxMemoryBytes ?? 0),
+      maxBacklog: Number(body.maxBacklog ?? previous?.maxBacklog ?? 0),
+      maxTriggerRatePerSecond: Number(body.maxTriggerRatePerSecond ?? previous?.maxTriggerRatePerSecond ?? 0),
+      version: Number(previous?.version ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+      usage: previous?.usage ?? emptyTenantUsage()
+    };
+    state.tenants = [...state.tenants.filter(item => item.tenantId !== tenantId), saved];
+    json(response, previous ? 200 : 201, saved);
     return;
   }
   const jobHistoryMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/history$/);
@@ -479,6 +519,12 @@ function createMockState() {
   return {
     startedAt,
     calendars: [],
+    tenants: [{
+      tenantId: 'default', enabled: true, weight: 1, maxConcurrent: 0,
+      maxCpuMillis: 0, maxMemoryBytes: 0, maxBacklog: 0,
+      maxTriggerRatePerSecond: 0, version: 1, updatedAt: startedAt,
+      usage: emptyTenantUsage()
+    }],
     jobs: [normalizeJob({ id: 'sample-job', name: 'Sample job' })],
     executorDefinitions: [{
       name: 'order-executor',
@@ -569,7 +615,22 @@ function normalizeJob(job) {
     routingKey: job.routingKey ?? '',
     enabled: true,
     nextFireTime: new Date(Date.now() + 30_000).toISOString(),
-    lastResult: '-'
+    lastResult: '-',
+    tenantId: job['param.firefly.resource.tenantId'] ?? job.tenantId ?? 'default',
+    queuePriority: Number(job['param.firefly.resource.priority'] ?? job.queuePriority ?? 0),
+    resourceCpuMillis: Number(job['param.firefly.resource.cpuMillis'] ?? job.resourceCpuMillis ?? 0),
+    resourceMemoryBytes: Number(job['param.firefly.resource.memoryBytes'] ?? job.resourceMemoryBytes ?? 0)
+  };
+}
+
+function emptyTenantUsage() {
+  return {
+    activeExecutions: 0,
+    reservedCpuMillis: 0,
+    reservedMemoryBytes: 0,
+    backlog: 0,
+    triggersInWindow: 0,
+    triggerWindowStartedAt: new Date(0).toISOString()
   };
 }
 

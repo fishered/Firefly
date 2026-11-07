@@ -96,9 +96,15 @@ final class AdminJobController {
                     .orElseThrow(() -> new IllegalArgumentException("job not found: " + actualJobId));
             Instant now = context.clock().instant();
             String executionId = actualJobId + "@manual:" + java.util.UUID.randomUUID();
-            repository.enqueueManual(new com.firefly.engine.ExecutionCommand(
+            var admission = repository.enqueueManualWithAdmission(new com.firefly.engine.ExecutionCommand(
                     executionId, record.definition(), now, now, "manual-api", 1L
             ));
+            if (!admission.accepted() && !admission.duplicate()) {
+                respond(exchange, 429, "{\"error\":\"tenant_admission_rejected\",\"reason\":\""
+                        + admission.reason().name() + "\",\"tenantId\":\""
+                        + responses.escape(record.definition().tenantId()) + "\"}");
+                return;
+            }
             respond(exchange, 202, "{\"status\":\"queued\",\"executionId\":\"" + executionId + "\"}");
             return;
         }

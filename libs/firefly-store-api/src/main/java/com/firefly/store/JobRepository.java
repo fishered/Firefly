@@ -121,6 +121,21 @@ public interface JobRepository {
         return claimDispatches(claimant, now, limit, claimDuration);
     }
 
+    /**
+     * Claims one queue-prioritized batch. Implementations that have not yet specialized selection
+     * retain the 1.1.x FIFO behavior through this compatibility default.
+     */
+    default List<DispatchOutboxRecord> claimFairDispatches(
+            String claimant,
+            Instant now,
+            int limit,
+            java.time.Duration claimDuration,
+            Set<DispatchType> dispatchTypes,
+            DispatchFairnessPolicy fairness
+    ) {
+        return claimDispatches(claimant, now, limit, claimDuration, dispatchTypes);
+    }
+
     default boolean markDispatchSent(String outboxId, Instant ackDeadline) {
         throw unsupported("markDispatchSent");
     }
@@ -180,8 +195,24 @@ public interface JobRepository {
         throw unsupported("completeDispatch");
     }
 
+    /** Completes only the exact delivery attempt still owned by {@code claimant}. */
+    default boolean completeClaimedDispatch(
+            String outboxId, String claimant, int claimAttempt, Instant now
+    ) {
+        return completeDispatch(outboxId, now);
+    }
+
     default boolean enqueueManual(ExecutionCommand command) {
         throw unsupported("enqueueManual");
+    }
+
+    default EnqueueAdmissionResult enqueueManualWithAdmission(ExecutionCommand command) {
+        if (enqueueManual(command)) return EnqueueAdmissionResult.acceptedResult();
+        return findDispatch(command.executionId()).isPresent()
+                ? EnqueueAdmissionResult.duplicateResult()
+                : EnqueueAdmissionResult.rejected(
+                        com.firefly.governance.TenantAdmissionReason.OUTBOX_REJECTED
+                );
     }
 
     /** Immutable dispatch snapshot used for operator replay previews. */

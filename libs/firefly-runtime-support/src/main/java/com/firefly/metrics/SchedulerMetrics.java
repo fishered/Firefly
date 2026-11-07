@@ -3,6 +3,7 @@ package com.firefly.metrics;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
@@ -68,6 +69,8 @@ public final class SchedulerMetrics {
     private final LongAdder triggerFailures = new LongAdder();
     private final LongAdder triggerReplays = new LongAdder();
     private final LongAdder triggerSecurityRejections = new LongAdder();
+    private final java.util.concurrent.ConcurrentHashMap<TenantAdmissionMetricKey, LongAdder>
+            tenantAdmissionRejections = new java.util.concurrent.ConcurrentHashMap<>();
 
     public void observeScheduleDelay(Duration value) {
         scheduleDelay.observe(value);
@@ -215,6 +218,23 @@ public final class SchedulerMetrics {
     public void recordTriggerReplay() { triggerReplays.increment(); }
     public void recordTriggerSecurityRejection() { triggerSecurityRejections.increment(); }
 
+    public void recordTenantAdmissionRejection(
+            String tenantId,
+            com.firefly.governance.TenantAdmissionReason reason
+    ) {
+        String tenant = tenantId == null || tenantId.isBlank() ? "default" : tenantId;
+        tenantAdmissionRejections.computeIfAbsent(
+                new TenantAdmissionMetricKey(tenant, Objects.requireNonNull(reason, "reason")),
+                ignored -> new LongAdder()
+        ).increment();
+    }
+
+    public java.util.Map<TenantAdmissionMetricKey, Long> tenantAdmissionRejections() {
+        return tenantAdmissionRejections.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                java.util.Map.Entry::getKey, entry -> entry.getValue().sum()
+        ));
+    }
+
     public Snapshot snapshot() {
         return new Snapshot(
                 scheduleDelay.snapshot(), outboxAge.snapshot(), acknowledgementDelay.snapshot(),
@@ -348,6 +368,11 @@ public final class SchedulerMetrics {
 
     public record Bucket(String upperBound, long cumulativeCount) {
     }
+
+    public record TenantAdmissionMetricKey(
+            String tenantId,
+            com.firefly.governance.TenantAdmissionReason reason
+    ) { }
 
     private record ExecutorResourceCapacity(
             int instances, long availableCpuMillis, long availableMemoryBytes, int activeExecutions

@@ -45,7 +45,7 @@ public final class JdbcSchema {
                     "outbox_id", "execution_id", "job_id", "scheduled_fire_time", "dispatch_time", "status",
                     "attempt", "available_at", "claim_owner", "claim_until", "ack_deadline", "owner_node_id",
                     "fencing_token", "dispatch_type", "snapshot_payload", "root_execution_id", "run_attempt",
-                    "last_error", "created_at", "updated_at"
+                    "last_error", "created_at", "updated_at", "tenant_id", "queue_priority"
             )),
             Map.entry("firefly_cluster_metadata", Set.of("metadata_key", "metadata_value", "updated_at")),
             Map.entry("firefly_executor_instance_location", Set.of(

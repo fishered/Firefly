@@ -101,3 +101,24 @@ groups:
           severity: warning
         annotations:
           summary: Firefly is rejecting signed trigger requests
+      - alert: FireflyTenantAdmissionRejected
+        expr: sum by (tenant, reason) (increase(firefly_tenant_admission_rejections_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant admission is being rejected
+      - alert: FireflyTenantQuotaNearCapacity
+        expr: firefly_tenant_quota_limit > 0 and (firefly_tenant_usage / firefly_tenant_quota_limit) >= 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant resource usage is above 90 percent of its quota
+      - alert: FireflyTenantBacklogQuotaExhausted
+        expr: firefly_tenant_quota_limit{resource="backlog"} > 0 and firefly_tenant_usage{resource="backlog"} >= firefly_tenant_quota_limit{resource="backlog"}
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Firefly tenant backlog quota is exhausted

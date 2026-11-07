@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.7-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -54,7 +54,18 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 | 执行器 | Netty 长连接、多 Gateway、自动重连、心跳、优雅注销、实例隔离 |
 | 集成 | 单一 Spring Boot Starter、注解任务发现、启动任务同步、传统 Java 嵌入式 API |
 | 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
+| 多租户治理 | 全局并发/CPU/内存/backlog/触发速率配额、加权公平队列、优先级与饥饿保护 |
 | 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
+
+### 1.2.0 多租户资源治理
+
+- 一等租户 policy/usage/reservation 账本在多 Gateway/Scheduler 间执行原子准入，旧任务自动归入 `default`。
+- Outbox 按优先级、aging 和租户权重公平领取；持续高负载租户不能挤死其他租户，等待任务最终获得派发机会。
+- Admin API/UI 管理动态配额并展示权威用量，手动触发、事件、回放、回填和派发返回稳定拒绝原因，所有配置变更可审计。
+- Prometheus 输出租户用量、上限、权重、启停和拒绝原因，内置容量水位与 backlog 耗尽告警。
+- 生产门禁覆盖多节点无超卖、10 万级积压、并发 claim、配置 CAS、HA reservation 对账与滚动升级兼容；不实现运行中任务强抢占。
+
+详见 [多租户资源治理](docs/multi-tenant-governance.md) 与 [1.1.7 → 1.2.0 升级说明](docs/upgrade-v1.2.0.md)。
 
 ### 1.1.7 生产运营闭环
 
@@ -221,8 +232,8 @@ Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任
 
 | 镜像 | 容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server:1.1.7` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui:1.1.7` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+| `firefly/firefly-server:1.2.0` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.2.0` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
 
 准备配置并启动：
 
@@ -271,7 +282,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.1.7</version>
+            <version>1.2.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -506,8 +517,8 @@ npm run check
 构建 Docker 镜像：
 
 ```powershell
-docker build -t firefly/firefly-server:1.1.7 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.1.7 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.2.0 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.2.0 -f ui/admin/Dockerfile ui/admin
 ```
 
 提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。

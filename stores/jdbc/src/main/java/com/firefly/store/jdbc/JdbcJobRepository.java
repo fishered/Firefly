@@ -47,6 +47,8 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         com.firefly.store.ExecutionRetryStore {
     private static final String SCHEDULE_CRON = "CRON";
     private static final String SCHEDULE_FIXED_RATE = "FIXED_RATE";
+    private static final String FAIRNESS_GLOBAL_KEY = "__global__";
+    private static final String FAIRNESS_TENANT_PREFIX = "tenant:";
 
     private final DataSource dataSource;
     private final JdbcTimeSource timeSource;
@@ -425,8 +427,8 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                         (outbox_id, execution_id, root_execution_id, run_attempt, job_id,
                          scheduled_fire_time, dispatch_time, status, attempt,
                          available_at, owner_node_id, fencing_token, dispatch_type, snapshot_payload,
-                         last_error, created_at, updated_at)
-                        values (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, '', ?, ?)
+                         tenant_id, queue_priority, last_error, created_at, updated_at)
+                        values (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
                         """)) {
                     for (int index = 0; index < advances.size(); index++) {
                         boolean updated = updateCounts[index] == 1
@@ -627,6 +629,200 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     }
 
     @Override
+    public List<DispatchOutboxRecord> claimFairDispatches(
+            String claimant,
+            Instant now,
+            int limit,
+            Duration claimDuration,
+            Set<DispatchType> dispatchTypes,
+            com.firefly.store.DispatchFairnessPolicy fairness
+    ) {
+        if (limit < 1 || dispatchTypes.isEmpty()) return List.of();
+        record FairCandidate(String id, String rootId, int runAttempt,
+                             Instant fireTime, Instant dispatchTime, Instant availableAt,
+                             String owner, long token, int attempt, DispatchType dispatchType,
+                             String snapshot, String tenantId, int priority) { }
+        String typePlaceholders = String.join(",", java.util.Collections.nCopies(dispatchTypes.size(), "?"));
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                Instant databaseNow = timeSource.now(connection);
+                long fairnessVirtualTime = lockOrCreateFairnessState(
+                        connection, FAIRNESS_GLOBAL_KEY, 0, databaseNow
+                );
+                int perTenantCandidates = (int) Math.min(10_000L, (long) limit * 8L);
+                List<FairCandidate> candidates = new ArrayList<>();
+                try (PreparedStatement select = connection.prepareStatement("""
+                        select outbox_id, root_execution_id, run_attempt, scheduled_fire_time, dispatch_time,
+                               available_at, owner_node_id, fencing_token, attempt, dispatch_type,
+                               snapshot_payload, tenant_id, queue_priority
+                        from (
+                            select outbox.outbox_id, outbox.root_execution_id, outbox.run_attempt,
+                                   outbox.scheduled_fire_time, outbox.dispatch_time, outbox.available_at,
+                                   outbox.owner_node_id, outbox.fencing_token, outbox.attempt,
+                                   outbox.dispatch_type, outbox.snapshot_payload, outbox.tenant_id,
+                                   outbox.queue_priority,
+                                   row_number() over (
+                                       partition by outbox.tenant_id
+                                       order by outbox.available_at, outbox.outbox_id
+                                   ) as tenant_rank
+                            from firefly_dispatch_outbox outbox
+                            where outbox.dispatch_type in (%s) and exists (
+                                select 1 from firefly_execution execution
+                                where execution.execution_id=outbox.execution_id
+                                  and execution.status in ('DISPATCHING','DISPATCHED','RUNNING')
+                                  and execution.timeout_at > ?
+                            ) and outbox.available_at <= ? and (
+                                outbox.status in ('PENDING','RETRY')
+                                or outbox.status='SENT' and outbox.ack_deadline <= ?
+                                or outbox.status='CLAIMED' and outbox.claim_until <= ?)
+                        ) ranked
+                        where tenant_rank <= ?
+                        order by tenant_rank, tenant_id, available_at, outbox_id
+                        """.formatted(typePlaceholders))) {
+                    int parameter = 1;
+                    for (DispatchType dispatchType : dispatchTypes) {
+                        select.setString(parameter++, dispatchType.name());
+                    }
+                    select.setTimestamp(parameter++, Timestamp.from(databaseNow));
+                    select.setTimestamp(parameter++, Timestamp.from(databaseNow));
+                    select.setTimestamp(parameter++, Timestamp.from(databaseNow));
+                    select.setTimestamp(parameter++, Timestamp.from(databaseNow));
+                    select.setInt(parameter, perTenantCandidates);
+                    try (ResultSet resultSet = select.executeQuery()) {
+                        while (resultSet.next()) candidates.add(new FairCandidate(
+                                resultSet.getString("outbox_id"), resultSet.getString("root_execution_id"),
+                                resultSet.getInt("run_attempt"),
+                                resultSet.getTimestamp("scheduled_fire_time").toInstant(),
+                                resultSet.getTimestamp("dispatch_time").toInstant(),
+                                resultSet.getTimestamp("available_at").toInstant(),
+                                resultSet.getString("owner_node_id"), resultSet.getLong("fencing_token"),
+                                resultSet.getInt("attempt"),
+                                DispatchType.valueOf(resultSet.getString("dispatch_type")),
+                                resultSet.getString("snapshot_payload"), resultSet.getString("tenant_id"),
+                                resultSet.getInt("queue_priority")
+                        ));
+                    }
+                }
+
+                java.util.Map<String, Long> virtualFinishes = new java.util.HashMap<>();
+                candidates.stream().map(FairCandidate::tenantId).distinct().sorted().forEach(tenantId -> {
+                    try {
+                        virtualFinishes.put(tenantId, lockOrCreateFairnessState(
+                                connection, FAIRNESS_TENANT_PREFIX + tenantId,
+                                fairnessVirtualTime, databaseNow
+                        ));
+                    } catch (SQLException failure) {
+                        throw new JdbcException("failed to lock tenant fairness state", failure);
+                    }
+                });
+                com.firefly.governance.WeightedFairQueue<FairCandidate> queue =
+                        new com.firefly.governance.WeightedFairQueue<>(
+                                fairness.agingInterval(), fairness::weightOf,
+                                virtualFinishes, fairnessVirtualTime
+                        );
+                for (FairCandidate candidate : candidates) {
+                    queue.offer(new com.firefly.governance.TenantQueueEntry<>(
+                            candidate.id(), candidate.tenantId(), candidate.priority(),
+                            candidate.availableAt(), candidate
+                    ));
+                }
+                List<DispatchOutboxRecord> claimed = new ArrayList<>();
+                while (claimed.size() < limit) {
+                    Optional<com.firefly.governance.TenantQueueEntry<FairCandidate>> selected = queue.poll(databaseNow);
+                    if (selected.isEmpty()) break;
+                    FairCandidate candidate = selected.get().value();
+                    try (PreparedStatement update = connection.prepareStatement("""
+                            update firefly_dispatch_outbox
+                            set status='CLAIMED', attempt=attempt+1, claim_owner=?, claim_until=?, updated_at=?
+                            where outbox_id=? and available_at <= ? and (
+                              status in ('PENDING','RETRY')
+                              or status='SENT' and ack_deadline <= ?
+                              or status='CLAIMED' and claim_until <= ?)
+                            """)) {
+                        update.setString(1, claimant);
+                        update.setTimestamp(2, Timestamp.from(databaseNow.plus(claimDuration)));
+                        update.setTimestamp(3, Timestamp.from(databaseNow));
+                        update.setString(4, candidate.id());
+                        update.setTimestamp(5, Timestamp.from(databaseNow));
+                        update.setTimestamp(6, Timestamp.from(databaseNow));
+                        update.setTimestamp(7, Timestamp.from(databaseNow));
+                        if (update.executeUpdate() == 0) continue;
+                    }
+                    JobDefinition definition = decodeJobSnapshot(candidate.snapshot());
+                    claimed.add(new DispatchOutboxRecord(
+                            candidate.id(),
+                            new ExecutionCommand(candidate.id(), candidate.rootId(), candidate.runAttempt(),
+                                    definition, candidate.fireTime(), candidate.dispatchTime(),
+                                    candidate.owner(), candidate.token(), decodeTraceCarrier(candidate.snapshot())),
+                            candidate.dispatchType(), DispatchOutboxStatus.CLAIMED, candidate.attempt() + 1,
+                            candidate.availableAt(), claimant, databaseNow.plus(claimDuration), null, ""
+                    ));
+                }
+                updateFairnessState(connection, FAIRNESS_GLOBAL_KEY, queue.virtualTime(), databaseNow);
+                for (var entry : queue.virtualFinishes().entrySet()) {
+                    updateFairnessState(connection, FAIRNESS_TENANT_PREFIX + entry.getKey(),
+                            entry.getValue(), databaseNow);
+                }
+                connection.commit();
+                return List.copyOf(claimed);
+            } catch (SQLException | RuntimeException failure) {
+                connection.rollback();
+                throw failure;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException failure) {
+            throw new JdbcException("failed to claim fair dispatch outbox", failure);
+        }
+    }
+
+    private static long lockOrCreateFairnessState(
+            Connection connection, String key, long initialValue, Instant now
+    ) throws SQLException {
+        Long current = selectFairnessState(connection, key, true);
+        if (current != null) return current;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into firefly_dispatch_fairness_state
+                (state_key, virtual_finish, updated_at) values (?, ?, ?)
+                """)) {
+            statement.setString(1, key);
+            statement.setLong(2, initialValue);
+            statement.setTimestamp(3, Timestamp.from(now));
+            statement.executeUpdate();
+        }
+        return initialValue;
+    }
+
+    private static Long selectFairnessState(Connection connection, String key, boolean lock)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select virtual_finish from firefly_dispatch_fairness_state where state_key=?
+                """ + (lock ? " for update" : ""))) {
+            statement.setString(1, key);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getLong(1) : null;
+            }
+        }
+    }
+
+    private static void updateFairnessState(
+            Connection connection, String key, long virtualFinish, Instant now
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                update firefly_dispatch_fairness_state
+                set virtual_finish=?, updated_at=? where state_key=?
+                """)) {
+            statement.setLong(1, virtualFinish);
+            statement.setTimestamp(2, Timestamp.from(now));
+            statement.setString(3, key);
+            if (statement.executeUpdate() != 1) {
+                throw new IllegalStateException("tenant fairness state is missing: " + key);
+            }
+        }
+    }
+
+    @Override
     public boolean markDispatchSent(String outboxId, Instant ackDeadline) {
         try (Connection connection = dataSource.getConnection()) {
             return markDispatchSent(connection, outboxId, ackDeadline, timeSource.now(connection));
@@ -814,6 +1010,26 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
     }
 
     @Override
+    public boolean completeClaimedDispatch(
+            String outboxId, String claimant, int claimAttempt, Instant now
+    ) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update firefly_dispatch_outbox
+                     set status='DONE', claim_owner=null, claim_until=null, ack_deadline=null, updated_at=?
+                     where outbox_id=? and status='SENT' and claim_owner=? and attempt=?
+                     """)) {
+            statement.setTimestamp(1, Timestamp.from(timeSource.now(connection)));
+            statement.setString(2, outboxId);
+            statement.setString(3, claimant);
+            statement.setInt(4, claimAttempt);
+            return statement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new JdbcException("failed to complete claimed dispatch outbox", e);
+        }
+    }
+
+    @Override
     public boolean enqueueManual(ExecutionCommand command) {
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
@@ -977,8 +1193,8 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 (outbox_id, execution_id, root_execution_id, run_attempt, job_id,
                  scheduled_fire_time, dispatch_time, status, attempt,
                  available_at, owner_node_id, fencing_token, dispatch_type, snapshot_payload,
-                 last_error, created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, '', ?, ?)
+                 tenant_id, queue_priority, last_error, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
                 """)) {
             bindOutbox(statement, command, availableAt, timeSource.now(connection));
             statement.executeUpdate();
@@ -1000,8 +1216,10 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         statement.setLong(10, command.fencingToken());
         statement.setString(11, dispatchType(command.definition()).name());
         statement.setString(12, encodeJobSnapshot(command));
-        statement.setTimestamp(13, Timestamp.from(now));
-        statement.setTimestamp(14, Timestamp.from(now));
+        statement.setString(13, command.definition().tenantId());
+        statement.setInt(14, command.definition().queuePriority());
+        statement.setTimestamp(15, Timestamp.from(now));
+        statement.setTimestamp(16, Timestamp.from(now));
     }
 
     private static DispatchType dispatchType(JobDefinition definition) {

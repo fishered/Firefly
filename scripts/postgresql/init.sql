@@ -148,6 +148,8 @@ create table if not exists firefly_dispatch_outbox (
     fencing_token bigint not null,
     dispatch_type varchar(16) not null,
     snapshot_payload text not null,
+    tenant_id varchar(128) not null default 'default',
+    queue_priority integer not null default 0,
     last_error text not null,
     created_at timestamp with time zone not null,
     updated_at timestamp with time zone not null
@@ -483,6 +485,60 @@ create table if not exists firefly_backfill_item (
     primary key (request_id, ordinal)
 );
 
+create table if not exists firefly_tenant_policy (
+    tenant_id varchar(128) primary key,
+    enabled boolean not null,
+    weight integer not null,
+    max_concurrent integer not null,
+    max_cpu_millis bigint not null,
+    max_memory_bytes bigint not null,
+    max_backlog bigint not null,
+    max_trigger_rate bigint not null,
+    version bigint not null,
+    updated_at timestamp with time zone not null
+);
+
+create table if not exists firefly_tenant_usage (
+    tenant_id varchar(128) primary key references firefly_tenant_policy(tenant_id),
+    active_executions integer not null,
+    reserved_cpu_millis bigint not null,
+    reserved_memory_bytes bigint not null,
+    backlog bigint not null,
+    trigger_window_started_at timestamp with time zone not null,
+    triggers_in_window bigint not null,
+    version bigint not null
+);
+
+create table if not exists firefly_tenant_reservation (
+    reservation_id varchar(256) primary key,
+    tenant_id varchar(128) not null references firefly_tenant_policy(tenant_id),
+    concurrent_executions integer not null,
+    cpu_millis bigint not null,
+    memory_bytes bigint not null,
+    backlog bigint not null,
+    triggers bigint not null,
+    created_at timestamp with time zone not null,
+    expires_at timestamp with time zone not null
+);
+
+create table if not exists firefly_dispatch_fairness_state (
+    state_key varchar(256) primary key,
+    virtual_finish bigint not null,
+    updated_at timestamp with time zone not null
+);
+
+insert into firefly_tenant_policy values
+('default', true, 1, 0, 0, 0, 0, 0, 1, timestamp with time zone '1970-01-01 00:00:00+00:00')
+on conflict (tenant_id) do nothing;
+
+insert into firefly_tenant_usage values
+('default', 0, 0, 0, 0, timestamp with time zone '1970-01-01 00:00:00+00:00', 0, 0)
+on conflict (tenant_id) do nothing;
+
+insert into firefly_dispatch_fairness_state values
+('__global__', 0, timestamp with time zone '1970-01-01 00:00:00+00:00')
+on conflict (state_key) do nothing;
+
 create index if not exists idx_firefly_calendar_rule_date on firefly_calendar_date_rule(calendar_id, calendar_version, rule_date);
 create index if not exists idx_firefly_calendar_import_status on firefly_calendar_import(calendar_id, status, imported_at);
 create index if not exists idx_firefly_dependency_wait_next on firefly_dependency_wait(next_check_at, job_id);
@@ -504,3 +560,6 @@ create index if not exists idx_firefly_backfill_page on firefly_backfill_operati
 create index if not exists idx_firefly_backfill_status_page on firefly_backfill_operation(status, created_at desc, request_id desc);
 create index if not exists idx_firefly_outbox_dead_page on firefly_dispatch_outbox(status, job_id, available_at desc, outbox_id desc);
 create index if not exists idx_firefly_outbox_dead_type_page on firefly_dispatch_outbox(status, dispatch_type, available_at desc, outbox_id desc);
+create index if not exists idx_firefly_outbox_tenant_claim on firefly_dispatch_outbox(dispatch_type, status, tenant_id, available_at, outbox_id);
+create index if not exists idx_firefly_tenant_reservation_expiry on firefly_tenant_reservation(expires_at, reservation_id);
+create index if not exists idx_firefly_tenant_reservation_tenant_expiry on firefly_tenant_reservation(tenant_id, expires_at, reservation_id);

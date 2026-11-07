@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-10-15。
+最后更新：2026-10-29。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -27,6 +27,15 @@ examples/*                   Embedded 与 Netty executor 示例
 旧的 `plugins/admin-web` 和 `executors/netty` 方向已经被新边界替代：Admin HTTP API 移到 `apis/admin-http`，前端移到 `ui/admin`，Netty 协议移到 `transports/netty`。
 
 ## 2. 已落地能力
+
+### 1.2.0 多租户资源治理
+
+- 新增版本化 `TenantDefinition`、权威 `TenantUsage` 与幂等 reservation ledger；并发、CPU、内存、outstanding backlog 和每秒触发配额在 JDBC 行锁内跨 Gateway/Scheduler 原子执行。
+- Outbox 持久化 `tenant_id` 与 `queue_priority`，按严格有效优先级和持久化虚拟完成时间领取；公平进度跨节点、跨小批次保存，aging 为最低优先级提供有界饥饿保护，租户权重动态读取、无需重启。
+- 所有运行时入队入口经 quota-aware repository 统一执行 backlog 准入；派发前再预留运行资源，终态、取消、超时、重试与死信释放对应额度。JDBC maintenance 对账活动 Outbox 与 reservation，修复生产者或终态清理崩溃造成的计数漂移。
+- Admin API/UI 提供租户配额、权威用量和任务租户/优先级/资源声明；配置使用 expectedVersion CAS，变更进入审计。手动触发、事件、回放、回填与派发暴露稳定拒绝原因。
+- Prometheus 输出租户 usage/limit/weight/enabled 与按原因拒绝计数，告警覆盖准入拒绝、90% 水位和 backlog 耗尽。
+- 门禁覆盖多节点无超卖、noisy-neighbor、公平比例、跨节点单条 claim、有界饥饿、十万级积压、并发 claim 不重复、配置并发更新、HA 接管迟到回调 fencing、孤儿对账、1.1.7 滚动写入和旧任务 `default` 兼容。
 
 ### 1.1.7 生产运营闭环
 

@@ -50,6 +50,7 @@ public final class FireflyPluginContext {
     private final TriggerInbox triggerInbox;
     private final BackfillOperationStore backfillOperationStore;
     private final BackfillCoordinator backfillCoordinator;
+    private final com.firefly.governance.TenantQuotaStore tenantQuotaStore;
 
     private FireflyPluginContext(Builder builder) {
         this.clock = Objects.requireNonNull(builder.clock, "clock");
@@ -75,6 +76,7 @@ public final class FireflyPluginContext {
         this.triggerInbox = builder.triggerInbox;
         this.backfillOperationStore = builder.backfillOperationStore;
         this.backfillCoordinator = builder.backfillCoordinator;
+        this.tenantQuotaStore = builder.tenantQuotaStore;
     }
 
     public static Builder builder() {
@@ -165,6 +167,9 @@ public final class FireflyPluginContext {
     public java.util.Optional<BackfillCoordinator> backfillCoordinator() {
         return java.util.Optional.ofNullable(backfillCoordinator);
     }
+    public java.util.Optional<com.firefly.governance.TenantQuotaStore> tenantQuotaStore() {
+        return java.util.Optional.ofNullable(tenantQuotaStore);
+    }
 
     public static final class Builder {
         private Clock clock = Clock.systemUTC();
@@ -190,6 +195,7 @@ public final class FireflyPluginContext {
         private TriggerInbox triggerInbox = new InMemoryTriggerInbox();
         private BackfillOperationStore backfillOperationStore = new InMemoryBackfillOperationStore();
         private BackfillCoordinator backfillCoordinator;
+        private com.firefly.governance.TenantQuotaStore tenantQuotaStore;
 
         private Builder() {
         }
@@ -302,6 +308,10 @@ public final class FireflyPluginContext {
         }
         public Builder backfillCoordinator(BackfillCoordinator coordinator) {
             this.backfillCoordinator = Objects.requireNonNull(coordinator, "backfillCoordinator");
+            return this;
+        }
+        public Builder tenantQuotaStore(com.firefly.governance.TenantQuotaStore store) {
+            this.tenantQuotaStore = Objects.requireNonNull(store, "tenantQuotaStore");
             return this;
         }
 

@@ -4,7 +4,10 @@ import com.firefly.domain.JobDefinition;
 import com.firefly.domain.CronSchedule;
 import com.firefly.engine.ExecutionCommand;
 import com.firefly.store.DispatchOutboxRecord;
+import com.firefly.store.DispatchFairnessPolicy;
 import com.firefly.store.DispatchType;
+import com.firefly.governance.TenantAdmissionRequest;
+import com.firefly.governance.TenantDefinition;
 import com.firefly.trigger.BackfillItem;
 import com.firefly.trigger.BackfillOperation;
 import com.firefly.trigger.BackfillOptions;
@@ -29,6 +32,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -165,6 +169,93 @@ class JdbcRealDatabaseConcurrencyTest {
     @Test
     void mysqlFencesBackfillOperationClaims() throws Exception {
         assertBackfillLeaseFencing(isolatedDataSource(mysql, "mysql"), "mysql");
+    }
+
+    @Test
+    void postgresEnforcesTenantQuotaAcrossGatewayConnections() throws Exception {
+        assertTenantQuotaAtomic(isolatedDataSource(postgres, "postgresql"), "postgresql");
+    }
+
+    @Test
+    void mysqlEnforcesTenantQuotaAcrossGatewayConnections() throws Exception {
+        assertTenantQuotaAtomic(isolatedDataSource(mysql, "mysql"), "mysql");
+    }
+
+    @Test
+    void postgresPersistsFairnessAcrossSingleItemGatewayBatches() throws Exception {
+        assertPersistentFairness(isolatedDataSource(postgres, "postgresql"), "postgresql");
+    }
+
+    @Test
+    void mysqlPersistsFairnessAcrossSingleItemGatewayBatches() throws Exception {
+        assertPersistentFairness(isolatedDataSource(mysql, "mysql"), "mysql");
+    }
+
+    private void assertTenantQuotaAtomic(DataSource dataSource, String dialect) throws Exception {
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
+        Instant now = Instant.now();
+        JdbcTenantQuotaStore first = new JdbcTenantQuotaStore(dataSource);
+        JdbcTenantQuotaStore second = new JdbcTenantQuotaStore(dataSource);
+        first.save(new TenantDefinition(
+                "blue", true, 1, 3, 0, 0, 0, 0, 0, now
+        ), 0, now);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(12)) {
+            var futures = new ArrayList<java.util.concurrent.Future<Boolean>>();
+            for (int index = 0; index < 30; index++) {
+                int ordinal = index;
+                futures.add(executor.submit(() -> {
+                    start.await(10, TimeUnit.SECONDS);
+                    JdbcTenantQuotaStore store = ordinal % 2 == 0 ? first : second;
+                    return store.tryReserve(new TenantAdmissionRequest(
+                            "real-quota-" + ordinal, "blue", 1, 0, 0, 0, 0
+                    ), now, Duration.ofMinutes(1)).admitted();
+                }));
+            }
+            start.countDown();
+            int admitted = 0;
+            for (var future : futures) if (future.get(20, TimeUnit.SECONDS)) admitted++;
+            assertEquals(3, admitted);
+        }
+        assertEquals(3, first.usage("blue", now).activeExecutions());
+    }
+
+    private void assertPersistentFairness(DataSource dataSource, String dialect) {
+        JdbcSchema.initialize(dataSource, JdbcSchemaOptions.of(dialect));
+        Instant now = Instant.now().minusSeconds(1);
+        JdbcJobRepository first = new JdbcJobRepository(dataSource);
+        JdbcJobRepository second = new JdbcJobRepository(dataSource);
+        String suffix = UUID.randomUUID().toString();
+        for (int index = 0; index < 60; index++) {
+            enqueueTenant(first, "fair-noisy-" + suffix + "-" + index, "noisy", now);
+            enqueueTenant(first, "fair-quiet-" + suffix + "-" + index, "quiet", now);
+        }
+        DispatchFairnessPolicy policy = new DispatchFairnessPolicy(
+                Map.of("noisy", 3, "quiet", 1), Duration.ofMinutes(1)
+        );
+        int noisy = 0;
+        int quiet = 0;
+        for (int index = 0; index < 40; index++) {
+            JdbcJobRepository gateway = index % 2 == 0 ? first : second;
+            var claimed = gateway.claimFairDispatches(
+                    "real-fair-gateway-" + index, Instant.now(), 1, Duration.ofMinutes(5),
+                    Set.of(DispatchType.LOCAL), policy
+            );
+            assertEquals(1, claimed.size());
+            if (claimed.getFirst().command().definition().tenantId().equals("noisy")) noisy++;
+            else quiet++;
+        }
+        assertEquals(30, noisy);
+        assertEquals(10, quiet);
+    }
+
+    private void enqueueTenant(JdbcJobRepository jobs, String executionId, String tenant, Instant now) {
+        JobDefinition job = JobDefinition.builder()
+                .id("job-" + executionId).name(executionId).handlerName("handler")
+                .schedule(new CronSchedule("0 * * * * *"))
+                .parameters(Map.of("firefly.resource.tenantId", tenant))
+                .build();
+        assertTrue(jobs.enqueueManual(new ExecutionCommand(executionId, job, now, now, "node-a", 1L)));
     }
 
     private void assertBackfillLeaseFencing(DataSource dataSource, String dialect) {
