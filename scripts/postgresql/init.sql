@@ -527,6 +527,41 @@ create table if not exists firefly_dispatch_fairness_state (
     updated_at timestamp with time zone not null
 );
 
+create table if not exists firefly_tenant_capacity_sample (
+    tenant_id varchar(128) not null,
+    bucket_start timestamp with time zone not null,
+    sample_count bigint not null,
+    min_policy_version bigint not null,
+    max_policy_version bigint not null,
+    min_runtime_version varchar(32) not null,
+    max_runtime_version varchar(32) not null,
+    max_active_executions bigint not null,
+    max_reserved_cpu_millis bigint not null,
+    max_reserved_memory_bytes bigint not null,
+    max_backlog bigint not null,
+    max_trigger_rate bigint not null,
+    saturated_concurrency_samples bigint not null,
+    saturated_cpu_samples bigint not null,
+    saturated_memory_samples bigint not null,
+    saturated_backlog_samples bigint not null,
+    saturated_trigger_rate_samples bigint not null,
+    rejected_concurrency bigint not null,
+    rejected_cpu bigint not null,
+    rejected_memory bigint not null,
+    rejected_backlog bigint not null,
+    rejected_trigger_rate bigint not null,
+    rejected_disabled bigint not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
+    primary key (tenant_id, bucket_start)
+);
+
+create table if not exists firefly_tenant_capacity_flush (
+    flush_id varchar(512) primary key,
+    bucket_start timestamp with time zone not null,
+    created_at timestamp with time zone not null
+);
+
 insert into firefly_tenant_policy values
 ('default', true, 1, 0, 0, 0, 0, 0, 1, timestamp with time zone '1970-01-01 00:00:00+00:00')
 on conflict (tenant_id) do nothing;
@@ -563,3 +598,5 @@ create index if not exists idx_firefly_outbox_dead_type_page on firefly_dispatch
 create index if not exists idx_firefly_outbox_tenant_claim on firefly_dispatch_outbox(dispatch_type, status, tenant_id, available_at, outbox_id);
 create index if not exists idx_firefly_tenant_reservation_expiry on firefly_tenant_reservation(expires_at, reservation_id);
 create index if not exists idx_firefly_tenant_reservation_tenant_expiry on firefly_tenant_reservation(tenant_id, expires_at, reservation_id);
+create index if not exists idx_firefly_capacity_bucket_tenant on firefly_tenant_capacity_sample(bucket_start, tenant_id);
+create index if not exists idx_firefly_capacity_flush_bucket on firefly_tenant_capacity_flush(bucket_start, flush_id);

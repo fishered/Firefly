@@ -23,6 +23,7 @@ const state = {
   deadDispatches: [],
   backfills: [],
   tenants: [],
+  tenantCapacityReport: null,
   auditRecords: [],
   failedTriggers: [],
   jobHistory: [],
@@ -624,12 +625,35 @@ function tenantsPage() {
       ${statCard('接近配额', saturated, '个', saturated ? '使用率达到 90%' : '当前容量充足', '▲', 'red', saturated ? 'warning' : 'success')}
     </section>
     <section class="table-card">
-      <div class="table-toolbar"><div><strong>租户配额与实时用量</strong><span class="table-count">共 ${state.tenants.length} 条</span></div><span class="muted">0 表示不限制</span></div>
+      <div class="table-toolbar"><div><strong>租户配额与实时用量</strong><span class="table-count">共 ${state.tenants.length} 条</span></div><div><button class="btn" type="button" data-capacity-report>容量报告</button> <span class="muted">0 表示不限制</span></div></div>
       <div class="table-scroll"><table>
         <thead><tr>${headers(['Tenant ID', 'Status', 'Weight', 'Concurrency', 'CPU', 'Memory', 'Backlog', 'Trigger rate', 'Version', 'Actions'])}</tr></thead>
         <tbody>${rows || emptyRow(10, '暂无租户配置')}</tbody>
       </table></div>
-    </section>`;
+    </section>
+    ${capacityReportPanel()}`;
+}
+
+function capacityReportPanel() {
+  if (!state.tenantCapacityReport) return '';
+  const items = normalizeList(state.tenantCapacityReport, 'items');
+  const rows = items.map(item => tableRow([
+    code(item.tenantId), statusText(item.overallRisk ?? 'UNKNOWN', capacityRiskTone(item.overallRisk)),
+    text(`${Math.round(Number(item.window?.coverageRatio ?? 0) * 100)}%`),
+    text(String((item.resources ?? []).reduce((sum, resource) => sum + Number(resource.rejections ?? 0), 0))),
+    `<button class="link-button" type="button" data-tenant-edit="${escapeHtml(item.tenantId)}">查看并调整</button>`
+  ])).join('');
+  return `<section class="table-card" data-capacity-report-panel>
+    <div class="table-toolbar"><div><strong>容量风险报告</strong><span class="table-count">${items.length} 个租户</span></div>
+      <div><button class="btn" type="button" data-capacity-export="json">导出 JSON</button> <button class="btn" type="button" data-capacity-export="csv">导出 CSV</button></div></div>
+    <div class="table-scroll"><table><thead><tr>${headers(['Tenant ID', 'Risk', 'Coverage', 'Rejections', 'Actions'])}</tr></thead>
+      <tbody>${rows || emptyRow(5, '暂无容量数据')}</tbody></table></div></section>`;
+}
+
+function capacityRiskTone(risk) {
+  if (risk === 'CRITICAL' || risk === 'HIGH') return 'danger';
+  if (risk === 'MEDIUM' || risk === 'UNKNOWN') return 'warning';
+  return 'success';
 }
 
 function tenantUsageCell(value, limit, suffix = '') {
@@ -669,29 +693,73 @@ function openTenantDialog(existing = null) {
           <label class="field">最大积压<input name="maxBacklog" type="number" required min="0" value="${Number(tenant.maxBacklog)}"></label>
           <label class="field">每秒触发上限<input name="maxTriggerRatePerSecond" type="number" required min="0" value="${Number(tenant.maxTriggerRatePerSecond)}"></label>
           <label class="field"><span>准入状态</span><select name="enabled"><option value="true" ${tenant.enabled ? 'selected' : ''}>启用</option><option value="false" ${tenant.enabled ? '' : 'selected'}>禁用</option></select></label>
+          ${existing ? '<label class="field">分析窗口<select name="window"><option value="P1D">24 小时</option><option value="P7D" selected>7 天</option><option value="P30D">30 天</option></select></label><label class="field">安全余量 (%)<input name="headroomPercent" type="number" min="5" max="100" value="20"></label>' : ''}
         </div>
-        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">保存</button></div>
+        <div data-tenant-preview-result aria-live="polite"></div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button>${existing ? '<button class="btn primary" type="button" data-tenant-preview>预览变更</button>' : ''}<button class="btn" type="submit">直接保存</button></div>
       </form>
     </div>`;
   root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
   root.querySelector('#tenant-dialog').addEventListener('submit', event => saveTenant(event, tenant.version ?? 0));
+  root.querySelector('[data-tenant-preview]')?.addEventListener('click', () => previewTenant(root.querySelector('#tenant-dialog'), tenant.version ?? 0));
+}
+
+function tenantFormBody(form, expectedVersion) {
+  const values = Object.fromEntries(new FormData(form).entries());
+  return {
+    tenantId: values.tenantId.trim(),
+    enabled: values.enabled === 'true', weight: Number(values.weight),
+    maxConcurrent: Number(values.maxConcurrent), maxCpuMillis: Number(values.maxCpuMillis),
+    maxMemoryBytes: Number(values.maxMemoryBytes), maxBacklog: Number(values.maxBacklog),
+    maxTriggerRatePerSecond: Number(values.maxTriggerRatePerSecond), expectedVersion: Number(expectedVersion),
+    window: values.window || 'P7D', headroomPercent: Number(values.headroomPercent || 20)
+  };
+}
+
+async function previewTenant(form, expectedVersion) {
+  const body = tenantFormBody(form, expectedVersion);
+  const tenantId = body.tenantId;
+  delete body.tenantId;
+  const target = form.querySelector('[data-tenant-preview-result]');
+  const button = form.querySelector('[data-tenant-preview]');
+  button.disabled = true;
+  try {
+    const preview = await api(`/api/tenants/${encodeURIComponent(tenantId)}/quota-preview`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    form.dataset.previewRisk = preview.overallRisk;
+    target.innerHTML = tenantPreviewPanel(preview);
+    target.querySelectorAll('[data-apply-recommendation]').forEach(apply => apply.addEventListener('click', () => {
+      const input = form.querySelector(`[name="${apply.dataset.applyRecommendation}"]`);
+      if (input) input.value = apply.dataset.recommendedValue;
+    }));
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function tenantPreviewPanel(preview) {
+  const rows = (preview.resources ?? []).map(resource => {
+    const field = {concurrency: 'maxConcurrent', cpuMillis: 'maxCpuMillis', memoryBytes: 'maxMemoryBytes', backlog: 'maxBacklog', triggerRatePerSecond: 'maxTriggerRatePerSecond'}[resource.resource];
+    const recommendation = resource.recommendedLimit == null ? '<span class="muted">无可靠建议</span>' :
+      `${text(String(resource.recommendedLimit))} <button class="link-button" type="button" data-apply-recommendation="${field}" data-recommended-value="${resource.recommendedLimit}">采用</button>`;
+    return tableRow([text(resource.resource), text(String(resource.current)), text(Number(resource.average ?? 0).toFixed(1)), text(String(resource.peak)), text(String(resource.proposedLimit)), recommendation, statusText(resource.quality, resource.quality === 'COMPLETE' ? 'success' : 'warning'), statusText(resource.risk, capacityRiskTone(resource.risk))]);
+  }).join('');
+  return `<section class="table-card tenant-preview" data-preview-risk="${escapeHtml(preview.overallRisk)}">
+    <div class="table-toolbar"><strong>预览结果 · ${escapeHtml(preview.overallRisk)}</strong><span class="muted">覆盖率 ${Math.round(Number(preview.window?.coverageRatio ?? 0) * 100)}%</span></div>
+    <div class="table-scroll"><table><thead><tr>${headers(['Resource', 'Current', 'Average', 'Peak', 'Proposed', 'Recommended', 'Quality', 'Risk'])}</tr></thead><tbody>${rows}</tbody></table></div>
+  </section>`;
 }
 
 async function saveTenant(event, expectedVersion) {
   event.preventDefault();
   const form = event.currentTarget;
-  const values = Object.fromEntries(new FormData(form).entries());
-  const tenantId = values.tenantId.trim();
-  const body = {
-    enabled: values.enabled === 'true',
-    weight: Number(values.weight),
-    maxConcurrent: Number(values.maxConcurrent),
-    maxCpuMillis: Number(values.maxCpuMillis),
-    maxMemoryBytes: Number(values.maxMemoryBytes),
-    maxBacklog: Number(values.maxBacklog),
-    maxTriggerRatePerSecond: Number(values.maxTriggerRatePerSecond),
-    expectedVersion: Number(expectedVersion)
-  };
+  const body = tenantFormBody(form, expectedVersion);
+  const tenantId = body.tenantId;
+  delete body.tenantId; delete body.window; delete body.headroomPercent;
+  if (form.dataset.previewRisk === 'CRITICAL' && !window.confirm('预览结果为 CRITICAL，确认仍要直接保存？')) return;
   const submit = form.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
@@ -708,6 +776,23 @@ async function saveTenant(event, expectedVersion) {
   } finally {
     submit.disabled = false;
   }
+}
+
+async function loadCapacityReport() {
+  state.tenantCapacityReport = await api('/api/tenant-capacity?window=P7D&limit=500');
+}
+
+async function exportCapacity(format) {
+  try {
+    const response = await fetch(`/api/tenant-capacity/export?window=P7D&format=${format}`);
+    if (!response.ok) throw new Error(`导出失败 (${response.status})`);
+    const blob = await response.blob();
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `firefly-tenant-capacity.${format}`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error) { toast(error.message); }
 }
 
 function calendarsPage() {
@@ -2987,6 +3072,11 @@ function bindViewActions(view) {
         state.tenants.find(tenant => tenant.tenantId === button.dataset.tenantEdit)
       ));
     });
+    document.querySelector('[data-capacity-report]')?.addEventListener('click', async () => {
+      await loadCapacityReport(); renderView('tenants');
+    });
+    document.querySelectorAll('[data-capacity-export]').forEach(button =>
+      button.addEventListener('click', () => exportCapacity(button.dataset.capacityExport)));
   }
   if (view === 'operations') {
     document.querySelector('[data-audit-filter="apply"]')?.addEventListener('click', async () => {

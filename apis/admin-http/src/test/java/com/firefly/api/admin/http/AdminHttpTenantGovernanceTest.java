@@ -4,6 +4,9 @@ import com.firefly.audit.InMemoryAuditRepository;
 import com.firefly.domain.CronSchedule;
 import com.firefly.domain.JobDefinition;
 import com.firefly.governance.InMemoryTenantQuotaStore;
+import com.firefly.governance.InMemoryTenantCapacityStore;
+import com.firefly.governance.TenantCapacityFlush;
+import com.firefly.governance.TenantCapacitySample;
 import com.firefly.governance.TenantAdmissionRequest;
 import com.firefly.governance.TenantDefinition;
 import com.firefly.governance.TenantQuotaAwareJobRepository;
@@ -132,6 +135,50 @@ class AdminHttpTenantGovernanceTest {
             assertEquals(429, rejected.statusCode());
             assertTrue(rejected.body().contains("\"reason\":\"BACKLOG_QUOTA_EXCEEDED\""));
             assertTrue(rejected.body().contains("\"tenantId\":\"default\""));
+        } finally {
+            plugin.close();
+        }
+    }
+
+    @Test
+    void previewsWithoutWritesAndProvidesRoleBoundedCapacityReports() throws Exception {
+        int port = freePort();
+        Instant now = Instant.parse("2026-11-07T08:00:00Z");
+        InMemoryTenantQuotaStore quotas = new InMemoryTenantQuotaStore();
+        TenantDefinition policy = quotas.save(new TenantDefinition(
+                "payments", true, 3, 40, 20_000, 40_000, 100, 200, 0, now
+        ), 0, now);
+        InMemoryTenantCapacityStore capacity = new InMemoryTenantCapacityStore();
+        for (int bucket = 0; bucket < 7 * 24 * 12; bucket++) {
+            Instant bucketStart = now.minus(Duration.ofDays(7)).plus(Duration.ofMinutes(5L * bucket));
+            capacity.merge(new TenantCapacityFlush("sample-" + bucket,
+                    new TenantCapacitySample("payments", bucketStart, 1, policy.version(), policy.version(),
+                            "1.2.1", "1.2.1", 35, 10_000, 20_000, 70, 150,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)), now);
+        }
+        InMemoryAuditRepository audit = new InMemoryAuditRepository();
+        AdminHttpPlugin plugin = new AdminHttpPlugin(new AdminHttpOptions(
+                "127.0.0.1", port, Duration.ofSeconds(30), "admin",
+                Map.of("reader", AdminRole.READER, "operator", AdminRole.OPERATOR, "admin", AdminRole.ADMIN)
+        ));
+        plugin.start(FireflyPluginContext.builder().clock(Clock.fixed(now, ZoneOffset.UTC))
+                .tenantQuotaStore(quotas).tenantCapacityStore(capacity).auditRepository(audit).build());
+        try {
+            HttpResponse<String> preview = request(port, "/api/tenants/payments/quota-preview", "POST", "admin", """
+                    {"expectedVersion":1,"enabled":true,"weight":3,"maxConcurrent":40,
+                     "maxCpuMillis":20000,"maxMemoryBytes":40000,"maxBacklog":100,
+                     "maxTriggerRatePerSecond":200,"window":"P7D","headroomPercent":20}
+                    """);
+            assertEquals(200, preview.statusCode());
+            assertTrue(preview.body().contains("\"recommendedLimit\":42"));
+            assertEquals(1, quotas.find("payments").orElseThrow().version());
+            assertTrue(audit.listRecent(10).isEmpty(), "preview must not create an audit mutation");
+
+            assertEquals(200, request(port, "/api/tenant-capacity?window=P7D", "GET", "reader", "").statusCode());
+            assertEquals(403, request(port, "/api/tenant-capacity/export?format=csv", "GET", "reader", "").statusCode());
+            HttpResponse<String> exported = request(port, "/api/tenant-capacity/export?format=csv", "GET", "operator", "");
+            assertEquals(200, exported.statusCode());
+            assertTrue(exported.body().startsWith("tenantId,overallRisk"));
         } finally {
             plugin.close();
         }

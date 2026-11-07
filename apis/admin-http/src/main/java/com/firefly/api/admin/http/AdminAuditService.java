@@ -19,6 +19,7 @@ final class AdminAuditService {
     }
 
     void auditMutation(HttpExchange exchange) {
+        if (Boolean.TRUE.equals(exchange.getAttribute("firefly.audit.skip"))) return;
         String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
         if ("GET".equals(method) || "HEAD".equals(method)) return;
         Object status = exchange.getAttribute("firefly.response.status");

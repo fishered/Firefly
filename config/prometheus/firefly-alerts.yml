@@ -122,3 +122,23 @@ groups:
           severity: critical
         annotations:
           summary: Firefly tenant backlog quota is exhausted
+      - alert: FireflyTenantCapacityFlushFailing
+        expr: increase(firefly_tenant_capacity_flush_failures_total[10m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant capacity observations are failing to flush
+      - alert: FireflyTenantCapacityFlushLagging
+        expr: firefly_tenant_capacity_flush_lag_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly tenant capacity sampling is more than two default buckets behind
+      - alert: FireflyTenantCapacityObservationsDropped
+        expr: increase(firefly_tenant_capacity_observations_dropped_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Firefly dropped capacity planning observations without affecting admission

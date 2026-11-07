@@ -181,6 +181,7 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
         context.schedulerMetrics().ifPresent(metrics -> {
             appendRuntimeMetrics(body, metrics.snapshot());
             appendTenantAdmissionMetrics(body, metrics.tenantAdmissionRejections());
+            appendTenantCapacityHealthMetrics(body, metrics);
         });
         context.tenantQuotaStore().ifPresent(store -> appendTenantUsageMetrics(body, store, now));
         body.append("# HELP firefly_scheduler_shard_due_jobs Due jobs grouped by scheduler shard.\n")
@@ -346,6 +347,31 @@ public final class PrometheusMetricsPlugin implements FireflyPlugin {
                 .forEach(entry -> body.append("firefly_tenant_admission_rejections_total{tenant=\"")
                         .append(escapeLabel(entry.getKey().tenantId())).append("\",reason=\"")
                         .append(entry.getKey().reason().name()).append("\"} ")
+                        .append(entry.getValue()).append('\n'));
+    }
+
+    private void appendTenantCapacityHealthMetrics(StringBuilder body, SchedulerMetrics metrics) {
+        appendLowCardinalityCounter(body, "firefly_tenant_capacity_observations_dropped_total",
+                "Capacity observations dropped before persistence.", "reason",
+                metrics.tenantCapacityObservationsDropped());
+        appendLowCardinalityCounter(body, "firefly_tenant_capacity_flush_failures_total",
+                "Capacity observation flush failures.", "reason", metrics.tenantCapacityFlushFailures());
+        appendLowCardinalityCounter(body, "firefly_tenant_quota_preview_total",
+                "Tenant quota previews by overall risk.", "risk", metrics.tenantQuotaPreviews());
+        body.append("# HELP firefly_tenant_capacity_flush_lag_seconds Age of the oldest pending capacity bucket.\n")
+                .append("# TYPE firefly_tenant_capacity_flush_lag_seconds gauge\n")
+                .append("firefly_tenant_capacity_flush_lag_seconds ")
+                .append(metrics.tenantCapacityFlushLagSeconds()).append('\n');
+    }
+
+    private static void appendLowCardinalityCounter(
+            StringBuilder body, String name, String help, String label, java.util.Map<String, Long> values
+    ) {
+        body.append("# HELP ").append(name).append(' ').append(help).append('\n')
+                .append("# TYPE ").append(name).append(" counter\n");
+        values.entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry ->
+                body.append(name).append('{').append(label).append("=\"")
+                        .append(escapeLabel(entry.getKey())).append("\"} ")
                         .append(entry.getValue()).append('\n'));
     }
 

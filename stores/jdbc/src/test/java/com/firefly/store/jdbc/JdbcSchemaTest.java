@@ -539,7 +539,7 @@ final class JdbcSchemaTest {
     @Test
     void loadsDialectScripts() {
         assertEquals(41, JdbcSchemaScript.load(JdbcDialect.H2).size());
-        assertEquals(89, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
+        assertEquals(93, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).size());
         assertEquals(30, JdbcSchemaScript.load(JdbcDialect.MYSQL).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 12).size());
         assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 12).size());
@@ -547,6 +547,9 @@ final class JdbcSchemaTest {
         assertEquals(12, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 20).size());
         assertEquals(12, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 20).size());
         assertEquals(10, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 20).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.H2, 21).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.POSTGRESQL, 21).size());
+        assertEquals(4, JdbcSchemaScript.loadMigration(JdbcDialect.MYSQL, 21).size());
 
         assertEquals(3, JdbcSchemaScript.load(JdbcDialect.POSTGRESQL).stream()
                 .filter(JdbcSchema::isManagedIndexStatement).count());

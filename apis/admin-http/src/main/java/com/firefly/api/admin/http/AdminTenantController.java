@@ -1,7 +1,12 @@
 package com.firefly.api.admin.http;
 
 import com.firefly.governance.TenantDefinition;
+import com.firefly.governance.TenantCapacityBaseline;
+import com.firefly.governance.TenantCapacityStore;
 import com.firefly.governance.TenantQuotaStore;
+import com.firefly.governance.TenantQuotaPlanner;
+import com.firefly.governance.TenantQuotaPreview;
+import com.firefly.governance.TenantQuotaProposal;
 import com.firefly.governance.TenantUsage;
 import com.firefly.plugin.FireflyPluginContext;
 import com.sun.net.httpserver.HttpExchange;
@@ -9,6 +14,7 @@ import com.sun.net.httpserver.HttpExchange;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +26,11 @@ final class AdminTenantController {
             "enabled", "weight", "maxConcurrent", "maxCpuMillis", "maxMemoryBytes",
             "maxBacklog", "maxTriggerRatePerSecond", "expectedVersion"
     );
+    private static final Set<String> PREVIEW_FIELDS = Set.of(
+            "enabled", "weight", "maxConcurrent", "maxCpuMillis", "maxMemoryBytes",
+            "maxBacklog", "maxTriggerRatePerSecond", "expectedVersion", "window", "headroomPercent"
+    );
+    private static final Duration CAPACITY_BUCKET_WIDTH = Duration.ofMinutes(5);
 
     private final FireflyPluginContext context;
     private final AdminRequestReader requests;
@@ -36,6 +47,15 @@ final class AdminTenantController {
         TenantQuotaStore store = context.tenantQuotaStore().orElseThrow(() ->
                 new AdminHttpException(503, "tenant_governance_unavailable",
                         "tenant governance is not configured"));
+        String previewTenant = previewTenantId(exchange);
+        if (!previewTenant.isEmpty()) {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                responses.respond(exchange, 405, AdminHttpResponder.JSON, "{\"error\":\"method_not_allowed\"}");
+                return;
+            }
+            preview(exchange, store, previewTenant);
+            return;
+        }
         String tenantId = tenantId(exchange);
         switch (exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT)) {
             case "GET" -> get(exchange, store, tenantId);
@@ -43,6 +63,50 @@ final class AdminTenantController {
             default -> responses.respond(exchange, 405, AdminHttpResponder.JSON,
                     "{\"error\":\"method_not_allowed\"}");
         }
+    }
+
+    private void preview(HttpExchange exchange, TenantQuotaStore quotaStore, String tenantId) throws IOException {
+        exchange.setAttribute("firefly.audit.skip", true);
+        TenantCapacityStore capacityStore = context.tenantCapacityStore().orElseThrow(() ->
+                new AdminHttpException(503, "tenant_capacity_unavailable",
+                        "tenant capacity planning is not configured"));
+        TenantDefinition policy = quotaStore.find(tenantId).orElseThrow(() ->
+                new AdminHttpException(404, "tenant_not_found", "tenant not found: " + tenantId));
+        Map<String, String> request = requests.object(exchange);
+        request.keySet().stream().filter(key -> !PREVIEW_FIELDS.contains(key)).findFirst().ifPresent(key -> {
+            throw new IllegalArgumentException("unknown tenant preview field: " + key);
+        });
+        Duration window = parseWindow(request.getOrDefault("window", "P7D"));
+        int headroom = integer(request, "headroomPercent", TenantQuotaProposal.DEFAULT_HEADROOM_PERCENT);
+        TenantQuotaProposal proposal;
+        try {
+            proposal = new TenantQuotaProposal(requiredLong(request, "expectedVersion"),
+                    requests.booleanValue(request, "enabled", policy.enabled()),
+                    integer(request, "weight", policy.weight()),
+                    integer(request, "maxConcurrent", policy.maxConcurrent()),
+                    number(request, "maxCpuMillis", policy.maxCpuMillis()),
+                    number(request, "maxMemoryBytes", policy.maxMemoryBytes()),
+                    number(request, "maxBacklog", policy.maxBacklog()),
+                    number(request, "maxTriggerRatePerSecond", policy.maxTriggerRatePerSecond()),
+                    window, headroom);
+        } catch (IllegalArgumentException invalid) {
+            if (invalid.getMessage() != null && invalid.getMessage().startsWith("headroomPercent")) {
+                throw new AdminHttpException(400, "invalid_headroom_percent", invalid.getMessage());
+            }
+            throw invalid;
+        }
+        Instant now = context.clock().instant();
+        TenantUsage usage = quotaStore.usage(tenantId, now);
+        TenantCapacityBaseline baseline = capacityStore.baseline(tenantId, now.minus(window), now,
+                CAPACITY_BUCKET_WIDTH);
+        TenantQuotaPreview result;
+        try {
+            result = new TenantQuotaPlanner().preview(policy, usage, baseline, proposal, now);
+        } catch (IllegalStateException conflict) {
+            throw new AdminHttpException(409, "tenant_version_conflict", conflict.getMessage());
+        }
+        context.schedulerMetrics().ifPresent(metrics -> metrics.recordTenantQuotaPreview(result.overallRisk().name()));
+        responses.ok(exchange, AdminHttpResponder.JSON, previewJson(result));
     }
 
     private void get(HttpExchange exchange, TenantQuotaStore store, String tenantId) throws IOException {
@@ -117,6 +181,62 @@ final class AdminTenantController {
                 + ",\"backlog\":" + usage.backlog()
                 + ",\"triggersInWindow\":" + usage.triggersInWindow()
                 + ",\"triggerWindowStartedAt\":\"" + usage.triggerWindowStartedAt() + "\"}}";
+    }
+
+    static String previewJson(TenantQuotaPreview preview) {
+        String changes = preview.changes().stream().map(change -> "{\"field\":\""
+                + escape(change.field()) + "\",\"before\":\"" + escape(change.before())
+                + "\",\"after\":\"" + escape(change.after()) + "\"}")
+                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+        String resources = preview.resources().stream().map(resource -> {
+            String reasons = resource.reasons().stream().map(reason -> "\"" + escape(reason) + "\"")
+                    .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+            return "{\"resource\":\"" + resource.resource().jsonName() + "\",\"current\":"
+                    + resource.current() + ",\"average\":" + resource.average() + ",\"peak\":"
+                    + resource.peak() + ",\"proposedLimit\":" + resource.proposedLimit()
+                    + ",\"recommendedLimit\":" + (resource.recommendedLimit() == null
+                    ? "null" : resource.recommendedLimit()) + ",\"saturationRatio\":"
+                    + resource.saturationRatio() + ",\"rejections\":" + resource.rejections()
+                    + ",\"quality\":\"" + resource.quality() + "\",\"risk\":\"" + resource.risk()
+                    + "\",\"reasons\":" + reasons + "}";
+        }).collect(java.util.stream.Collectors.joining(",", "[", "]"));
+        String warnings = preview.warnings().stream().map(value -> "\"" + escape(value) + "\"")
+                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+        return "{\"tenantId\":\"" + escape(preview.tenantId()) + "\",\"evaluatedAt\":\""
+                + preview.evaluatedAt() + "\",\"baseVersion\":" + preview.baseVersion()
+                + ",\"window\":{\"from\":\"" + preview.windowFrom() + "\",\"to\":\""
+                + preview.windowTo() + "\",\"coverageRatio\":" + preview.coverageRatio()
+                + "},\"overallRisk\":\"" + preview.overallRisk() + "\",\"changes\":" + changes
+                + ",\"resources\":" + resources + ",\"warnings\":" + warnings + "}";
+    }
+
+    private static String previewTenantId(HttpExchange exchange) {
+        String path = exchange.getRequestURI().getPath();
+        String suffix = "/quota-preview";
+        if (!path.startsWith(BASE + "/") || !path.endsWith(suffix)) return "";
+        String encoded = path.substring((BASE + "/").length(), path.length() - suffix.length());
+        String value = URLDecoder.decode(encoded, StandardCharsets.UTF_8);
+        if (value.isBlank() || value.contains("/")) {
+            throw new AdminHttpException(400, "invalid_tenant_id", "tenantId must be one path segment");
+        }
+        return value;
+    }
+
+    private static Duration parseWindow(String value) {
+        try {
+            Duration duration = Duration.parse(value);
+            if (duration.compareTo(Duration.ofHours(24)) < 0 || duration.compareTo(Duration.ofDays(30)) > 0) {
+                throw new IllegalArgumentException("capacity window must be between P1D and P30D");
+            }
+            return duration;
+        } catch (RuntimeException invalid) {
+            throw new AdminHttpException(400, "invalid_capacity_window", "invalid capacity window: " + value);
+        }
+    }
+
+    private static String escape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r");
     }
 
     private static String tenantId(HttpExchange exchange) {

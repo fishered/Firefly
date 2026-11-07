@@ -87,11 +87,14 @@ public final class AdminHttpPlugin implements FireflyPlugin {
             AdminTenantController tenantController = new AdminTenantController(
                     context, requestReader, responses
             );
+            AdminTenantCapacityController capacityController = new AdminTenantCapacityController(
+                    context, requestReader, responses
+            );
             AdminRouteRegistration.register(
                     new AdminHttpRouter(server, dispatcher),
                     new AdminSystemController(context, responses, requestReader),
                     authController, scheduleController, jobController, executionController, clusterController,
-                    tenantController
+                    tenantController, capacityController
             );
             server.start();
         } catch (IOException e) {

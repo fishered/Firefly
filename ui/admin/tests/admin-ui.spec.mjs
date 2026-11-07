@@ -21,6 +21,12 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await page.locator('#tenant-dialog [name="maxBacklog"]').fill('10');
     await page.locator('#tenant-dialog button[type="submit"]').click();
     await expect(page.locator('[data-tenant-edit="blue"]')).toBeVisible();
+    await page.locator('[data-tenant-edit="blue"]').click();
+    await page.locator('#tenant-dialog [data-tenant-preview]').click();
+    await expect(page.locator('#tenant-dialog [data-preview-risk="MEDIUM"]')).toBeVisible();
+    await page.locator('#tenant-dialog [data-close]').first().click();
+    await page.locator('[data-capacity-report]').click();
+    await expect(page.locator('[data-capacity-report-panel]')).toContainText('blue');
 
     await page.locator('[data-view="calendars"]').click();
     await expect(page.locator('#page-title')).toContainText('Calendars');
@@ -273,6 +279,17 @@ async function routeMockRequest(state, method, url, body, response) {
     };
     state.tenants = [...state.tenants.filter(item => item.tenantId !== tenantId), saved];
     json(response, previous ? 200 : 201, saved);
+    return;
+  }
+  const tenantPreviewMatch = url.pathname.match(/^\/api\/tenants\/([^/]+)\/quota-preview$/);
+  if (method === 'POST' && tenantPreviewMatch) {
+    const tenantId = decodeURIComponent(tenantPreviewMatch[1]);
+    const tenant = state.tenants.find(item => item.tenantId === tenantId);
+    json(response, 200, capacityPreview(tenant, body));
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/api/tenant-capacity') {
+    json(response, 200, {items: state.tenants.map(tenant => capacityPreview(tenant, tenant)), nextCursor: ''});
     return;
   }
   const jobHistoryMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/history$/);
@@ -632,6 +649,27 @@ function emptyTenantUsage() {
     triggersInWindow: 0,
     triggerWindowStartedAt: new Date(0).toISOString()
   };
+}
+
+function capacityPreview(tenant, proposal) {
+  const resource = (name, current, peak, proposed, recommended) => ({
+    resource: name, current, average: peak * 0.7, peak, proposedLimit: proposed,
+    recommendedLimit: recommended, saturationRatio: 0.05, rejections: 0,
+    quality: 'COMPLETE', risk: proposed < recommended ? 'MEDIUM' : 'LOW',
+    reasons: proposed < recommended ? ['PROPOSED_LIMIT_BELOW_RECOMMENDATION'] : []
+  });
+  const usage = tenant?.usage ?? emptyTenantUsage();
+  const resources = [
+    resource('concurrency', usage.activeExecutions, 2, Number(proposal.maxConcurrent ?? tenant.maxConcurrent), 3),
+    resource('cpuMillis', usage.reservedCpuMillis, 100, Number(proposal.maxCpuMillis ?? tenant.maxCpuMillis), 120),
+    resource('memoryBytes', usage.reservedMemoryBytes, 100, Number(proposal.maxMemoryBytes ?? tenant.maxMemoryBytes), 120),
+    resource('backlog', usage.backlog, 8, Number(proposal.maxBacklog ?? tenant.maxBacklog), 10),
+    resource('triggerRatePerSecond', usage.triggersInWindow, 4, Number(proposal.maxTriggerRatePerSecond ?? tenant.maxTriggerRatePerSecond), 5)
+  ];
+  return {tenantId: tenant.tenantId, evaluatedAt: new Date().toISOString(), baseVersion: tenant.version,
+    window: {from: new Date(Date.now() - 604800000).toISOString(), to: new Date().toISOString(), coverageRatio: 1},
+    overallRisk: resources.some(item => item.risk === 'MEDIUM') ? 'MEDIUM' : 'LOW',
+    changes: [], resources, warnings: []};
 }
 
 function runningExecution(jobId) {

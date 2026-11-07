@@ -64,6 +64,7 @@ public final class FireflyBootstrap implements AutoCloseable {
     private final SchedulerNodeCoordinator nodeCoordinator;
     private final DispatchOutboxWorker outboxWorker;
     private final ExecutionMaintenanceWorker executionMaintenanceWorker;
+    private final TenantCapacitySampler tenantCapacitySampler;
     private final NodeDrainMonitor nodeDrainMonitor;
     private final AutoCloseable runtimeClock;
     private final java.util.concurrent.ExecutorService workerPool;
@@ -75,6 +76,7 @@ public final class FireflyBootstrap implements AutoCloseable {
             SchedulerNodeCoordinator nodeCoordinator,
             DispatchOutboxWorker outboxWorker,
             ExecutionMaintenanceWorker executionMaintenanceWorker,
+            TenantCapacitySampler tenantCapacitySampler,
             NodeDrainMonitor nodeDrainMonitor,
             AutoCloseable runtimeClock,
             java.util.concurrent.ExecutorService workerPool
@@ -85,6 +87,7 @@ public final class FireflyBootstrap implements AutoCloseable {
         this.nodeCoordinator = nodeCoordinator;
         this.outboxWorker = outboxWorker;
         this.executionMaintenanceWorker = executionMaintenanceWorker;
+        this.tenantCapacitySampler = tenantCapacitySampler;
         this.nodeDrainMonitor = nodeDrainMonitor;
         this.runtimeClock = runtimeClock;
         this.workerPool = workerPool;
@@ -132,6 +135,29 @@ public final class FireflyBootstrap implements AutoCloseable {
             shardOwnership.install(nodeCoordinator);
             nodeCoordinator.start();
             startup.add("node coordinator", nodeCoordinator);
+
+            var capacityConfiguration = options.pluginConfiguration();
+            Duration capacityBucketWidth = Duration.parse(capacityConfiguration.property(
+                    "firefly.tenant.capacity.bucket-width", "PT5M"));
+            var capacityBuffer = new com.firefly.governance.TenantCapacityObservationBuffer(
+                    assembly.tenantCapacityStore(), metrics,
+                    options.nodeName() + "-" + java.util.UUID.randomUUID(), "1.2.1",
+                    capacityBucketWidth,
+                    Integer.parseInt(capacityConfiguration.property(
+                            "firefly.tenant.capacity.max-pending-buckets", "10000"))
+            );
+            TenantCapacitySampler tenantCapacitySampler = new TenantCapacitySampler(
+                    assembly.tenantQuotaStore(), assembly.tenantCapacityStore(), capacityBuffer,
+                    metrics, runtimeClock, () -> nodeCoordinator.ownedShards().containsKey(0),
+                    Duration.parse(capacityConfiguration.property(
+                            "firefly.tenant.capacity.sample-interval", "PT1M")),
+                    Duration.parse(capacityConfiguration.property(
+                            "firefly.tenant.capacity.retention", "P7D")),
+                    Integer.parseInt(capacityConfiguration.property(
+                            "firefly.tenant.capacity.cleanup-batch", "500"))
+            );
+            tenantCapacitySampler.start();
+            startup.add("tenant capacity sampler", tenantCapacitySampler);
 
             ExecutionMaintenanceWorker executionMaintenanceWorker = null;
             if (options.nodeRoles().contains(ServerNodeRole.SCHEDULER)) {
@@ -211,6 +237,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                     .backfillOperationStore(assembly.backfillOperationStore())
                     .backfillCoordinator(backfillCoordinator)
                     .tenantQuotaStore(assembly.tenantQuotaStore())
+                    .tenantCapacityStore(assembly.tenantCapacityStore())
                     .pluginStatusProvider(plugins::descriptors)
                     .nodeDrainStatusProvider(nodeDrainMonitor)
                     .configuration(options.pluginConfiguration());
@@ -247,7 +274,7 @@ public final class FireflyBootstrap implements AutoCloseable {
 
             FireflyBootstrap bootstrap = new FireflyBootstrap(
                     engine, plugins, executorGateway, nodeCoordinator, outboxWorker, executionMaintenanceWorker,
-                    nodeDrainMonitor, assembly.closeable(), workerPool
+                    tenantCapacitySampler, nodeDrainMonitor, assembly.closeable(), workerPool
             );
             startup.commit();
             log.info("Firefly server started");
@@ -269,6 +296,7 @@ public final class FireflyBootstrap implements AutoCloseable {
         if (executionMaintenanceWorker != null) {
             shutdown.close("execution maintenance", executionMaintenanceWorker);
         }
+        shutdown.close("tenant capacity sampler", tenantCapacitySampler);
         shutdown.close("node coordinator", nodeCoordinator);
         if (executorGateway != null) shutdown.close("executor gateway", executorGateway);
         shutdown.close("worker pool", workerPool);
@@ -307,6 +335,8 @@ public final class FireflyBootstrap implements AutoCloseable {
             ConditionRuntime conditions = configuredConditionEvaluator(options, java.time.Clock.systemUTC());
             com.firefly.governance.TenantQuotaStore tenantQuotaStore =
                     new com.firefly.governance.InMemoryTenantQuotaStore();
+            com.firefly.governance.TenantCapacityStore tenantCapacityStore =
+                    new com.firefly.governance.InMemoryTenantCapacityStore();
             log.info("Storage: memory");
             return new RuntimeAssembly(
                     new SchedulerModule(
@@ -321,7 +351,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                     new com.firefly.security.InMemoryIntegrationKeyRepository(),
                     new com.firefly.trigger.InMemoryTriggerInbox(),
                     new com.firefly.trigger.InMemoryBackfillOperationStore(),
-                    tenantQuotaStore
+                    tenantQuotaStore,
+                    tenantCapacityStore
             );
         }
         DataSource dataSource = new DriverManagerDataSource(store.jdbcUrl(), store.jdbcUsername(), store.jdbcPassword());
@@ -354,6 +385,8 @@ public final class FireflyBootstrap implements AutoCloseable {
         ConditionRuntime conditions = configuredConditionEvaluator(options, clock);
         com.firefly.governance.TenantQuotaStore tenantQuotaStore =
                 new com.firefly.store.jdbc.JdbcTenantQuotaStore(dataSource);
+        com.firefly.governance.TenantCapacityStore tenantCapacityStore =
+                new com.firefly.store.jdbc.JdbcTenantCapacityStore(dataSource);
         SchedulerModule module = new SchedulerModule(
                 new JdbcJobRepository(dataSource, shardCount),
                 new JdbcNodeRegistry(dataSource),
@@ -375,7 +408,8 @@ public final class FireflyBootstrap implements AutoCloseable {
                 new com.firefly.store.jdbc.JdbcIntegrationKeyRepository(dataSource),
                 new com.firefly.store.jdbc.JdbcTriggerInbox(dataSource),
                 new com.firefly.store.jdbc.JdbcBackfillOperationStore(dataSource),
-                tenantQuotaStore
+                tenantQuotaStore,
+                tenantCapacityStore
         );
     }
 
@@ -692,7 +726,8 @@ public final class FireflyBootstrap implements AutoCloseable {
             com.firefly.security.IntegrationKeyRepository integrationKeyRepository,
             com.firefly.trigger.TriggerInbox triggerInbox,
             com.firefly.trigger.BackfillOperationStore backfillOperationStore,
-            com.firefly.governance.TenantQuotaStore tenantQuotaStore
+            com.firefly.governance.TenantQuotaStore tenantQuotaStore,
+            com.firefly.governance.TenantCapacityStore tenantCapacityStore
     ) {
     }
 

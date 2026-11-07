@@ -1,6 +1,6 @@
 # Firefly 当前实现进度
 
-最后更新：2026-10-29。
+最后更新：2026-11-07。
 
 本文是当前实现进度的唯一入口。各主题文档只保留设计、接口和使用说明；阶段性进度统一维护在这里，避免同一件事散落到多份 Markdown 里过期。
 
@@ -27,6 +27,13 @@ examples/*                   Embedded 与 Netty executor 示例
 旧的 `plugins/admin-web` 和 `executors/netty` 方向已经被新边界替代：Admin HTTP API 移到 `apis/admin-http`，前端移到 `ui/admin`，Netty 协议移到 `transports/netty`。
 
 ## 2. 已落地能力
+
+### 1.2.1 配额预演与容量规划
+
+- 新增纯 Java `TenantQuotaPlanner`，按五类租户资源提供无副作用 dry-run、稳定风险/原因码、数据质量和确定性余量建议；preview version 与保存 CAS 形成闭环。
+- v21 additive migration 新增样本与 flush dedupe 表；有界内存缓冲、唯一 source ID、事务性幂等刷新、max 合并、shard 0 权威采样和有界保留期清理不增加准入同步 JDBC 写。
+- Admin API/UI 提供预览、逐项采用建议、CRITICAL 二次确认、全租户风险报告和有界 JSON/CSV 导出；预览不写审计，实际 PUT 继续写 before/after 审计。
+- 新增低基数采集健康/preview 指标和告警；H2、planner、HA sampler、Admin RBAC/API 与 Playwright E2E 使用非 Docker 门禁验证。
 
 ### 1.2.0 多租户资源治理
 

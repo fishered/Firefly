@@ -125,6 +125,9 @@ public final class AdminRoutePolicy {
         },
         BATCH_REQUEUE {
             @Override boolean matches(String relativePath) { return "/batch-requeue".equals(relativePath); }
+        },
+        EXPORT {
+            @Override boolean matches(String relativePath) { return "/export".equals(relativePath); }
         };
 
         abstract boolean matches(String relativePath);

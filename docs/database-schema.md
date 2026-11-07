@@ -40,6 +40,8 @@ stores/jdbc/src/main/resources/com/firefly/store/jdbc/schema/mysql.sql
 | `firefly_tenant_usage` | 跨节点权威并发、CPU、内存、backlog 与触发窗口用量 |
 | `firefly_tenant_reservation` | 幂等准入 reservation、资源单位和恢复租约 |
 | `firefly_dispatch_fairness_state` | 跨节点、跨 claim 批次持久化的租户虚拟完成时间和全局公平时钟 |
+| `firefly_tenant_capacity_sample` | 5 分钟容量桶、policy/runtime 版本范围、五类资源峰值、触顶和拒绝计数 |
+| `firefly_tenant_capacity_flush` | source/bucket flush 幂等键；与样本合并处于同一事务 |
 
 Scheduler 不单独建表。它是 `firefly_node.roles` 中的节点职责，实际调度所有权由 `firefly_shard_lease.owner_node_id` 指向节点。
 
@@ -70,7 +72,7 @@ firefly.jdbc.schema.mode=validate
 firefly.jdbc.schema.mode=initialize-if-empty
 ```
 
-该模式会执行幂等建表、补齐历史版本新增列、按集群配置的分片数为旧任务回填 `shard_id`、为可恢复的旧 Outbox 回填任务快照，并依次安装 v13-v20 feature migration 和查询索引，然后验证表、列、集群不变量和 `firefly_schema_version`。这些 feature migration 保持 schema 兼容版本 `12`；v20 新增租户治理和派发公平状态表，Outbox 新列带 `default`/`0` 默认值，允许 1.1.7 与 1.2.0 在配额尚未启用时短暂滚动共存。生产环境由外部迁移系统管理时可以使用：
+该模式会执行幂等建表、补齐历史版本新增列、按集群配置的分片数为旧任务回填 `shard_id`、为可恢复的旧 Outbox 回填任务快照，并依次安装 v13-v21 feature migration 和查询索引，然后验证表、列、集群不变量和 `firefly_schema_version`。这些 feature migration 保持 schema 兼容版本 `12`；v20 新增租户治理和派发公平状态表，v21 新增容量样本与 flush 去重表，允许 1.2.0 与 1.2.1 滚动共存。生产环境由外部迁移系统管理时可以使用：
 
 ```properties
 firefly.jdbc.schema.mode=validate

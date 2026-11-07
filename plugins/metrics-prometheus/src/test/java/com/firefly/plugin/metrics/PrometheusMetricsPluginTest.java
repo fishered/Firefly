@@ -67,6 +67,10 @@ class PrometheusMetricsPluginTest {
         metrics.recordTriggerSecurityRejection();
         metrics.recordTenantAdmissionRejection("blue",
                 com.firefly.governance.TenantAdmissionReason.CPU_QUOTA_EXCEEDED);
+        metrics.recordTenantCapacityObservationDropped("buffer_full");
+        metrics.recordTenantCapacityFlushFailure("store");
+        metrics.recordTenantQuotaPreview("MEDIUM");
+        metrics.tenantCapacityFlushLagSeconds(600);
         Instant now = Instant.parse("2026-07-16T10:00:00Z");
         InMemoryTriggerInbox triggerInbox = new InMemoryTriggerInbox();
         triggerInbox.receive("due-job", new EventTrigger(
@@ -128,6 +132,10 @@ class PrometheusMetricsPluginTest {
             assertTrue(body.contains("firefly_local_worker_active 7"));
             assertTrue(body.contains("firefly_local_worker_max_concurrency 256"));
             assertTrue(body.contains("firefly_local_worker_rejections_total 1"));
+            assertTrue(body.contains("firefly_tenant_capacity_observations_dropped_total{reason=\"buffer_full\"} 1"));
+            assertTrue(body.contains("firefly_tenant_capacity_flush_failures_total{reason=\"store\"} 1"));
+            assertTrue(body.contains("firefly_tenant_quota_preview_total{risk=\"MEDIUM\"} 1"));
+            assertTrue(body.contains("firefly_tenant_capacity_flush_lag_seconds 600"));
             assertTrue(body.contains("firefly_batch_progress_updates_total 1"));
             assertTrue(body.contains("firefly_batch_progress_dropped_total 1"));
             assertTrue(body.contains("firefly_batch_shard_failures_total 1"));

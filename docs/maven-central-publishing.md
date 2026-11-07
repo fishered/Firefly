@@ -8,7 +8,7 @@ Firefly 的公共 Java 构件使用 `io.github.fishered` 命名空间。普通�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.2.0</version>
+            <version>1.2.1</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -131,11 +131,11 @@ $env:ORG_GRADLE_PROJECT_signingInMemoryKeyPassword="<GPG_PASSWORD>"
 正式发布步骤：
 
 ```powershell
-git tag -a v1.2.0 -m "Release 1.2.0"
-git push origin v1.2.0
+git tag -a v1.2.1 -m "Release 1.2.1"
+git push origin v1.2.1
 ```
 
-在 GitHub Actions 中选择 `publish-maven-central`，从默认分支运行并输入版本 `1.2.0`。工作流会检出 `v1.2.0` Tag，先执行 Java/插件、Admin UI/Playwright、生产就绪门禁和 Spring Boot 兼容矩阵，再校验发布构件并上传 Maven Central。
+在 GitHub Actions 中选择 `publish-maven-central`，从默认分支运行并输入版本 `1.2.1`。工作流会检出 `v1.2.1` Tag，先执行 Java/插件、Admin UI/Playwright、生产就绪门禁和 Spring Boot 兼容矩阵，再校验发布构件并上传 Maven Central。
 
 ## 6. 发布后的检查
 

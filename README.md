@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.1-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -56,6 +56,15 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 | 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
 | 多租户治理 | 全局并发/CPU/内存/backlog/触发速率配额、加权公平队列、优先级与饥饿保护 |
 | 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
+
+### 1.2.1 配额预演与容量规划
+
+- 配额变更支持无副作用 dry-run，按并发、CPU、内存、backlog 和触发速率给出当前影响、历史峰值、质量标记与稳定原因码。
+- 基于历史峰值和显式余量生成确定性建议；数据不足、配额截断、混合 policy/运行时版本时不伪造下调建议。
+- Admin 提供预览—应用闭环、版本冲突保护、全租户风险报告及有界 JSON/CSV 导出。
+- v21 additive migration、HA 幂等采集、背压丢弃和有界保留期清理不改变 Executor v1/v2 协议或准入热路径事务。
+
+详见 [配额预演与容量规划](docs/capacity-planning.md) 与 [1.2.0 → 1.2.1 升级说明](docs/upgrade-v1.2.1.md)。
 
 ### 1.2.0 多租户资源治理
 
@@ -232,8 +241,8 @@ Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任
 
 | 镜像 | 容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server:1.2.0` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui:1.2.0` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+| `firefly/firefly-server:1.2.1` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.2.1` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
 
 准备配置并启动：
 
@@ -282,7 +291,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.2.0</version>
+            <version>1.2.1</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -517,8 +526,8 @@ npm run check
 构建 Docker 镜像：
 
 ```powershell
-docker build -t firefly/firefly-server:1.2.0 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.2.0 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.2.1 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.2.1 -f ui/admin/Dockerfile ui/admin
 ```
 
 提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。
