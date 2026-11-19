@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.1-0f766e">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.2-0f766e">
   <img alt="Java" src="https://img.shields.io/badge/Java-21-ef4444">
   <img alt="Gradle" src="https://img.shields.io/badge/Gradle-9.6.1-02303a">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
@@ -56,6 +56,10 @@ Firefly 将任务定义、调度决策和业务执行分离：Scheduler 负责�
 | 运维 | 独立 Admin UI、Admin API、JWT 会话、Integration Key、审计、Prometheus Metrics |
 | 多租户治理 | 全局并发/CPU/内存/backlog/触发速率配额、加权公平队列、优先级与饥饿保护 |
 | 扩展 | Plugin SPI、类路径插件、外部插件目录、插件生命周期与状态展示 |
+
+### 1.2.2 首次接入与运维诊断
+
+Admin UI 新增环境就绪向导、四步任务创建、统一待处理中心与执行诊断时间线。导航分为五组，执行筛选条件可通过 URL 分享，任务与租户修改需先预览。实现边界和验收状态见 [v1.2.2 设计说明](docs/v1.2.2-usability.md)。
 
 ### 1.2.1 配额预演与容量规划
 
@@ -241,8 +245,8 @@ Firefly 会幂等初始化并校验数据库结构。已有 `admin` 用户、任
 
 | 镜像 | 容器端口 | 职责 |
 | --- | --- | --- |
-| `firefly/firefly-server:1.2.1` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
-| `firefly/firefly-admin-ui:1.2.1` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
+| `firefly/firefly-server:1.2.2` | `9700`、`9710`、`9711` | Gateway、Admin API、Scheduler、Metrics |
+| `firefly/firefly-admin-ui:1.2.2` | `9720` | Web UI、浏览器会话和 Admin API 反向代理 |
 
 准备配置并启动：
 
@@ -291,7 +295,7 @@ Firefly 的公共构件发布在 Maven Central，Maven 项目无需增加额外�
         <dependency>
             <groupId>io.github.fishered</groupId>
             <artifactId>firefly-bom</artifactId>
-            <version>1.2.1</version>
+            <version>1.2.2</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -526,8 +530,8 @@ npm run check
 构建 Docker 镜像：
 
 ```powershell
-docker build -t firefly/firefly-server:1.2.1 -f Dockerfile .
-docker build -t firefly/firefly-admin-ui:1.2.1 -f ui/admin/Dockerfile ui/admin
+docker build -t firefly/firefly-server:1.2.2 -f Dockerfile .
+docker build -t firefly/firefly-admin-ui:1.2.2 -f ui/admin/Dockerfile ui/admin
 ```
 
 提交修改前，请至少运行与修改模块相关的测试；涉及共享调度语义、JDBC schema、Netty 协议或 Starter 合同时，建议运行全量测试。

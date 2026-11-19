@@ -141,7 +141,7 @@ public final class FireflyBootstrap implements AutoCloseable {
                     "firefly.tenant.capacity.bucket-width", "PT5M"));
             var capacityBuffer = new com.firefly.governance.TenantCapacityObservationBuffer(
                     assembly.tenantCapacityStore(), metrics,
-                    options.nodeName() + "-" + java.util.UUID.randomUUID(), "1.2.1",
+                    options.nodeName() + "-" + java.util.UUID.randomUUID(), "1.2.2",
                     capacityBucketWidth,
                     Integer.parseInt(capacityConfiguration.property(
                             "firefly.tenant.capacity.max-pending-buckets", "10000"))

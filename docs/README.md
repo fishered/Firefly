@@ -13,6 +13,7 @@
 | [v1.0.2-roadmap.md](v1.0.2-roadmap.md) | 1.0.2 增量范围、非目标和验收标准 |
 | [v1.0.5-roadmap.md](v1.0.5-roadmap.md) | 1.0.5 Remote Adapter 范围、分支栈和验收标准 |
 | [v1.2.1-roadmap.md](v1.2.1-roadmap.md) | 1.2.1 配额预演、容量基线、推荐配置和验收门禁 |
+| [v1.2.2-usability.md](v1.2.2-usability.md) | 1.2.2 接入、创建、运行、诊断、调整的交互设计与架构边界 |
 
 ## 核心能力
 

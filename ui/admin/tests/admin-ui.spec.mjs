@@ -65,12 +65,17 @@ test('supports sign-in, locale switching, executor lifecycle, and job execution 
     await expect(page.locator('#job-dialog')).toBeVisible();
     await page.locator('#job-dialog [name="id"]').fill('billing-refresh');
     await page.locator('#job-dialog [name="name"]').fill('Billing refresh');
+    await page.locator('#job-dialog [data-wizard-next]').click();
     await page.locator('#job-dialog [name="cron"]').fill('*/10 * * * * *');
     await page.locator('#job-dialog [name="zoneId"]').fill('UTC');
+    await page.locator('#job-dialog [data-wizard-next]').click();
     await page.locator('#job-dialog [name="param.firefly.resource.tenantId"]').selectOption('blue');
+    await page.locator('#job-dialog .wizard-advanced summary').click();
     await page.locator('#job-dialog [name="param.firefly.resource.priority"]').fill('6');
     await page.locator('#job-dialog [name="param.firefly.resource.cpuMillis"]').fill('250');
     await page.locator('#job-dialog [name="param.firefly.resource.memoryBytes"]').fill('1024');
+    await page.locator('#job-dialog [data-wizard-next]').click();
+    await expect(page.locator('#job-dialog [data-job-review]')).toContainText('billing-refresh');
     await page.locator('#job-dialog button[type="submit"]').click();
     await expect(page.locator('[data-job-id="billing-refresh"][data-job-operation="trigger"]')).toBeVisible();
     await expect(page.locator('tr', { has: page.locator('[data-job-id="billing-refresh"]') })).toContainText('blue');
@@ -173,6 +178,80 @@ test('pages audit and job history cursors and operates failed triggers', async (
     await page.locator('[data-cursor-page="jobHistoryPage"][data-page-direction="next"]').click();
     await expect(page.getByText('history-page-1')).toBeVisible();
     await expect(page.getByText('history-page-2')).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test('guides setup, links incidents to diagnosis, and restores execution filters', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="onboarding"]').click();
+    await expect(page.locator('.readiness-card')).toHaveCount(7);
+    await expect(page.locator('#onboarding-yaml')).toContainText('FIREFLY_INTEGRATION_KEY');
+    await page.locator('[data-view="inbox"]').click();
+    await expect(page.locator('.incident-card').first().locator('b')).toHaveCount(3);
+    await page.locator('[data-inbox-id="exec-failed-sample-job"]').click();
+    await expect(page.locator('.execution-timeline li')).toHaveCount(7);
+    await expect(page.locator('.diagnosis-summary')).toContainText('exec-failed-sample-job');
+    await page.locator('[data-close]').first().click();
+    await page.locator('#execution-filter-job').fill('sample-job');
+    await page.locator('[data-execution-filter="apply"]').click();
+    await expect(page).toHaveURL(/jobId=sample-job/);
+    await page.reload();
+    await expect(page.locator('#execution-filter-job')).toHaveValue('sample-job');
+  } finally {
+    await app.close();
+  }
+});
+
+test('requires a fresh tenant preview and retains edits', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="tenants"]').click();
+    await page.locator('[data-tenant-edit="default"]').click();
+    const form = page.locator('#tenant-dialog');
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    await form.locator('[data-tenant-preview]').click();
+    await expect(form.locator('button[type="submit"]')).toBeEnabled();
+    await form.locator('[name="maxConcurrent"]').fill('9');
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    await expect(form.locator('[name="maxConcurrent"]')).toHaveValue('9');
+  } finally {
+    await app.close();
+  }
+});
+
+test('previews job edits and invalidates the preview after a change', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="jobs"]').click();
+    await page.locator('[data-job-id="sample-job"][data-job-operation="edit"]').click();
+    const form = page.locator('#job-edit-dialog');
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    await form.locator('[name="name"]').fill('New name');
+    await form.locator('[data-preview-job-edit]').click();
+    await expect(form.locator('[data-job-edit-preview]')).toContainText('New name');
+    await expect(form.locator('button[type="submit"]')).toBeEnabled();
+    await form.locator('[name="name"]').fill('Another name');
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('finds a job from the global search', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('#global-search').fill('sample-job');
+    await expect(page.locator('#global-results [data-search-view="jobs"]')).toBeVisible();
+    await page.locator('#global-results [data-search-view="jobs"]').first().click();
+    await expect(page).toHaveURL(/view=jobs/);
+    await expect(page.locator('[data-view="jobs"]')).toHaveClass(/active/);
   } finally {
     await app.close();
   }
