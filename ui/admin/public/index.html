@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#172033">
   <title>Firefly Console</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=calendar-management-3">
+  <link rel="stylesheet" href="/styles.css?v=1.2.2">
 </head>
 <body class="auth-pending">
   <div class="language-control" role="group" aria-label="语言">
@@ -20,17 +20,24 @@
     </div>
 
     <nav class="nav-list" aria-label="Firefly admin navigation">
-      <button class="nav active" type="button" data-view="overview"><span class="nav-icon">⌁</span><span>总览</span></button>
-      <button class="nav" type="button" data-view="jobs"><span class="nav-icon">☷</span><span>任务管理</span></button>
-      <button class="nav" type="button" data-view="calendars"><span class="nav-icon">◫</span><span>业务日历</span></button>
-      <button class="nav" type="button" data-view="executors"><span class="nav-icon">▤</span><span>执行器</span></button>
-      <button class="nav" type="button" data-view="executions"><span class="nav-icon">↺</span><span>执行记录</span></button>
-      <button class="nav" type="button" data-view="backfills"><span class="nav-icon">⇄</span><span>补数管理</span></button>
-      <button class="nav" type="button" data-view="tenants"><span class="nav-icon">◈</span><span>租户治理</span></button>
-      <button class="nav" type="button" data-view="operations"><span class="nav-icon">◎</span><span>运营审计</span></button>
-      <button class="nav" type="button" data-view="nodes"><span class="nav-icon">⌘</span><span>节点与集群</span></button>
-      <button class="nav" type="button" data-view="plugins"><span class="nav-icon">✣</span><span>插件</span></button>
-      <button class="nav" type="button" data-view="settings"><span class="nav-icon">⚙</span><span>配置</span></button>
+      <div class="nav-group"><span class="nav-group-title">总览</span>
+        <button class="nav active" type="button" data-view="overview"><span class="nav-icon">⌁</span><span>系统概览</span></button>
+        <button class="nav" type="button" data-view="onboarding"><span class="nav-icon">◇</span><span>首次接入</span></button></div>
+      <div class="nav-group"><span class="nav-group-title">调度</span>
+        <button class="nav" type="button" data-view="jobs"><span class="nav-icon">☷</span><span>任务管理</span></button>
+        <button class="nav" type="button" data-view="calendars"><span class="nav-icon">◫</span><span>业务日历</span></button></div>
+      <div class="nav-group"><span class="nav-group-title">运行</span>
+        <button class="nav" type="button" data-view="inbox"><span class="nav-icon">!</span><span>待处理中心</span></button>
+        <button class="nav" type="button" data-view="executions"><span class="nav-icon">↺</span><span>执行记录</span></button>
+        <button class="nav" type="button" data-view="backfills"><span class="nav-icon">⇄</span><span>补数管理</span></button></div>
+      <div class="nav-group"><span class="nav-group-title">治理</span>
+        <button class="nav" type="button" data-view="tenants"><span class="nav-icon">◈</span><span>租户治理</span></button>
+        <button class="nav" type="button" data-view="operations"><span class="nav-icon">◎</span><span>运营审计</span></button></div>
+      <div class="nav-group"><span class="nav-group-title">系统</span>
+        <button class="nav" type="button" data-view="executors"><span class="nav-icon">▤</span><span>执行器</span></button>
+        <button class="nav" type="button" data-view="nodes"><span class="nav-icon">⌘</span><span>节点与集群</span></button>
+        <button class="nav" type="button" data-view="plugins"><span class="nav-icon">✣</span><span>插件</span></button>
+        <button class="nav" type="button" data-view="settings"><span class="nav-icon">⚙</span><span>账号与安全</span></button></div>
     </nav>
 
     <div class="user-box">
@@ -49,7 +56,7 @@
         <h1 id="page-title">总览</h1>
         <span id="page-badge" class="title-badge hidden"></span>
       </div>
-      <div class="topbar-actions"><div id="page-actions" class="page-actions"></div><button class="btn mobile-logout" type="button" data-logout>退出</button></div>
+      <div class="topbar-actions"><input id="global-search" type="search" aria-label="全局搜索" placeholder="搜索任务、执行、执行器、租户"><div id="page-actions" class="page-actions"></div><button class="btn mobile-logout" type="button" data-logout>退出</button></div>
     </header>
 
     <section id="view-root" class="view-root" aria-live="polite"></section>
@@ -58,6 +65,6 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
   <script src="/i18n.js"></script>
-  <script src="/app.js?v=calendar-management-3"></script>
+  <script src="/app.js?v=1.2.2"></script>
 </body>
 </html>

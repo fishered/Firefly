@@ -1,5 +1,7 @@
 const views = {
   overview: { title: '总览' },
+  onboarding: { title: '首次接入' },
+  inbox: { title: '待处理中心', action: 'refresh' },
   jobs: { title: '任务管理', action: 'new-job' },
   calendars: { title: '业务日历', action: 'new-calendar' },
   executors: { title: '执行器', action: 'new-executor' },
@@ -41,6 +43,14 @@ const state = {
   integrationKey: null,
   plugins: []
 };
+state.deepExecutionId = '';
+
+const initialUrl = new URL(window.location.href);
+const initialView = initialUrl.searchParams.get('view');
+if (views[initialView]) state.currentView = initialView;
+for (const key of ['jobId', 'status', 'from', 'to']) {
+  state.executionPage[key] = initialUrl.searchParams.get(key) ?? '';
+}
 
 const viewLoadedAt = new Map();
 const pendingRequests = new Map();
@@ -85,6 +95,18 @@ const executorFieldHelp = {
 
 document.querySelectorAll('.nav').forEach(button => {
   button.addEventListener('click', () => setView(button.dataset.view));
+});
+window.addEventListener('popstate', () => {
+  const url = new URL(window.location.href);
+  for (const key of ['jobId', 'status', 'from', 'to']) state.executionPage[key] = url.searchParams.get(key) ?? '';
+  resetCursorPage(state.executionPage);
+  setView(views[url.searchParams.get('view')] ? url.searchParams.get('view') : 'overview', false);
+});
+let searchTimer = null;
+document.getElementById('global-search').addEventListener('input', event => {
+  clearTimeout(searchTimer);
+  const query = event.currentTarget.value.trim();
+  searchTimer = setTimeout(() => renderGlobalSearch(query), 200);
 });
 document.querySelectorAll('[data-logout]').forEach(button => button.addEventListener('click', logout));
 document.querySelectorAll('[data-locale]').forEach(button => {
@@ -147,6 +169,8 @@ async function activateConsole() {
     return;
   }
   await setView(state.currentView ?? 'overview');
+  const executionId = initialUrl.searchParams.get('executionId');
+  if (state.currentView === 'executions' && executionId) await openExecutionDetail(executionId);
 }
 
 function showLogin(message = '') {
@@ -307,9 +331,11 @@ function formatRemaining(milliseconds) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-async function setView(view) {
+async function setView(view, updateUrl = true) {
   if (!views[view]) return;
+  if (view !== 'executions') state.deepExecutionId = '';
   state.currentView = view;
+  if (updateUrl) syncViewUrl();
   document.querySelectorAll('.nav').forEach(button => {
     button.classList.toggle('active', button.dataset.view === view);
   });
@@ -321,6 +347,18 @@ async function setView(view) {
   renderView(view);
   await refreshView(false, false);
   window.FireflyI18n.localize(document.body);
+}
+
+function syncViewUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('view', state.currentView);
+  for (const key of ['jobId', 'status', 'from', 'to']) {
+    if (state.currentView === 'executions' && state.executionPage[key]) url.searchParams.set(key, state.executionPage[key]);
+    else url.searchParams.delete(key);
+  }
+  if (state.currentView === 'executions' && state.deepExecutionId) url.searchParams.set('executionId', state.deepExecutionId);
+  else url.searchParams.delete('executionId');
+  history.replaceState(null, '', url);
 }
 
 async function refreshView(notify = true, force = true) {
@@ -376,6 +414,8 @@ async function loadViewData(view, force) {
   if (!force && Date.now() - loadedAt < VIEW_CACHE_MS) return;
   const loaders = {
     overview: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes],
+    onboarding: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes, loadIntegrationKey],
+    inbox: [loadExecutions, loadExecutors, loadDeadDispatches, loadBackfills, loadFailedTriggers, loadNodes, loadTenants, loadCapacityReport],
     jobs: [loadJobs, loadExecutors, loadCalendars, loadTenants],
     calendars: [loadCalendars],
     executors: [loadExecutors],
@@ -588,6 +628,8 @@ async function loadTenants() {
 function renderView(view) {
   const root = document.getElementById('view-root');
   if (view === 'overview') root.innerHTML = overviewPage();
+  if (view === 'onboarding') root.innerHTML = onboardingPage();
+  if (view === 'inbox') root.innerHTML = inboxPage();
   if (view === 'jobs') root.innerHTML = jobsPage();
   if (view === 'calendars') root.innerHTML = calendarsPage();
   if (view === 'executors') root.innerHTML = executorsPage();
@@ -660,7 +702,15 @@ function tenantUsageCell(value, limit, suffix = '') {
   const actual = Number(value ?? 0);
   const maximum = Number(limit ?? 0);
   const level = maximum > 0 && actual >= maximum ? 'danger' : maximum > 0 && actual / maximum >= 0.9 ? 'warning' : 'success';
-  return `<span class="${level}">${actual}${suffix}</span><span class="muted"> / ${maximum > 0 ? `${maximum}${suffix}` : '∞'}</span>`;
+  const format = number => suffix === 'B' ? formatBytes(number) : `${number}${suffix}`;
+  return `<span class="${level}">${format(actual)}</span><span class="muted"> / ${maximum > 0 ? format(maximum) : '∞'}</span>`;
+}
+
+function formatBytes(value) {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GiB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${value} B`;
 }
 
 function tenantSaturated(tenant) {
@@ -696,12 +746,14 @@ function openTenantDialog(existing = null) {
           ${existing ? '<label class="field">分析窗口<select name="window"><option value="P1D">24 小时</option><option value="P7D" selected>7 天</option><option value="P30D">30 天</option></select></label><label class="field">安全余量 (%)<input name="headroomPercent" type="number" min="5" max="100" value="20"></label>' : ''}
         </div>
         <div data-tenant-preview-result aria-live="polite"></div>
-        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button>${existing ? '<button class="btn primary" type="button" data-tenant-preview>预览变更</button>' : ''}<button class="btn" type="submit">直接保存</button></div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button>${existing ? '<button class="btn primary" type="button" data-tenant-preview>预览变更</button>' : ''}<button class="btn" type="submit" ${existing ? 'disabled' : ''}>${existing ? '应用预览' : '创建租户'}</button></div>
       </form>
     </div>`;
   root.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', closeDialog));
-  root.querySelector('#tenant-dialog').addEventListener('submit', event => saveTenant(event, tenant.version ?? 0));
-  root.querySelector('[data-tenant-preview]')?.addEventListener('click', () => previewTenant(root.querySelector('#tenant-dialog'), tenant.version ?? 0));
+  const form = root.querySelector('#tenant-dialog');
+  form.addEventListener('submit', event => saveTenant(event, tenant.version ?? 0));
+  if (existing) form.addEventListener('input', () => { form.dataset.previewBody = ''; form.querySelector('button[type="submit"]').disabled = true; });
+  root.querySelector('[data-tenant-preview]')?.addEventListener('click', () => previewTenant(form, tenant.version ?? 0));
 }
 
 function tenantFormBody(form, expectedVersion) {
@@ -728,10 +780,12 @@ async function previewTenant(form, expectedVersion) {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
     });
     form.dataset.previewRisk = preview.overallRisk;
+    form.dataset.previewBody = JSON.stringify(tenantFormBody(form, expectedVersion));
+    form.querySelector('button[type="submit"]').disabled = false;
     target.innerHTML = tenantPreviewPanel(preview);
     target.querySelectorAll('[data-apply-recommendation]').forEach(apply => apply.addEventListener('click', () => {
       const input = form.querySelector(`[name="${apply.dataset.applyRecommendation}"]`);
-      if (input) input.value = apply.dataset.recommendedValue;
+      if (input) { input.value = apply.dataset.recommendedValue; form.dataset.previewBody = ''; form.querySelector('button[type="submit"]').disabled = true; }
     }));
   } catch (error) {
     toast(error.message);
@@ -757,6 +811,10 @@ async function saveTenant(event, expectedVersion) {
   event.preventDefault();
   const form = event.currentTarget;
   const body = tenantFormBody(form, expectedVersion);
+  if (form.querySelector('[data-tenant-preview]') && form.dataset.previewBody !== JSON.stringify(body)) {
+    toast('配置已变化，请重新预览');
+    return;
+  }
   const tenantId = body.tenantId;
   delete body.tenantId; delete body.window; delete body.headroomPercent;
   if (form.dataset.previewRisk === 'CRITICAL' && !window.confirm('预览结果为 CRITICAL，确认仍要直接保存？')) return;
@@ -1186,6 +1244,76 @@ function dateRangeBetween(start, end, limit = 3660) {
     if (localDateString(cursor) === localDateString(last)) return values;
     cursor.setUTCDate(cursor.getUTCDate() + direction);
   }
+}
+
+function onboardingPage() {
+  const nodeRoles = state.nodes.flatMap(node => roleList(node.roles));
+  const checks = [
+    ['数据库与 API', state.overview?.status === 'UP', '控制台可读取调度状态，说明 API 与存储可用。', '检查服务日志和数据库连接。', 'overview'],
+    ['Gateway', nodeRoles.includes('GATEWAY'), '至少一个 Gateway 节点已注册。', '检查 firefly.node.roles 和 Gateway 端口。', 'nodes'],
+    ['认证', Boolean(state.session?.authenticated || state.session?.authenticationEnabled === false), '管理会话可用。', '检查登录和权限配置。', 'settings'],
+    ['Integration Key', Boolean(state.integrationKey?.configured), '远程服务需要该凭据注册。', '在账号与安全中生成密钥。', 'settings'],
+    ['Executor', onlineExecutorInstances().length > 0, '至少一个远程执行实例在线。', '启动业务服务并检查 Gateway 地址。', 'executors'],
+    ['Handler', state.jobs.some(job => job.businessHandlerName || job.handlerName), '已发现可执行任务入口。', '给 Spring Bean 方法添加 @FireflyJob。', 'jobs'],
+    ['首个成功任务', state.executions.some(item => item.status === 'SUCCEEDED'), '已有一次成功执行。', '创建任务并立即触发，然后检查执行记录。', 'executions']
+  ];
+  const ready = checks.filter(item => item[1]).length;
+  const yaml = `firefly:\n  executor:\n    name: my-service\n    instance-id: \${HOSTNAME:my-service-local}\n    gateway-addresses:\n      - localhost:9700\n    integration-key: \${FIREFLY_INTEGRATION_KEY}\n    job-registration:\n      enabled: true\n      admin-url: \${FIREFLY_ADMIN_URL:http://127.0.0.1:9710}`;
+  return `<section class="journey-hero"><span class="eyebrow">接入 · 创建 · 运行</span><h2>让第一个远程任务成功执行</h2><p>环境就绪 ${ready} / ${checks.length} 项。按顺序处理未完成项，最后从执行记录确认结果。</p></section>
+    <section class="readiness-list">${checks.map(([title, ok, impact, advice, view], index) => `<article class="readiness-card ${ok ? 'ready' : ''}"><span class="readiness-number">${index + 1}</span><div><h3>${title} <span>${ok ? '已就绪' : '待处理'}</span></h3><p>${impact}</p>${ok ? '' : `<small>建议：${advice}</small>`}</div><button class="btn" type="button" data-onboarding-view="${view}">查看</button></article>`).join('')}</section>
+    <section class="table-card onboarding-config"><div class="table-toolbar"><strong>Spring Boot 接入配置</strong><button class="btn" type="button" data-copy-onboarding>复制配置</button></div><p class="muted">将服务名、Gateway 地址及 Admin API 地址改为实际值。密钥通过环境变量注入。</p><pre id="onboarding-yaml">${escapeHtml(yaml)}</pre><p><a href="https://github.com/fishered/Firefly/blob/master/docs/integration.md" target="_blank" rel="noopener noreferrer">查看接入文档</a></p></section>`;
+}
+
+function inboxItems() {
+  const items = [];
+  const add = (kind, reason, impact, advice, object, view, id = '') => items.push({ kind, reason, impact, advice, object, view, id });
+  state.executions.filter(item => isFailureStatus(item.status)).forEach(item => add('执行失败', `执行状态：${item.status}`, '任务未按预期完成', '查看诊断时间线，修复后重放', item.executionId, 'executions', item.executionId));
+  state.executors.filter(item => item.status !== 'ONLINE').forEach(item => add('执行器离线', `实例状态：${item.status}`, '该实例无法接收新任务', '检查连接、进程和心跳', item.instanceId ?? item.executorName ?? item.name, 'executors'));
+  state.deadDispatches.forEach(item => add('派发死信', item.lastError || '派发重试已耗尽', '任务尚未送达执行器', '检查 Gateway 与执行器后重新入队', item.outboxId, 'executions'));
+  state.failedTriggers.forEach(item => add('事件失败', item.failureReason || '事件触发失败', '事件任务未执行', '核对事件后重放或确认', item.idempotencyKey, 'operations'));
+  state.backfills.filter(item => Number(item.failed ?? 0) > 0 || item.status === 'FAILED').forEach(item => add('补数异常', `${item.failed ?? 0} 个失败触发点`, '补数范围可能不完整', '查看失败明细并决定是否继续', item.requestId, 'backfills'));
+  state.tenants.filter(tenantSaturated).forEach(item => add('租户容量风险', '资源用量已接近配额', '后续任务可能被准入拒绝', '查看容量报告并预览配额调整', item.tenantId, 'tenants'));
+  state.nodes.filter(item => item.status && item.status !== 'ONLINE' && item.status !== 'ACTIVE').forEach(item => add('节点异常', `节点状态：${item.status}`, '集群容量或调度可用性下降', '查看节点与集群', item.nodeId, 'nodes'));
+  return items;
+}
+
+function inboxPage() {
+  const items = inboxItems();
+  return `<section class="journey-hero"><span class="eyebrow">运行 · 诊断 · 调整</span><h2>待处理中心</h2><p>当前加载的数据中有 ${items.length} 项需要关注。每项提供原因、影响、建议和关联对象。</p></section>
+    <section class="readiness-list">${items.length ? items.map(item => `<article class="readiness-card incident-card"><span class="incident-mark">!</span><div><h3>${escapeHtml(item.kind)}</h3><p><b>原因</b> ${escapeHtml(item.reason)}</p><p><b>影响</b> ${escapeHtml(item.impact)}</p><p><b>建议</b> ${escapeHtml(item.advice)}</p><small>关联对象：${escapeHtml(item.object ?? '-')}</small></div><button class="btn" type="button" data-inbox-view="${escapeHtml(item.view)}" data-inbox-id="${escapeHtml(item.id)}">处理</button></article>`).join('') : '<section class="table-card empty-state">当前没有待处理项</section>'}</section>`;
+}
+
+async function renderGlobalSearch(query) {
+  document.getElementById('global-results')?.remove();
+  if (!query) return;
+  await Promise.allSettled([loadJobs(), loadExecutions(), loadExecutors(), loadTenants()]);
+  if (document.getElementById('global-search').value.trim() !== query) return;
+  const matches = [
+    ...state.jobs.map(item => ({ type: '任务', id: item.id, label: item.name ?? item.id, view: 'jobs' })),
+    ...state.executions.map(item => ({ type: '执行', id: item.executionId, label: item.jobId, view: 'executions' })),
+    ...state.executorDefinitions.map(item => ({ type: '执行器', id: item.name, label: item.description ?? item.name, view: 'executors' })),
+    ...state.tenants.map(item => ({ type: '租户', id: item.tenantId, label: item.tenantId, view: 'tenants' }))
+  ].filter(item => `${item.id} ${item.label}`.toLowerCase().includes(query.toLowerCase())).slice(0, 12);
+  if (query.length >= 6 && !matches.some(item => item.type === '执行' && item.id === query)) {
+    try {
+      const detail = await api(`/api/executions/${encodeURIComponent(query)}`);
+      if (detail?.execution?.executionId || detail?.executionId) matches.unshift({ type: '执行', id: query, label: detail.execution?.jobId ?? detail.jobId ?? query, view: 'executions' });
+    } catch { /* Exact execution lookup is optional when the ID is not found. */ }
+  }
+  const result = document.createElement('div');
+  result.id = 'global-results';
+  result.className = 'global-results';
+  result.innerHTML = matches.length ? matches.map(item => `<button type="button" data-search-view="${item.view}" data-search-id="${escapeHtml(item.id)}"><span>${item.type}</span><strong>${escapeHtml(item.id)}</strong><small>${escapeHtml(item.label)}</small></button>`).join('') : '<p>没有匹配的对象</p>';
+  document.querySelector('.topbar-actions').append(result);
+  result.querySelectorAll('[data-search-view]').forEach(button => button.addEventListener('click', async () => {
+    const { searchView, searchId } = button.dataset;
+    document.getElementById('global-search').value = '';
+    result.remove();
+    if (searchView === 'executions') {
+      await setView('executions');
+      await openExecutionDetail(searchId);
+    } else await setView(searchView);
+  }));
 }
 
 function overviewPage() {
@@ -1726,6 +1854,8 @@ function dateTimeLocalValue(date) {
 async function openExecutionDetail(executionId) {
   try {
     const detail = await api(`/api/executions/${encodeURIComponent(executionId)}`);
+    state.deepExecutionId = executionId;
+    syncViewUrl();
     const execution = detail.execution ?? detail;
     const targets = normalizeList(detail, 'targets');
     const relatedAttempts = state.executions
@@ -1758,6 +1888,7 @@ async function openExecutionDetail(executionId) {
               ${detailItem('计划时间', formatDate(execution.scheduledFireTime))}
               ${detailItem('超时截止', formatDate(execution.timeoutAt))}
             </div>
+            ${executionTimeline(execution, targets)}
             <div class="attempt-track">
               ${(relatedAttempts.length ? relatedAttempts : [execution]).map(item => `
                 <div class="attempt-node ${item.executionId === execution.executionId ? 'active' : ''}">
@@ -1783,6 +1914,27 @@ async function openExecutionDetail(executionId) {
   } catch (error) {
     toast(error.message);
   }
+}
+
+function executionTimeline(execution, targets) {
+  const first = targets[0] ?? {};
+  const anyAck = targets.some(target => target.acknowledgedAt);
+  const anyComplete = targets.some(target => target.completedAt);
+  const stages = [
+    ['触发', execution.scheduledFireTime, '调度触发点'],
+    ['配额准入', execution.admittedAt, '未单独记录准入时间；请结合租户治理检查限额'],
+    ['Outbox', execution.outboxCreatedAt, '派发请求已创建；无时间戳时请查看派发死信'],
+    ['Gateway', first.gatewayNodeId ? execution.dispatchTime : null, first.gatewayNodeId ? `节点 ${first.gatewayNodeId}` : '尚无 Gateway 路由信息'],
+    ['ACK', anyAck ? targets.find(target => target.acknowledgedAt).acknowledgedAt : null, anyAck ? '执行器已确认接收' : '未收到执行器确认'],
+    ['执行', execution.startTime, anyComplete ? '至少一个目标已完成' : '等待执行结果'],
+    ['重试/重放', Number(execution.runAttempt ?? 0) > 0 ? execution.createdAt : null, Number(execution.runAttempt ?? 0) > 0 ? `第 ${Number(execution.runAttempt) + 1} 次尝试` : '尚未重试']
+  ];
+  const failed = isFailureStatus(execution.status) || targets.some(target => isFailureStatus(target.status));
+  const error = targets.find(target => target.errorMessage)?.errorMessage ?? execution.errorMessage ?? execution.lastError;
+  const reason = failed ? (error || `执行状态为 ${execution.status}，目标未全部成功`) : '当前未发现失败';
+  const advice = failed ? (anyAck ? '检查目标错误，修复后预览并重放' : '检查 Gateway、执行器在线状态和派发死信') : '继续观察执行结果';
+  return `<section class="diagnosis-panel"><h3>执行诊断时间线</h3><ol class="execution-timeline">${stages.map(([label, at, note]) => `<li class="${at ? 'observed' : 'unobserved'}"><strong>${label}</strong><time>${at ? escapeHtml(formatDate(at)) : '暂无观测数据'}</time><small>${escapeHtml(note)}</small></li>`).join('')}</ol>
+    <div class="diagnosis-summary"><p><b>原因</b> ${escapeHtml(reason)}</p><p><b>影响</b> ${failed ? '本次执行未成功完成' : '暂无失败影响'}</p><p><b>建议操作</b> ${advice}</p><p><b>关联对象</b> ${escapeHtml(execution.jobId)} · ${escapeHtml(execution.executionId)}</p></div></section>`;
 }
 
 function isReplayableExecution(status) {
@@ -2084,12 +2236,17 @@ function text(value) {
 }
 
 function statusText(label, tone) {
-  return `<span class="${tone}"><span class="dot"></span>${escapeHtml(label)}</span>`;
+  return `<span class="${tone}"><span class="dot"></span>${escapeHtml(statusLabel(label))}</span>`;
 }
 
 function executionTag(status) {
   const tone = { SUCCEEDED: 'ok', SCHEDULED: 'run', DISPATCHING: 'run', DISPATCHED: 'run', DISABLED: 'mis', FAILED: 'bad', RUNNING: 'run', MISFIRED: 'mis', TIMEOUT: 'timeout', CANCELLED: 'cancelled' }[status] ?? 'ok';
-  return `<span class="status-tag ${tone}">${escapeHtml(status)}</span>`;
+  return `<span class="status-tag ${tone}">${escapeHtml(statusLabel(status))}</span>`;
+}
+
+function statusLabel(value) {
+  const labels = { SUCCEEDED: '成功', SCHEDULED: '已计划', DISPATCHING: '派发中', DISPATCHED: '已派发', RUNNING: '运行中', FAILED: '失败', TIMEOUT: '超时', PARTIAL: '部分成功', CANCELLED: '已取消', MISFIRED: '错过触发', ENABLED: '启用', DISABLED: '禁用', PENDING: '待处理', PAUSED: '已暂停', COMPLETED: '已完成', ONLINE: '在线', OFFLINE: '离线' };
+  return window.FireflyI18n.locale() === 'zh-CN' && labels[value] ? `${labels[value]} (${value})` : value;
 }
 
 function openJobDialog() {
@@ -2104,26 +2261,37 @@ function openJobDialog() {
           <button class="btn icon" type="button" data-close>×</button>
         </div>
         <div class="modal-body">
+          <div class="wizard-progress" aria-label="任务创建步骤">1 执行目标 <span>→</span> 2 调度规则 <span>→</span> 3 资源策略 <span>→</span> 4 预览确认</div>
+          <section class="wizard-step" data-wizard-step="0">
           ${dialogField('任务 ID', 'id', 'remote-example-job', true)}
           ${dialogField('任务名称', 'name', 'remote-example-job', false)}
           ${executorSelect(executorName)}
           ${handlerSelect(executorName, handlers.length === 1 ? handlers[0] : '')}
+          </section>
+          <section class="wizard-step" data-wizard-step="1" hidden>
+          ${calendarSelect('')}
+          ${scheduleEditorFields('*/5 * * * * *', 'Asia/Shanghai')}
+          </section>
+          <section class="wizard-step" data-wizard-step="2" hidden>
+          ${tenantSelect('default')}
+          <details class="wizard-advanced"><summary>高级分发与资源策略</summary>
           ${dialogSelect('分发模式', 'dispatchMode', ['UNICAST', 'BROADCAST', 'SHARDING'], jobFieldHelp.dispatchMode)}
           ${dialogSelect('路由策略', 'routingStrategy', ['ROUND_ROBIN', 'RANDOM', 'CONSISTENT_HASH'], jobFieldHelp.routingStrategy)}
           ${dialogSelect('完成策略', 'completionPolicy', ['ALL_SUCCESS', 'ANY_SUCCESS', 'QUORUM'], jobFieldHelp.completionPolicy)}
           ${dialogSelect('重试范围', 'retryScope', ['FAILED_TARGETS_ONLY', 'ALL_TARGETS'], jobFieldHelp.retryScope)}
           ${dialogField('分片数', 'shardCount', '1', true, 'number', jobFieldHelp.shardCount, 'min="1" max="4096"')}
           ${dialogField('路由键', 'routingKey', '', false, 'text', jobFieldHelp.routingKey)}
-          ${calendarSelect('')}
-          ${tenantSelect('default')}
           ${dialogField('排队优先级 (0-9)', 'param.firefly.resource.priority', '0', true, 'number', null, 'min="0" max="9"')}
           ${dialogField('CPU 需求 (ms)', 'param.firefly.resource.cpuMillis', '0', true, 'number', null, 'min="0"')}
           ${dialogField('内存需求 (bytes)', 'param.firefly.resource.memoryBytes', '0', true, 'number', null, 'min="0"')}
-          ${scheduleEditorFields('*/5 * * * * *', 'Asia/Shanghai')}
+          </details></section>
+          <section class="wizard-step" data-wizard-step="3" hidden><div data-job-review class="job-review"></div></section>
         </div>
         <div class="modal-footer">
           <button class="btn" type="button" data-close>取消</button>
-          <button class="btn primary" type="submit">创建任务</button>
+          <button class="btn" type="button" data-wizard-prev hidden>上一步</button>
+          <button class="btn primary" type="button" data-wizard-next>下一步</button>
+          <button class="btn primary" type="submit" hidden>创建任务</button>
         </div>
       </form>
     </div>
@@ -2134,7 +2302,43 @@ function openJobDialog() {
   bindJobPolicyFields(form);
   bindCalendarBinding(form);
   bindScheduleEditor(form);
+  bindJobWizard(form);
   form.addEventListener('submit', createJob);
+}
+
+function bindJobWizard(form) {
+  let step = 0;
+  const panels = [...form.querySelectorAll('[data-wizard-step]')];
+  panels.forEach(panel => panel.querySelectorAll('[required]').forEach(field => { field.dataset.wizardRequired = 'true'; }));
+  const prev = form.querySelector('[data-wizard-prev]');
+  const next = form.querySelector('[data-wizard-next]');
+  const submit = form.querySelector('button[type="submit"]');
+  const show = () => {
+    panels.forEach((panel, index) => {
+      panel.hidden = index !== step;
+      panel.querySelectorAll('[data-wizard-required]').forEach(field => { field.required = index === step; });
+    });
+    prev.hidden = step === 0;
+    next.hidden = step === panels.length - 1;
+    submit.hidden = step !== panels.length - 1;
+    form.querySelector('.wizard-progress').dataset.step = String(step + 1);
+    if (step === 3) {
+      const body = jobFormBody(form);
+      form.querySelector('[data-job-review]').innerHTML = `<h3>确认任务配置</h3><dl>
+        <dt>执行目标</dt><dd>${escapeHtml(body.executorName ?? '-')} · ${escapeHtml(body.businessHandlerName ?? body.handlerName ?? '-')}</dd>
+        <dt>任务</dt><dd>${escapeHtml(body.id)} · ${escapeHtml(body.name || body.id)}</dd>
+        <dt>调度</dt><dd>${escapeHtml(body.cron ?? '-')} · ${escapeHtml(body.zoneId ?? '-')}</dd>
+        <dt>租户</dt><dd>${escapeHtml(body['param.firefly.resource.tenantId'] ?? 'default')}</dd>
+      </dl><p>确认后将创建任务。网络失败时表单会保留。</p>`;
+    }
+  };
+  next.addEventListener('click', () => {
+    const fields = [...panels[step].querySelectorAll('input, select')].filter(field => !field.disabled && !field.checkValidity());
+    if (fields.length) { fields[0].reportValidity(); return; }
+    step = Math.min(3, step + 1); show();
+  });
+  prev.addEventListener('click', () => { step = Math.max(0, step - 1); show(); });
+  show();
 }
 
 function openExecutorDialog() {
@@ -2543,6 +2747,7 @@ function scheduleApiError(error) {
 
 function closeDialog() {
   document.getElementById('modal-root').innerHTML = '';
+  if (state.deepExecutionId) { state.deepExecutionId = ''; syncViewUrl(); }
 }
 
 async function createJob(event) {
@@ -2985,8 +3190,8 @@ function jobsPage() {
       </div>
       <div class="table-scroll">
         <table class="jobs-table">
-          <thead><tr>${headers(['Job ID', 'Name', 'Group', 'Schedule', 'Time zone', 'Next fire', 'Executor', 'Tenant', 'Priority', 'Dispatch', 'Status', 'Last result', 'Actions'])}</tr></thead>
-          <tbody>${rows || emptyRow(13, 'No jobs found')}</tbody>
+          <thead><tr>${headers(['任务 ID', '名称', '分组', '调度规则', '时区', '下次触发', '执行器', '租户', '优先级', '分发模式', '状态', '最近结果', '操作'])}</tr></thead>
+          <tbody>${rows || emptyRow(13, '暂无任务')}</tbody>
         </table>
       </div>
     </section>
@@ -3041,12 +3246,14 @@ function bindViewActions(view) {
       page.status = document.getElementById('execution-filter-status').value;
       page.from = document.getElementById('execution-filter-from').value;
       page.to = document.getElementById('execution-filter-to').value;
+      syncViewUrl();
       resetCursorPage(page);
       await loadExecutions();
       renderView('executions');
     });
     document.querySelector('[data-execution-filter="reset"]')?.addEventListener('click', async () => {
       Object.assign(state.executionPage, { jobId: '', status: '', from: '', to: '' });
+      syncViewUrl();
       resetCursorPage(state.executionPage);
       await loadExecutions();
       renderView('executions');
@@ -3057,6 +3264,19 @@ function bindViewActions(view) {
     document.querySelectorAll('[data-outbox-requeue]').forEach(button => {
       button.addEventListener('click', () => requeueOutbox(button.dataset.outboxRequeue));
     });
+  }
+  if (view === 'onboarding') {
+    document.querySelectorAll('[data-onboarding-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.onboardingView)));
+    document.querySelector('[data-copy-onboarding]')?.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(document.getElementById('onboarding-yaml').textContent);
+      toast('配置已复制');
+    });
+  }
+  if (view === 'inbox') {
+    document.querySelectorAll('[data-inbox-view]').forEach(button => button.addEventListener('click', async () => {
+      await setView(button.dataset.inboxView);
+      if (button.dataset.inboxId && button.dataset.inboxView === 'executions') await openExecutionDetail(button.dataset.inboxId);
+    }));
   }
   if (view === 'backfills') {
     document.querySelectorAll('[data-backfill-detail]').forEach(button => {
@@ -3425,8 +3645,9 @@ function openJobEditDialog(job) {
           ${dialogField('内存需求 (bytes)', 'param.firefly.resource.memoryBytes', job.resourceMemoryBytes ?? '0', true, 'number', null, 'min="0"')}
           ${dialogField('最大重试次数', 'retryMaxAttempts', job.retryMaxAttempts ?? '1', true, 'number')}
           ${dialogSelect('状态', 'enabled', ['true', 'false'])}
+          <section class="job-edit-preview" data-job-edit-preview aria-live="polite">请先预览本次修改。</section>
         </div>
-        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">保存修改</button></div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>取消</button><button class="btn" type="button" data-preview-job-edit>预览修改</button><button class="btn primary" type="submit" disabled>应用修改</button></div>
       </form>
     </div>`;
   root.querySelector('[name="enabled"]').value = job.enabled === false ? 'false' : 'true';
@@ -3446,18 +3667,42 @@ function openJobEditDialog(job) {
   bindJobPolicyFields(form);
   bindCalendarBinding(form);
   bindScheduleEditor(form);
+  form.dataset.originalJob = JSON.stringify(job);
+  form.addEventListener('input', () => { form.dataset.previewBody = ''; form.querySelector('button[type="submit"]').disabled = true; });
+  form.querySelector('[data-preview-job-edit]').addEventListener('click', () => previewJobEdit(form, job));
   form.addEventListener('submit', submitJobEdit);
+}
+
+async function previewJobEdit(form, job) {
+  if (!form.reportValidity()) return;
+  const body = jobFormBody(form);
+  const changes = [
+    ['名称', job.name, body.name], ['执行器', job.executorName, body.executorName],
+    ['Handler', job.businessHandlerName ?? job.handlerName, body.handlerName],
+    ['Cron', job.schedule, body.cron], ['时区', job.zoneId, body.zoneId],
+    ['租户', job.tenantId ?? 'default', body['param.firefly.resource.tenantId']],
+    ['状态', String(job.enabled !== false), body.enabled]
+  ].filter(([, before, after]) => String(before ?? '') !== String(after ?? ''));
+  const panel = form.querySelector('[data-job-edit-preview]');
+  panel.innerHTML = `<strong>${changes.length} 项修改</strong>${changes.length ? `<ul>${changes.map(([label, before, after]) => `<li>${escapeHtml(label)}：${escapeHtml(before ?? '-')} → ${escapeHtml(after ?? '-')}</li>`).join('')}</ul>` : '<p>当前表单与任务定义一致。</p>'}<p>应用前会再次检查任务定义是否已变化。</p>`;
+  form.dataset.previewBody = JSON.stringify(body);
+  form.querySelector('button[type="submit"]').disabled = false;
 }
 
 async function submitJobEdit(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const body = jobFormBody(form);
+  if (form.dataset.previewBody !== JSON.stringify(body)) { toast('配置已变化，请重新预览'); return; }
   const jobId = body.id;
   delete body.id;
   const submit = form.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
+    const latest = normalizeList(await api('/api/jobs'), 'jobs').find(item => item.id === jobId);
+    if (!latest || JSON.stringify(normalizeJob(latest)) !== form.dataset.originalJob) {
+      throw new Error('任务定义已变化，请保留当前输入并重新打开任务查看最新配置');
+    }
     await api(`/api/jobs/${encodeURIComponent(jobId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
