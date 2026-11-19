@@ -195,6 +195,9 @@ test('guides setup, links incidents to diagnosis, and restores execution filters
     await page.locator('[data-inbox-id="exec-failed-sample-job"]').click();
     await expect(page.locator('.execution-timeline li')).toHaveCount(7);
     await expect(page.locator('.diagnosis-summary')).toContainText('exec-failed-sample-job');
+    await expect(page).toHaveURL(/executionId=exec-failed-sample-job/);
+    await page.reload();
+    await expect(page.locator('.execution-timeline li')).toHaveCount(7);
     await page.locator('[data-close]').first().click();
     await page.locator('#execution-filter-job').fill('sample-job');
     await page.locator('[data-execution-filter="apply"]').click();

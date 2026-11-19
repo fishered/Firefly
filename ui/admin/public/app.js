@@ -43,6 +43,7 @@ const state = {
   integrationKey: null,
   plugins: []
 };
+state.deepExecutionId = '';
 
 const initialUrl = new URL(window.location.href);
 const initialView = initialUrl.searchParams.get('view');
@@ -101,8 +102,11 @@ window.addEventListener('popstate', () => {
   resetCursorPage(state.executionPage);
   setView(views[url.searchParams.get('view')] ? url.searchParams.get('view') : 'overview', false);
 });
+let searchTimer = null;
 document.getElementById('global-search').addEventListener('input', event => {
-  renderGlobalSearch(event.currentTarget.value.trim());
+  clearTimeout(searchTimer);
+  const query = event.currentTarget.value.trim();
+  searchTimer = setTimeout(() => renderGlobalSearch(query), 200);
 });
 document.querySelectorAll('[data-logout]').forEach(button => button.addEventListener('click', logout));
 document.querySelectorAll('[data-locale]').forEach(button => {
@@ -165,6 +169,8 @@ async function activateConsole() {
     return;
   }
   await setView(state.currentView ?? 'overview');
+  const executionId = initialUrl.searchParams.get('executionId');
+  if (state.currentView === 'executions' && executionId) await openExecutionDetail(executionId);
 }
 
 function showLogin(message = '') {
@@ -327,6 +333,7 @@ function formatRemaining(milliseconds) {
 
 async function setView(view, updateUrl = true) {
   if (!views[view]) return;
+  if (view !== 'executions') state.deepExecutionId = '';
   state.currentView = view;
   if (updateUrl) syncViewUrl();
   document.querySelectorAll('.nav').forEach(button => {
@@ -349,6 +356,8 @@ function syncViewUrl() {
     if (state.currentView === 'executions' && state.executionPage[key]) url.searchParams.set(key, state.executionPage[key]);
     else url.searchParams.delete(key);
   }
+  if (state.currentView === 'executions' && state.deepExecutionId) url.searchParams.set('executionId', state.deepExecutionId);
+  else url.searchParams.delete('executionId');
   history.replaceState(null, '', url);
 }
 
@@ -1285,6 +1294,12 @@ async function renderGlobalSearch(query) {
     ...state.executorDefinitions.map(item => ({ type: '执行器', id: item.name, label: item.description ?? item.name, view: 'executors' })),
     ...state.tenants.map(item => ({ type: '租户', id: item.tenantId, label: item.tenantId, view: 'tenants' }))
   ].filter(item => `${item.id} ${item.label}`.toLowerCase().includes(query.toLowerCase())).slice(0, 12);
+  if (query.length >= 6 && !matches.some(item => item.type === '执行' && item.id === query)) {
+    try {
+      const detail = await api(`/api/executions/${encodeURIComponent(query)}`);
+      if (detail?.execution?.executionId || detail?.executionId) matches.unshift({ type: '执行', id: query, label: detail.execution?.jobId ?? detail.jobId ?? query, view: 'executions' });
+    } catch { /* Exact execution lookup is optional when the ID is not found. */ }
+  }
   const result = document.createElement('div');
   result.id = 'global-results';
   result.className = 'global-results';
@@ -1839,6 +1854,8 @@ function dateTimeLocalValue(date) {
 async function openExecutionDetail(executionId) {
   try {
     const detail = await api(`/api/executions/${encodeURIComponent(executionId)}`);
+    state.deepExecutionId = executionId;
+    syncViewUrl();
     const execution = detail.execution ?? detail;
     const targets = normalizeList(detail, 'targets');
     const relatedAttempts = state.executions
@@ -2730,6 +2747,7 @@ function scheduleApiError(error) {
 
 function closeDialog() {
   document.getElementById('modal-root').innerHTML = '';
+  if (state.deepExecutionId) { state.deepExecutionId = ''; syncViewUrl(); }
 }
 
 async function createJob(event) {
