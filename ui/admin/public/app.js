@@ -1254,7 +1254,8 @@ function onboardingPage() {
     ['认证', Boolean(state.session?.authenticated || state.session?.authenticationEnabled === false), '管理会话可用。', '检查登录和权限配置。', 'settings'],
     ['Integration Key', Boolean(state.integrationKey?.configured), '远程服务需要该凭据注册。', '在账号与安全中生成密钥。', 'settings'],
     ['Executor', onlineExecutorInstances().length > 0, '至少一个远程执行实例在线。', '启动业务服务并检查 Gateway 地址。', 'executors'],
-    ['Handler', state.jobs.some(job => job.businessHandlerName || job.handlerName), '已发现可执行任务入口。', '给 Spring Bean 方法添加 @FireflyJob。', 'jobs'],
+    ['Handler', onlineExecutorInstances().some(instance => Array.isArray(instance.handlers)
+      && instance.handlers.some(handler => String(handler).trim())), '在线执行器已报告可调用的 Handler。', '给 Spring Bean 方法添加 @FireflyJob，并检查执行器注册信息。', 'executors'],
     ['首个成功任务', state.executions.some(item => item.status === 'SUCCEEDED'), '已有一次成功执行。', '创建任务并立即触发，然后检查执行记录。', 'executions']
   ];
   const ready = checks.filter(item => item[1]).length;
@@ -3079,7 +3080,9 @@ async function performRequest(path, requestOptions, method) {
       executor_has_online_instances: `该执行器仍有 ${Number(data?.onlineInstances ?? 0)} 个在线实例，请先隔离或停止实例`
     };
     const message = errorMessages[data?.error] ?? data?.message ?? data?.error ?? `HTTP ${response.status}`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.code = data?.error;
+    throw error;
   }
   return data;
 }
@@ -3677,7 +3680,8 @@ function openJobEditDialog(job) {
   bindScheduleEditor(form);
   form.dataset.originalJob = JSON.stringify(job);
   form.addEventListener('input', () => { form.dataset.previewBody = ''; form.querySelector('button[type="submit"]').disabled = true; });
-  form.querySelector('[data-preview-job-edit]').addEventListener('click', () => previewJobEdit(form, job));
+  form.querySelector('[data-preview-job-edit]').addEventListener('click', () =>
+    previewJobEdit(form, JSON.parse(form.dataset.originalJob)));
   form.addEventListener('submit', submitJobEdit);
 }
 
@@ -3688,11 +3692,22 @@ async function previewJobEdit(form, job) {
     ['名称', job.name, body.name], ['执行器', job.executorName, body.executorName],
     ['Handler', job.businessHandlerName ?? job.handlerName, body.handlerName],
     ['Cron', job.schedule, body.cron], ['时区', job.zoneId, body.zoneId],
+    ['分发模式', job.dispatchMode ?? 'UNICAST', body.dispatchMode],
+    ['路由策略', job.routingStrategy ?? 'ROUND_ROBIN', body.routingStrategy],
+    ['完成策略', job.completionPolicy ?? 'ALL_SUCCESS', body.completionPolicy],
+    ['重试范围', job.retryScope ?? 'FAILED_TARGETS_ONLY', body.retryScope],
+    ['分片数量', job.shardCount ?? 1, body.shardCount],
+    ['路由键', job.routingKey ?? '', body.routingKey],
+    ['日历', job.calendarId ?? '', body.calendarId],
     ['租户', job.tenantId ?? 'default', body['param.firefly.resource.tenantId']],
+    ['排队优先级', job.queuePriority ?? 0, body['param.firefly.resource.priority']],
+    ['CPU 需求', job.resourceCpuMillis ?? 0, body['param.firefly.resource.cpuMillis']],
+    ['内存需求', job.resourceMemoryBytes ?? 0, body['param.firefly.resource.memoryBytes']],
+    ['最大重试次数', job.retryMaxAttempts ?? 1, body.retryMaxAttempts],
     ['状态', String(job.enabled !== false), body.enabled]
   ].filter(([, before, after]) => String(before ?? '') !== String(after ?? ''));
   const panel = form.querySelector('[data-job-edit-preview]');
-  panel.innerHTML = `<strong>${changes.length} 项修改</strong>${changes.length ? `<ul>${changes.map(([label, before, after]) => `<li>${escapeHtml(label)}：${escapeHtml(before ?? '-')} → ${escapeHtml(after ?? '-')}</li>`).join('')}</ul>` : '<p>当前表单与任务定义一致。</p>'}<p>应用前会再次检查任务定义是否已变化。</p>`;
+  panel.innerHTML = `<strong>${changes.length} 项修改</strong>${changes.length ? `<ul>${changes.map(([label, before, after]) => `<li>${escapeHtml(label)}：${escapeHtml(before ?? '-')} → ${escapeHtml(after ?? '-')}</li>`).join('')}</ul>` : '<p>当前表单与任务定义一致。</p>'}<p>应用时会原子检查任务版本。</p>`;
   form.dataset.previewBody = JSON.stringify(body);
   form.querySelector('button[type="submit"]').disabled = false;
 }
@@ -3721,8 +3736,20 @@ async function submitJobEdit(event) {
     await refreshView(false);
     toast(`任务已更新：${jobId}`);
   } catch (error) {
+    if (error.code === 'job_version_conflict') {
+      try {
+        const latest = normalizeList(await api(`/api/jobs/${encodeURIComponent(jobId)}`), 'jobs')[0];
+        if (latest) {
+          form.dataset.originalJob = JSON.stringify(normalizeJob(latest));
+          form.dataset.previewBody = '';
+          form.querySelector('[data-job-edit-preview]').innerHTML = '<strong>任务版本已变化</strong><p>当前输入已保留。请核对最新差异并重新预览。</p>';
+          toast('任务版本已更新，当前输入已保留；请重新预览');
+          return;
+        }
+      } catch { /* Keep the form intact if refreshing the job also fails. */ }
+    }
     toast(error.message);
   } finally {
-    submit.disabled = false;
+    submit.disabled = !form.dataset.previewBody;
   }
 }

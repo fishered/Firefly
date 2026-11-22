@@ -211,6 +211,20 @@ test('guides setup, links incidents to diagnosis, and restores execution filters
   }
 });
 
+test('reports a missing handler even when a job already exists', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    app.api.state.executorInstances[0].handlers = [];
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="onboarding"]').click();
+    const handlerCheck = page.locator('.readiness-card', { has: page.locator('h3', { hasText: 'Handler' }) });
+    await expect(handlerCheck).toContainText('待处理');
+    await expect(handlerCheck).toContainText('检查执行器注册信息');
+  } finally {
+    await app.close();
+  }
+});
+
 test('requires a fresh tenant preview and retains edits', async ({ page }) => {
   const app = await startAdminUiFixture();
   try {
@@ -238,8 +252,10 @@ test('previews job edits and invalidates the preview after a change', async ({ p
     const form = page.locator('#job-edit-dialog');
     await expect(form.locator('button[type="submit"]')).toBeDisabled();
     await form.locator('[name="name"]').fill('New name');
+    await form.locator('[name="retryMaxAttempts"]').fill('3');
     await form.locator('[data-preview-job-edit]').click();
     await expect(form.locator('[data-job-edit-preview]')).toContainText('New name');
+    await expect(form.locator('[data-job-edit-preview]')).toContainText('最大重试次数');
     await expect(form.locator('button[type="submit"]')).toBeEnabled();
     await form.locator('[name="name"]').fill('Another name');
     await expect(form.locator('button[type="submit"]')).toBeDisabled();
@@ -269,7 +285,13 @@ test('keeps a job edit open after a version conflict', async ({ browser }) => {
     await form.locator('button[type="submit"]').click();
     await expect(form).toBeVisible();
     await expect(form.locator('[name="name"]')).toHaveValue('My unsaved change');
-    await expect(second.locator('body')).toContainText('当前输入已保留');
+    await expect(form.locator('[data-job-edit-preview]')).toContainText('当前输入已保留');
+    await expect(form.locator('button[type="submit"]')).toBeDisabled();
+    await form.locator('[data-preview-job-edit]').click();
+    await expect(form.locator('[data-job-edit-preview]')).toContainText('First change → My unsaved change');
+    await form.locator('button[type="submit"]').click();
+    await expect(form).toHaveCount(0);
+    expect(app.api.state.jobs.find(job => job.id === 'sample-job').name).toBe('My unsaved change');
   } finally {
     await Promise.all([first.close(), second.close()]);
     await app.close();
@@ -435,6 +457,12 @@ async function routeMockRequest(state, method, url, body, response) {
     return;
   }
   const jobEditMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
+  if (method === 'GET' && jobEditMatch) {
+    const jobId = decodeURIComponent(jobEditMatch[1]);
+    const job = state.jobs.find(item => item.id === jobId);
+    json(response, job ? 200 : 404, job ? { jobs: [job] } : { error: 'job_not_found' });
+    return;
+  }
   if (method === 'PUT' && jobEditMatch) {
     const jobId = decodeURIComponent(jobEditMatch[1]);
     const current = state.jobs.find(job => job.id === jobId);
