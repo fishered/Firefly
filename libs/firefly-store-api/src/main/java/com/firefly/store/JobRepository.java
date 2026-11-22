@@ -11,6 +11,11 @@ import java.util.Set;
 public interface JobRepository {
     void save(JobDefinition definition, Instant initialNextFireTime);
 
+    /** Atomically updates an existing job only while its observed version still matches. */
+    default boolean saveIfVersion(JobDefinition definition, Instant nextFireTime, long expectedVersion) {
+        throw new UnsupportedOperationException("job versioned update is not implemented");
+    }
+
     Optional<ScheduledJobRecord> find(String jobId);
 
     default java.util.Optional<com.firefly.schedule.CalendarDefinition> findCalendar(String calendarId) {

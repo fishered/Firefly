@@ -68,6 +68,7 @@ final class AdminHttpJson {
                     .append(",\"retryMaxDelay\":\"").append(job.definition().retryPolicy().maxDelay())
                     .append("\",\"retryOnFailure\":").append(job.definition().retryPolicy().retryOnFailure())
                     .append(",\"retryOnTimeout\":").append(job.definition().retryPolicy().retryOnTimeout())
+                    .append(",\"version\":").append(job.version())
                     .append(",\"nextFireTime\":\"").append(escape(job.nextFireTime().toString()))
                     .append("\"}");
         }

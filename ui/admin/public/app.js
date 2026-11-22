@@ -1853,7 +1853,11 @@ function dateTimeLocalValue(date) {
 
 async function openExecutionDetail(executionId) {
   try {
-    const detail = await api(`/api/executions/${encodeURIComponent(executionId)}`);
+    const encodedId = encodeURIComponent(executionId);
+    const [detail, timeline] = await Promise.all([
+      api(`/api/executions/${encodedId}`),
+      api(`/api/executions/${encodedId}/timeline`)
+    ]);
     state.deepExecutionId = executionId;
     syncViewUrl();
     const execution = detail.execution ?? detail;
@@ -1888,7 +1892,7 @@ async function openExecutionDetail(executionId) {
               ${detailItem('计划时间', formatDate(execution.scheduledFireTime))}
               ${detailItem('超时截止', formatDate(execution.timeoutAt))}
             </div>
-            ${executionTimeline(execution, targets)}
+            ${executionTimeline(execution, targets, normalizeList(timeline, 'events'))}
             <div class="attempt-track">
               ${(relatedAttempts.length ? relatedAttempts : [execution]).map(item => `
                 <div class="attempt-node ${item.executionId === execution.executionId ? 'active' : ''}">
@@ -1916,23 +1920,26 @@ async function openExecutionDetail(executionId) {
   }
 }
 
-function executionTimeline(execution, targets) {
-  const first = targets[0] ?? {};
-  const anyAck = targets.some(target => target.acknowledgedAt);
-  const anyComplete = targets.some(target => target.completedAt);
+function executionTimeline(execution, targets, events) {
+  const observed = type => events.find(event => event.type === type);
+  const dispatched = observed('DISPATCHED');
+  const acknowledged = observed('ACKNOWLEDGED');
+  const completed = observed('TARGET_COMPLETED');
+  const status = observed('EXECUTION_STATUS');
+  const source = event => event?.source === 'TARGET_SNAPSHOT' ? '目标快照' : '执行快照';
   const stages = [
-    ['触发', execution.scheduledFireTime, '调度触发点'],
-    ['配额准入', execution.admittedAt, '未单独记录准入时间；请结合租户治理检查限额'],
-    ['Outbox', execution.outboxCreatedAt, '派发请求已创建；无时间戳时请查看派发死信'],
-    ['Gateway', first.gatewayNodeId ? execution.dispatchTime : null, first.gatewayNodeId ? `节点 ${first.gatewayNodeId}` : '尚无 Gateway 路由信息'],
-    ['ACK', anyAck ? targets.find(target => target.acknowledgedAt).acknowledgedAt : null, anyAck ? '执行器已确认接收' : '未收到执行器确认'],
-    ['执行', execution.startTime, anyComplete ? '至少一个目标已完成' : '等待执行结果'],
+    ['触发', observed('SCHEDULED')?.occurredAt, '调度触发点 · 执行快照'],
+    ['配额准入', null, '当前未记录准入事件；请结合租户治理检查限额'],
+    ['Outbox', null, '当前未记录 Outbox 事件；请查看派发死信'],
+    ['Gateway', dispatched?.occurredAt, dispatched ? `派发已接受 · ${source(dispatched)}` : '尚无派发记录'],
+    ['ACK', acknowledged?.occurredAt, acknowledged ? `执行器已确认 · ${source(acknowledged)}` : '未收到执行器确认'],
+    ['执行', completed?.occurredAt ?? status?.occurredAt, completed ? `目标已完成 · ${source(completed)}` : status ? `当前状态 ${status.status ?? '-'} · ${source(status)}` : '等待执行结果'],
     ['重试/重放', Number(execution.runAttempt ?? 0) > 0 ? execution.createdAt : null, Number(execution.runAttempt ?? 0) > 0 ? `第 ${Number(execution.runAttempt) + 1} 次尝试` : '尚未重试']
   ];
   const failed = isFailureStatus(execution.status) || targets.some(target => isFailureStatus(target.status));
-  const error = targets.find(target => target.errorMessage)?.errorMessage ?? execution.errorMessage ?? execution.lastError;
+  const error = targets.find(target => target.errorMessage)?.errorMessage ?? (completed?.message || execution.errorMessage || execution.lastError);
   const reason = failed ? (error || `执行状态为 ${execution.status}，目标未全部成功`) : '当前未发现失败';
-  const advice = failed ? (anyAck ? '检查目标错误，修复后预览并重放' : '检查 Gateway、执行器在线状态和派发死信') : '继续观察执行结果';
+  const advice = failed ? (acknowledged ? '检查目标错误，修复后预览并重放' : '检查 Gateway、执行器在线状态和派发死信') : '继续观察执行结果';
   return `<section class="diagnosis-panel"><h3>执行诊断时间线</h3><ol class="execution-timeline">${stages.map(([label, at, note]) => `<li class="${at ? 'observed' : 'unobserved'}"><strong>${label}</strong><time>${at ? escapeHtml(formatDate(at)) : '暂无观测数据'}</time><small>${escapeHtml(note)}</small></li>`).join('')}</ol>
     <div class="diagnosis-summary"><p><b>原因</b> ${escapeHtml(reason)}</p><p><b>影响</b> ${failed ? '本次执行未成功完成' : '暂无失败影响'}</p><p><b>建议操作</b> ${advice}</p><p><b>关联对象</b> ${escapeHtml(execution.jobId)} · ${escapeHtml(execution.executionId)}</p></div></section>`;
 }
@@ -3065,12 +3072,13 @@ async function performRequest(path, requestOptions, method) {
       showPasswordChange('请先修改初始密码');
     }
     const errorMessages = {
+      job_version_conflict: '任务已在预览后发生变化；当前输入已保留，请重新打开任务核对最新配置',
       executor_not_found: '执行器定义不存在或已被删除',
       executor_has_jobs: `该执行器仍被 ${Number(data?.jobCount ?? 0)} 个任务引用，请先迁移或删除任务`,
       executor_has_job_groups: `该执行器仍被 ${Number(data?.jobGroupCount ?? 0)} 个任务组引用，请先调整任务组`,
       executor_has_online_instances: `该执行器仍有 ${Number(data?.onlineInstances ?? 0)} 个在线实例，请先隔离或停止实例`
     };
-    const message = data?.message ?? errorMessages[data?.error] ?? data?.error ?? `HTTP ${response.status}`;
+    const message = errorMessages[data?.error] ?? data?.message ?? data?.error ?? `HTTP ${response.status}`;
     throw new Error(message);
   }
   return data;
@@ -3696,13 +3704,14 @@ async function submitJobEdit(event) {
   if (form.dataset.previewBody !== JSON.stringify(body)) { toast('配置已变化，请重新预览'); return; }
   const jobId = body.id;
   delete body.id;
+  body.expectedVersion = Number(JSON.parse(form.dataset.originalJob).version);
+  if (!Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 1) {
+    toast('无法确认任务版本，请刷新任务列表后重新预览');
+    return;
+  }
   const submit = form.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
-    const latest = normalizeList(await api('/api/jobs'), 'jobs').find(item => item.id === jobId);
-    if (!latest || JSON.stringify(normalizeJob(latest)) !== form.dataset.originalJob) {
-      throw new Error('任务定义已变化，请保留当前输入并重新打开任务查看最新配置');
-    }
     await api(`/api/jobs/${encodeURIComponent(jobId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

@@ -194,6 +194,8 @@ test('guides setup, links incidents to diagnosis, and restores execution filters
     await expect(page.locator('.incident-card').first().locator('b')).toHaveCount(3);
     await page.locator('[data-inbox-id="exec-failed-sample-job"]').click();
     await expect(page.locator('.execution-timeline li')).toHaveCount(7);
+    await expect(page.locator('.execution-timeline li').nth(1)).toHaveClass(/unobserved/);
+    await expect(page.locator('.execution-timeline li').nth(4)).toContainText('目标快照');
     await expect(page.locator('.diagnosis-summary')).toContainText('exec-failed-sample-job');
     await expect(page).toHaveURL(/executionId=exec-failed-sample-job/);
     await page.reload();
@@ -242,6 +244,34 @@ test('previews job edits and invalidates the preview after a change', async ({ p
     await form.locator('[name="name"]').fill('Another name');
     await expect(form.locator('button[type="submit"]')).toBeDisabled();
   } finally {
+    await app.close();
+  }
+});
+
+test('keeps a job edit open after a version conflict', async ({ browser }) => {
+  const app = await startAdminUiFixture();
+  const first = await browser.newPage();
+  const second = await browser.newPage();
+  try {
+    await Promise.all([signIn(first, app.baseUrl), signIn(second, app.baseUrl)]);
+    for (const page of [first, second]) {
+      await page.locator('[data-view="jobs"]').click();
+      await page.locator('[data-job-id="sample-job"][data-job-operation="edit"]').click();
+    }
+    await first.locator('#job-edit-dialog [name="name"]').fill('First change');
+    await first.locator('#job-edit-dialog [data-preview-job-edit]').click();
+    await first.locator('#job-edit-dialog button[type="submit"]').click();
+    await expect(first.locator('#job-edit-dialog')).toHaveCount(0);
+
+    const form = second.locator('#job-edit-dialog');
+    await form.locator('[name="name"]').fill('My unsaved change');
+    await form.locator('[data-preview-job-edit]').click();
+    await form.locator('button[type="submit"]').click();
+    await expect(form).toBeVisible();
+    await expect(form.locator('[name="name"]')).toHaveValue('My unsaved change');
+    await expect(second.locator('body')).toContainText('当前输入已保留');
+  } finally {
+    await Promise.all([first.close(), second.close()]);
     await app.close();
   }
 });
@@ -404,6 +434,18 @@ async function routeMockRequest(state, method, url, body, response) {
     json(response, 201, { status: 'created' });
     return;
   }
+  const jobEditMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
+  if (method === 'PUT' && jobEditMatch) {
+    const jobId = decodeURIComponent(jobEditMatch[1]);
+    const current = state.jobs.find(job => job.id === jobId);
+    if (!current || Number(current.version) !== Number(body.expectedVersion)) {
+      json(response, 409, { error: 'job_version_conflict', message: 'job definition changed since preview' });
+      return;
+    }
+    Object.assign(current, normalizeJob({ ...current, ...body, id: jobId, version: current.version + 1 }));
+    json(response, 200, { status: 'updated', id: jobId });
+    return;
+  }
   const triggerMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/trigger$/);
   if (method === 'POST' && triggerMatch) {
     const jobId = decodeURIComponent(triggerMatch[1]);
@@ -448,6 +490,20 @@ async function routeMockRequest(state, method, url, body, response) {
       return;
     }
     json(response, 200, { executions: state.executions, nextCursor: null, hasMore: false });
+    return;
+  }
+  const timelineMatch = url.pathname.match(/^\/api\/executions\/([^/]+)\/timeline$/);
+  if (method === 'GET' && timelineMatch) {
+    const executionId = decodeURIComponent(timelineMatch[1]);
+    const execution = state.executions.find(item => item.executionId === executionId);
+    const event = (type, occurredAt, source, message = '') => ({ type, occurredAt, source, message });
+    json(response, 200, { events: execution ? [
+      event('SCHEDULED', execution.scheduledFireTime, 'EXECUTION_SNAPSHOT'),
+      event('DISPATCHED', execution.dispatchTime, 'EXECUTION_SNAPSHOT'),
+      event('EXECUTION_STATUS', execution.endTime ?? execution.startTime, 'EXECUTION_SNAPSHOT'),
+      ...(execution.targets?.length ? [event('ACKNOWLEDGED', execution.startTime, 'TARGET_SNAPSHOT'),
+        event('TARGET_COMPLETED', execution.endTime, 'TARGET_SNAPSHOT', execution.targets[0].errorMessage)] : [])
+    ] : [] });
     return;
   }
   const replayPreviewMatch = url.pathname.match(/^\/api\/executions\/([^/]+)\/replay\/preview$/);
@@ -713,6 +769,7 @@ function normalizeJob(job) {
     shardCount: Number(job.shardCount ?? 1),
     routingKey: job.routingKey ?? '',
     enabled: true,
+    version: Number(job.version ?? 1),
     nextFireTime: new Date(Date.now() + 30_000).toISOString(),
     lastResult: '-',
     tenantId: job['param.firefly.resource.tenantId'] ?? job.tenantId ?? 'default',

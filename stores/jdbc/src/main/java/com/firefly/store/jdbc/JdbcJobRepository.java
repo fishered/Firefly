@@ -87,7 +87,7 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
             try {
-                int updated = updateJob(connection, definition, initialNextFireTime);
+                int updated = updateJob(connection, definition, initialNextFireTime, null);
                 if (updated == 0) insertJob(connection, definition, initialNextFireTime);
                 bumpConfigurationVersion(connection);
                 connection.commit();
@@ -99,6 +99,30 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
             }
         } catch (SQLException e) {
             throw new JdbcException("failed to save firefly job", e);
+        }
+    }
+
+    @Override
+    public boolean saveIfVersion(JobDefinition definition, Instant nextFireTime, long expectedVersion) {
+        Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(nextFireTime, "nextFireTime");
+        if (expectedVersion < 1) throw new IllegalArgumentException("expectedVersion must be positive");
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                int updated = updateJob(connection, definition, nextFireTime, expectedVersion);
+                if (updated == 0) { connection.rollback(); return false; }
+                bumpConfigurationVersion(connection);
+                connection.commit();
+                return true;
+            } catch (SQLException | RuntimeException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new JdbcException("failed to update versioned firefly job", e);
         }
     }
 
@@ -1722,8 +1746,9 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
         return sql.toString();
     }
 
-    private int updateJob(Connection connection, JobDefinition definition, Instant nextFireTime) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
+    private int updateJob(Connection connection, JobDefinition definition, Instant nextFireTime,
+                          Long expectedVersion) throws SQLException {
+        String sql = """
                 update firefly_job
                 set group_id = ?,
                     job_name = ?,
@@ -1748,9 +1773,11 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                     next_fire_time = ?,
                     version = version + 1
                 where job_id = ?
-                """)) {
+                """ + (expectedVersion == null ? "" : " and version = ?");
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             bindJob(statement, definition, nextFireTime);
             statement.setString(22, definition.id());
+            if (expectedVersion != null) statement.setLong(23, expectedVersion);
             return statement.executeUpdate();
         }
     }
@@ -1843,7 +1870,8 @@ public final class JdbcJobRepository implements JobRepository, com.firefly.store
                 .retryScope(com.firefly.domain.ExecutorRetryScope.valueOf(resultSet.getString("retry_scope")))
                 .enabled(resultSet.getBoolean("enabled"))
                 .build();
-        return new ScheduledJobRecord(definition, resultSet.getTimestamp("next_fire_time").toInstant());
+        return new ScheduledJobRecord(definition, resultSet.getTimestamp("next_fire_time").toInstant(),
+                resultSet.getLong("version"));
     }
 
     private static List<JobDependency> decodeDependencies(String value, String jobId) {
