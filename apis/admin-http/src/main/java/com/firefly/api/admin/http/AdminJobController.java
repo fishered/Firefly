@@ -214,7 +214,15 @@ final class AdminJobController {
         Instant nextFireTime = updated.enabled()
                 ? updated.schedule().nextAfter(now, updated.zoneId())
                 : current.nextFireTime();
-        repository.save(updated, nextFireTime);
+        if (request.containsKey("expectedVersion")) {
+            long expectedVersion = Long.parseLong(request.get("expectedVersion"));
+            if (!repository.saveIfVersion(updated, nextFireTime, expectedVersion)) {
+                respond(exchange, 409, "{\"error\":\"job_version_conflict\",\"message\":\"job definition changed since preview\"}");
+                return;
+            }
+        } else {
+            repository.save(updated, nextFireTime);
+        }
         recordJobHistory(exchange, jobId, "UPDATE", current, repository.find(jobId).orElse(null));
         respond(exchange, 200, "{\"status\":\"updated\",\"id\":\""
                 + responses.escape(jobId) + "\"}");

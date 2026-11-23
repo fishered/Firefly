@@ -49,6 +49,7 @@ class AdminHttpJobRegistrationTest {
             assertTrue(found.body().contains("\"id\":\"billing-daily\""));
             assertTrue(found.body().contains("\"groupId\":\"billing\""));
             assertTrue(found.body().contains("\"enabled\":false"));
+            assertTrue(found.body().contains("\"version\":1"));
             assertEquals(409, request(port, "/api/jobs", "POST", createBody).statusCode());
 
             HttpResponse<String> updated = request(
@@ -60,6 +61,11 @@ class AdminHttpJobRegistrationTest {
             assertEquals(200, updated.statusCode());
             assertEquals("0 */10 * * * *", jobs.find("billing-daily").orElseThrow().definition().schedule().toString());
             assertTrue(jobs.find("billing-daily").orElseThrow().definition().enabled());
+            HttpResponse<String> stale = request(port, "/api/jobs/billing-daily", "PUT",
+                    "{\"name\":\"Stale name\",\"expectedVersion\":1}");
+            assertEquals(409, stale.statusCode());
+            assertTrue(stale.body().contains("job_version_conflict"));
+            assertEquals("Daily billing", jobs.find("billing-daily").orElseThrow().definition().name());
         } finally {
             plugin.close();
         }

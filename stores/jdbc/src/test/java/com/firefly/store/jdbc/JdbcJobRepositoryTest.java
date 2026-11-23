@@ -58,6 +58,24 @@ final class JdbcJobRepositoryTest {
     }
 
     @Test
+    void rejectsStaleJobEditsWithoutOverwritingTheWinner() {
+        JdbcJobRepository repository = repository();
+        Instant fireTime = Instant.parse("2026-01-01T01:00:00Z");
+        JobDefinition first = reportJob("report", fireTime);
+        repository.save(first, fireTime);
+        long observedVersion = repository.find("report").orElseThrow().version();
+        JobDefinition winner = JobDefinition.builder().id("report").name("Winner")
+                .handlerName("reportHandler").schedule(new CronSchedule("0 0 9 * * *")).build();
+        JobDefinition stale = JobDefinition.builder().id("report").name("Stale")
+                .handlerName("reportHandler").schedule(new CronSchedule("0 0 9 * * *")).build();
+
+        assertTrue(repository.saveIfVersion(winner, fireTime, observedVersion));
+        assertFalse(repository.saveIfVersion(stale, fireTime, observedVersion));
+        assertEquals("Winner", repository.find("report").orElseThrow().definition().name());
+        assertEquals(observedVersion + 1, repository.find("report").orElseThrow().version());
+    }
+
+    @Test
     void keepsSameFireTimeBatchTogetherUntilHardLimit() {
         JdbcJobRepository repository = repository();
         Instant fireTime = Instant.parse("2026-01-01T01:00:00Z");

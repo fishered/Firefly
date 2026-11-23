@@ -53,16 +53,28 @@ public final class InMemoryJobRepository implements JobRepository {
 
     @Override
     public void save(JobDefinition definition, Instant initialNextFireTime) {
-        ScheduledJobRecord record = new ScheduledJobRecord(definition, initialNextFireTime);
         synchronized (lock) {
             List<com.firefly.schedule.JobDependency> allDependencies = new ArrayList<>();
             jobs.values().forEach(existing -> allDependencies.addAll(existing.definition().dependencies()));
             allDependencies.addAll(definition.dependencies());
             new DependencyGraphValidator().validate(allDependencies);
-            ScheduledJobRecord previous = jobs.put(definition.id(), record);
+            ScheduledJobRecord previous = jobs.get(definition.id());
+            ScheduledJobRecord record = new ScheduledJobRecord(definition, initialNextFireTime,
+                    previous == null ? 1 : previous.version() + 1);
+            jobs.put(definition.id(), record);
             removeFromIndex(previous);
             addToIndex(record);
             configurationVersion++;
+        }
+    }
+
+    @Override
+    public boolean saveIfVersion(JobDefinition definition, Instant nextFireTime, long expectedVersion) {
+        synchronized (lock) {
+            ScheduledJobRecord current = jobs.get(definition.id());
+            if (current == null || current.version() != expectedVersion) return false;
+            save(definition, nextFireTime);
+            return true;
         }
     }
 
@@ -266,7 +278,7 @@ public final class InMemoryJobRepository implements JobRepository {
                 return false;
             }
 
-            ScheduledJobRecord updated = new ScheduledJobRecord(current.definition(), nextFireTime);
+            ScheduledJobRecord updated = new ScheduledJobRecord(current.definition(), nextFireTime, current.version() + 1);
             removeFromIndex(current);
             jobs.put(jobId, updated);
             addToIndex(updated);
@@ -284,7 +296,7 @@ public final class InMemoryJobRepository implements JobRepository {
         synchronized (lock) {
             ScheduledJobRecord current = jobs.get(jobId);
             if (current == null || !current.nextFireTime().equals(expectedCurrentNextFireTime)) return false;
-            ScheduledJobRecord updated = new ScheduledJobRecord(current.definition(), nextFireTime);
+            ScheduledJobRecord updated = new ScheduledJobRecord(current.definition(), nextFireTime, current.version() + 1);
             removeFromIndex(current);
             jobs.put(jobId, updated);
             addToIndex(updated);
@@ -594,7 +606,7 @@ public final class InMemoryJobRepository implements JobRepository {
             ScheduledJobRecord current = jobs.get(jobId);
             if (current == null) return false;
             removeFromIndex(current);
-            ScheduledJobRecord updated = new ScheduledJobRecord(current.definition().withEnabled(enabled), current.nextFireTime());
+            ScheduledJobRecord updated = new ScheduledJobRecord(current.definition().withEnabled(enabled), current.nextFireTime(), current.version() + 1);
             jobs.put(jobId, updated);
             addToIndex(updated);
             configurationVersion++;
