@@ -28,6 +28,7 @@ const state = {
   tenantCapacityReport: null,
   auditRecords: [],
   failedTriggers: [],
+  inboxSnapshot: null,
   jobHistory: [],
   executionPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20, jobId: '', status: '', from: '', to: '' },
   deadOutboxPage: { cursors: [null], index: 0, nextCursor: null, hasMore: false, limit: 20 },
@@ -364,7 +365,7 @@ function syncViewUrl() {
 async function refreshView(notify = true, force = true) {
   await loadViewData(state.currentView, force);
   renderView(state.currentView);
-  if (notify) toast('已刷新');
+  if (notify) toast(state.currentView === 'inbox' && state.inboxSnapshot?.failedSources.length ? '部分来源读取失败，请检查后重试' : '已刷新');
 }
 
 function renderActions(view) {
@@ -415,7 +416,7 @@ async function loadViewData(view, force) {
   const loaders = {
     overview: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes],
     onboarding: [loadOverview, loadJobs, loadExecutors, loadExecutions, loadNodes, loadIntegrationKey],
-    inbox: [loadExecutions, loadExecutors, loadDeadDispatches, loadBackfills, loadFailedTriggers, loadNodes, loadTenants, loadCapacityReport],
+    inbox: [loadInboxData],
     jobs: [loadJobs, loadExecutors, loadCalendars, loadTenants],
     calendars: [loadCalendars],
     executors: [loadExecutors],
@@ -429,6 +430,35 @@ async function loadViewData(view, force) {
   }[view] ?? [];
   await Promise.allSettled(loaders.map(loader => loader()));
   viewLoadedAt.set(view, Date.now());
+}
+
+async function loadInboxData() {
+  const sources = [
+    ['执行记录', '/api/executions?limit=100', 'executions'],
+    ['执行器', '/api/executors', 'instances'],
+    ['派发死信', '/api/outbox/dead?limit=100', 'deadDispatches'],
+    ['补数', '/api/backfills?limit=100', 'backfills'],
+    ['失败事件', '/api/triggers/failed?limit=100', 'failedTriggers'],
+    ['节点', '/api/nodes', 'nodes'],
+    ['租户', '/api/tenants', 'tenants']
+  ];
+  const results = await Promise.allSettled(sources.map(([, path]) => api(path)));
+  const snapshot = { failedSources: [], limitedSources: [] };
+  sources.forEach(([label, , key], index) => {
+    const result = results[index];
+    if (result.status === 'rejected') {
+      snapshot[key] = [];
+      snapshot.failedSources.push(label);
+      return;
+    }
+    const data = result.value;
+    snapshot[key] = key === 'nodes'
+      ? normalizeList(data, key).map(normalizeNode)
+      : normalizeList(data, key);
+    if (key === 'instances' && !snapshot.instances.length) snapshot.instances = normalizeList(data, 'executors');
+    if (data?.hasMore) snapshot.limitedSources.push(label);
+  });
+  state.inboxSnapshot = snapshot;
 }
 
 async function loadUiConfig() {
@@ -1266,22 +1296,29 @@ function onboardingPage() {
 }
 
 function inboxItems() {
+  const snapshot = state.inboxSnapshot ?? {};
   const items = [];
   const add = (kind, reason, impact, advice, object, view, id = '') => items.push({ kind, reason, impact, advice, object, view, id });
-  state.executions.filter(item => isFailureStatus(item.status)).forEach(item => add('执行失败', `执行状态：${item.status}`, '任务未按预期完成', '查看诊断时间线，修复后重放', item.executionId, 'executions', item.executionId));
-  state.executors.filter(item => item.status !== 'ONLINE').forEach(item => add('执行器离线', `实例状态：${item.status}`, '该实例无法接收新任务', '检查连接、进程和心跳', item.instanceId ?? item.executorName ?? item.name, 'executors'));
-  state.deadDispatches.forEach(item => add('派发死信', item.lastError || '派发重试已耗尽', '任务尚未送达执行器', '检查 Gateway 与执行器后重新入队', item.outboxId, 'executions'));
-  state.failedTriggers.forEach(item => add('事件失败', item.failureReason || '事件触发失败', '事件任务未执行', '核对事件后重放或确认', item.idempotencyKey, 'operations'));
-  state.backfills.filter(item => Number(item.failed ?? 0) > 0 || item.status === 'FAILED').forEach(item => add('补数异常', `${item.failed ?? 0} 个失败触发点`, '补数范围可能不完整', '查看失败明细并决定是否继续', item.requestId, 'backfills'));
-  state.tenants.filter(tenantSaturated).forEach(item => add('租户容量风险', '资源用量已接近配额', '后续任务可能被准入拒绝', '查看容量报告并预览配额调整', item.tenantId, 'tenants'));
-  state.nodes.filter(item => item.status && item.status !== 'ONLINE' && item.status !== 'ACTIVE').forEach(item => add('节点异常', `节点状态：${item.status}`, '集群容量或调度可用性下降', '查看节点与集群', item.nodeId, 'nodes'));
+  (snapshot.executions ?? []).filter(item => isFailureStatus(item.status)).forEach(item => add('执行失败', `执行状态：${item.status}`, '任务未按预期完成', '查看诊断时间线，修复后重放', item.executionId, 'executions', item.executionId));
+  (snapshot.instances ?? []).filter(item => item.status !== 'ONLINE').forEach(item => add('执行器离线', `实例状态：${item.status}`, '该实例无法接收新任务', '检查连接、进程和心跳', item.instanceId ?? item.executorName ?? item.name, 'executors'));
+  (snapshot.deadDispatches ?? []).forEach(item => add('派发死信', item.lastError || '派发重试已耗尽', '任务尚未送达执行器', '检查 Gateway 与执行器后重新入队', item.outboxId, 'executions'));
+  (snapshot.failedTriggers ?? []).forEach(item => add('事件失败', item.failureReason || '事件触发失败', '事件任务未执行', '核对事件后重放或确认', item.idempotencyKey, 'operations'));
+  (snapshot.backfills ?? []).filter(item => Number(item.failed ?? 0) > 0 || item.status === 'FAILED').forEach(item => add('补数异常', `${item.failed ?? 0} 个失败触发点`, '补数范围可能不完整', '查看失败明细并决定是否继续', item.requestId, 'backfills'));
+  (snapshot.tenants ?? []).filter(tenantSaturated).forEach(item => add('租户容量风险', '资源用量已接近配额', '后续任务可能被准入拒绝', '查看容量报告并预览配额调整', item.tenantId, 'tenants'));
+  (snapshot.nodes ?? []).filter(item => item.status && item.status !== 'ONLINE' && item.status !== 'ACTIVE').forEach(item => add('节点异常', `节点状态：${item.status}`, '集群容量或调度可用性下降', '查看节点与集群', item.nodeId, 'nodes'));
   return items;
 }
 
 function inboxPage() {
   const items = inboxItems();
-  return `<section class="journey-hero"><span class="eyebrow">运行 · 诊断 · 调整</span><h2>待处理中心</h2><p>当前加载的数据中有 ${items.length} 项需要关注。每项提供原因、影响、建议和关联对象。</p></section>
-    <section class="readiness-list">${items.length ? items.map(item => `<article class="readiness-card incident-card"><span class="incident-mark">!</span><div><h3>${escapeHtml(item.kind)}</h3><p><b>原因</b> ${escapeHtml(item.reason)}</p><p><b>影响</b> ${escapeHtml(item.impact)}</p><p><b>建议</b> ${escapeHtml(item.advice)}</p><small>关联对象：${escapeHtml(item.object ?? '-')}</small></div><button class="btn" type="button" data-inbox-view="${escapeHtml(item.view)}" data-inbox-id="${escapeHtml(item.id)}">处理</button></article>`).join('') : '<section class="table-card empty-state">当前没有待处理项</section>'}</section>`;
+  const snapshot = state.inboxSnapshot ?? { failedSources: [], limitedSources: [] };
+  const coverage = [
+    snapshot.failedSources.length ? `读取失败：${snapshot.failedSources.join('、')}。这些来源的状态未知，请刷新重试。` : '',
+    snapshot.limitedSources.length ? `仍有下一页：${snapshot.limitedSources.join('、')}。当前列表仅包含最近一页。` : ''
+  ].filter(Boolean);
+  return `<section class="journey-hero"><span class="eyebrow">运行 · 诊断 · 调整</span><h2>待处理中心</h2><p>最近一页已读取的数据中有 ${items.length} 项需要关注。每项提供原因、影响、建议和关联对象。</p></section>
+    ${coverage.length ? `<section class="table-card" data-inbox-coverage role="status">${coverage.map(message => `<p>${escapeHtml(message)}</p>`).join('')}</section>` : ''}
+    <section class="readiness-list">${items.length ? items.map(item => `<article class="readiness-card incident-card"><span class="incident-mark">!</span><div><h3>${escapeHtml(item.kind)}</h3><p><b>原因</b> ${escapeHtml(item.reason)}</p><p><b>影响</b> ${escapeHtml(item.impact)}</p><p><b>建议</b> ${escapeHtml(item.advice)}</p><small>关联对象：${escapeHtml(item.object ?? '-')}</small></div><button class="btn" type="button" data-inbox-view="${escapeHtml(item.view)}" data-inbox-id="${escapeHtml(item.id)}">处理</button></article>`).join('') : `<section class="table-card empty-state">${snapshot.failedSources.length ? '已读取来源中没有待处理项；部分来源状态未知' : '最近一页没有待处理项'}</section>`}</section>`;
 }
 
 async function renderGlobalSearch(query) {
