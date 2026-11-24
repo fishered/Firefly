@@ -211,6 +211,26 @@ test('guides setup, links incidents to diagnosis, and restores execution filters
   }
 });
 
+test('keeps inbox independent of execution filters and reports unavailable sources', async ({ page }) => {
+  const app = await startAdminUiFixture();
+  try {
+    await signIn(page, app.baseUrl);
+    await page.locator('[data-view="executions"]').click();
+    await page.locator('#execution-filter-job').fill('page-job');
+    await page.locator('[data-execution-filter="apply"]').click();
+    await page.locator('[data-view="inbox"]').click();
+    await expect(page.locator('[data-inbox-id="exec-failed-sample-job"]')).toBeVisible();
+
+    await page.route('**/api/executions?limit=100', route => route.fulfill({ status: 503, body: 'unavailable' }));
+    await page.locator('#refresh-page').click();
+    await expect(page.locator('[data-inbox-coverage]')).toContainText('执行记录');
+    await expect(page.locator('[data-inbox-coverage]')).toContainText('状态未知');
+    await expect(page.getByText('当前没有待处理项')).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
 test('reports a missing handler even when a job already exists', async ({ page }) => {
   const app = await startAdminUiFixture();
   try {
